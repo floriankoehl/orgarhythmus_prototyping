@@ -42,4 +42,14 @@ export const api = {
   updateMilestone:       (id, patch) => req('PATCH', `/milestones/${id}`, patch),
   deleteMilestone:       (id)      => req('DELETE', `/milestones/${id}`),
   batchUpdateMilestones: (updates) => req('PUT',    '/milestones/batch', { updates }),
+
+  // Dependencies
+  getDependencies:  ()             => req('GET',    '/dependencies'),
+  createDependency: (data)         => req('POST',   '/dependencies', data),
+  deleteDependency: (id)           => req('DELETE', `/dependencies/${id}`),
+
+  // Deadlines
+  getDeadlines:   ()               => req('GET',    '/deadlines'),
+  setDeadline:    (goalId, col)    => req('PUT',    `/deadlines/${goalId}`, { col }),
+  removeDeadline: (goalId)         => req('DELETE', `/deadlines/${goalId}`),
 }

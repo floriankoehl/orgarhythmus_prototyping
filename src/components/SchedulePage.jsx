@@ -32,6 +32,41 @@ function dateFmt(col) {
   return colToDate(col).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
+// ── Dependency helpers ────────────────────────────────────────────────────────
+function hasCycle(fromId, toId, deps) {
+  const visited = new Set()
+  const queue = [toId]
+  while (queue.length) {
+    const curr = queue.shift()
+    if (curr === fromId) return true
+    if (visited.has(curr)) continue
+    visited.add(curr)
+    deps.filter(d => d.fromId === curr).forEach(d => queue.push(d.toId))
+  }
+  return false
+}
+
+function computeViolations(msList, deps) {
+  const msMap = Object.fromEntries(msList.map(m => [m.id, m]))
+  const violations = new Set()
+  deps.forEach(dep => {
+    const from = msMap[dep.fromId]; const to = msMap[dep.toId]
+    if (from && to && from.startCol + from.duration > to.startCol) violations.add(to.id)
+  })
+  // Cascade: if B violates, check if B also causes downstream violations
+  const queue = [...violations]
+  while (queue.length) {
+    const id = queue.shift()
+    const ms = msMap[id]; if (!ms) continue
+    deps.forEach(dep => {
+      if (dep.fromId !== id || violations.has(dep.toId)) return
+      const to = msMap[dep.toId]
+      if (to && ms.startCol + ms.duration > to.startCol) { violations.add(dep.toId); queue.push(dep.toId) }
+    })
+  }
+  return violations
+}
+
 // ── Row model ─────────────────────────────────────────────────────────────────
 function buildRowItems(goals, categories, assignments, activeDimId, spacing) {
   const { rowH, rowGap, laneGap } = spacing
@@ -112,18 +147,28 @@ function SpacingPanel({ spacing, onChange, onClose, anchorRef }) {
 }
 
 // ── Context menu ──────────────────────────────────────────────────────────────
-function ContextMenu({ menu, onClose, onCreate, onInsertDay, onDeleteDay }) {
+function ContextMenu({ menu, onClose, onCreate, onInsertDay, onDeleteDay, onSetDeadline, onRemoveDeadline }) {
   if (!menu) return null
   return createPortal(
     <>
       <div style={{ position: 'fixed', inset: 0, zIndex: 998 }} onMouseDown={onClose} />
       <div className={styles.ctxMenu} style={{ left: menu.x, top: menu.y }}>
-        {menu.type === 'cell' && (
+        {menu.type === 'cell' && (<>
           <button className={styles.ctxItem}
             onClick={() => { onCreate(menu.goalId, menu.col, menu.color); onClose() }}>
             Add milestone — {menu.goalTitle}
           </button>
-        )}
+          {menu.hasDeadline
+            ? <button className={styles.ctxItem}
+                onClick={() => { onRemoveDeadline(menu.goalId); onClose() }}>
+                Remove hard deadline
+              </button>
+            : <button className={styles.ctxItem}
+                onClick={() => { onSetDeadline(menu.goalId, menu.col); onClose() }}>
+                Set hard deadline here
+              </button>
+          }
+        </>)}
         {menu.type === 'header' && (<>
           <button className={styles.ctxItem} onClick={() => { onInsertDay(menu.col); onClose() }}>
             Insert day before
@@ -139,15 +184,17 @@ function ContextMenu({ menu, onClose, onCreate, onInsertDay, onDeleteDay }) {
 }
 
 // ── Toolbar ───────────────────────────────────────────────────────────────────
-function GanttToolbar({ dimensions, activeDimId, onDimChange, spacing, onSpacingChange }) {
+function GanttToolbar({ dimensions, activeDimId, onDimChange, spacing, onSpacingChange, mode, onModeChange }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const settingsBtnRef = useRef()
   const closeSettings  = useCallback(() => setSettingsOpen(false), [])
   return (
     <div className={styles.toolbar}>
       <div className={styles.modePills}>
-        <button className={`${styles.modePill} ${styles.modePillActive}`}>Edit</button>
-        <button className={styles.modePill}>Dependencies</button>
+        <button className={`${styles.modePill} ${mode === 'edit' ? styles.modePillActive : ''}`}
+          onClick={() => onModeChange('edit')}>Edit</button>
+        <button className={`${styles.modePill} ${mode === 'dependency' ? styles.modePillActive : ''}`}
+          onClick={() => onModeChange('dependency')}>Dependencies</button>
       </div>
       <div className={styles.toolbarDiv} />
       <span className={styles.toolbarLabel}>Dimension</span>
@@ -178,25 +225,32 @@ function GanttToolbar({ dimensions, activeDimId, onDimChange, spacing, onSpacing
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function SchedulePage({ goals = [], isActive = false }) {
   // ── API data ───────────────────────────────────────────────────────────────
-  const [dimensions,  setDimensions]  = useState([])
-  const [categories,  setCategories]  = useState([])
-  const [assignments, setAssignments] = useState({})
-  const [milestones,  setMilestones]  = useState([])
+  const [dimensions,   setDimensions]   = useState([])
+  const [categories,   setCategories]   = useState([])
+  const [assignments,  setAssignments]  = useState({})
+  const [milestones,   setMilestones]   = useState([])
+  const [dependencies, setDependencies] = useState([])
+  const [deadlines,    setDeadlines]    = useState([])
+  const [drawingState, setDrawingState] = useState(null)  // { fromId } while drawing
 
   useEffect(() => {
     if (!isActive) return
     Promise.all([
-      api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getMilestones()
-    ]).then(([dims, cats, assigns, mss]) => {
+      api.getDimensions(), api.getAllCategories(), api.getAssignments(),
+      api.getMilestones(), api.getDependencies(), api.getDeadlines(),
+    ]).then(([dims, cats, assigns, mss, deps, dls]) => {
       setDimensions(dims); setCategories(cats)
       const map = {}
       assigns.forEach(a => { if (!map[a.goalId]) map[a.goalId] = {}; map[a.goalId][a.dimensionId] = a.categoryId })
       setAssignments(map)
       setMilestones(mss)
+      setDependencies(deps)
+      setDeadlines(dls)
     }).catch(console.error)
   }, [isActive])
 
-  // ── Toolbar state ──────────────────────────────────────────────────────────
+  // ── Toolbar / mode state ───────────────────────────────────────────────────
+  const [mode,        setMode]        = useState('edit')
   const [activeDimId, setActiveDimId] = useState('')
   const [spacing,     setSpacing]     = useState(DEFAULT_SPACING)
 
@@ -225,10 +279,18 @@ export default function SchedulePage({ goals = [], isActive = false }) {
   const dragRef           = useRef(null)         // drag state machine
   const milestoneElsRef = useRef(new Map())      // id → DOM element
   const hoveredCellRef  = useRef(null)
+  const drawingRef      = useRef(null)           // { fromId } sync access during drawing
+  const previewArrowRef = useRef(null)           // SVG path element for live preview
+  const dependenciesRef = useRef([])
+  const deadlinesRef    = useRef([])
+  const modeRef         = useRef('edit')
 
   // Keep imperative refs in sync with state (assigned synchronously in render)
-  spacingRef.current   = spacing
-  totalDaysRef.current = totalDays
+  spacingRef.current       = spacing
+  totalDaysRef.current     = totalDays
+  dependenciesRef.current  = dependencies
+  deadlinesRef.current     = deadlines
+  modeRef.current          = mode
 
   // Live refs that closures read — no useEffect needed
   const milestonesRef  = useRef([])
@@ -260,6 +322,9 @@ export default function SchedulePage({ goals = [], isActive = false }) {
   const totalContentH = rowItems.length > 0
     ? rowItems[rowItems.length - 1].top + rowItems[rowItems.length - 1].height
     : MIN_ROWS * spacing.rowH
+
+  // Violations: recomputed whenever milestones or dependencies change
+  const violationIds = useMemo(() => computeViolations(milestones, dependencies), [milestones, dependencies])
 
   // ── Measure + ensure grid covers viewport ─────────────────────────────────
   useEffect(() => {
@@ -316,6 +381,26 @@ export default function SchedulePage({ goals = [], isActive = false }) {
 
   // ── Hover highlight ────────────────────────────────────────────────────────
   const handleMouseMove = useCallback(e => {
+    // Update dependency drawing preview
+    if (drawingRef.current) {
+      const rect = gridBodyRef.current?.getBoundingClientRect()
+      if (rect && previewArrowRef.current) {
+        const from = milestonesRef.current.find(m => m.id === drawingRef.current.fromId)
+        const fromRow = from && goalRowMapRef.current[from.goalId]
+        if (from && fromRow) {
+          const sp = spacingRef.current
+          const x1 = (from.startCol + from.duration) * sp.colW
+          const y1 = HEADER_H + fromRow.top + Math.floor(fromRow.height / 2)
+          const x2 = e.clientX - rect.left + scrollLeftRef.current
+          const y2 = e.clientY - rect.top + scrollTopRef.current
+          const cp = Math.max(40, Math.abs(x2 - x1) * 0.45)
+          previewArrowRef.current.setAttribute('d', `M ${x1} ${y1} C ${x1 + cp} ${y1}, ${x2 - cp} ${y2}, ${x2} ${y2}`)
+          previewArrowRef.current.style.display = ''
+        }
+      }
+      if (highlightRef.current) highlightRef.current.style.display = ''
+      return
+    }
     if (dragRef.current) { if (highlightRef.current) highlightRef.current.style.display = ''; return }
     if (e.target.closest('[data-ms-id]')) { if (highlightRef.current) highlightRef.current.style.display = ''; return }
     const rect = gridBodyRef.current?.getBoundingClientRect(); if (!rect) return
@@ -341,6 +426,7 @@ export default function SchedulePage({ goals = [], isActive = false }) {
   const handleMouseLeave = useCallback(() => {
     hoveredCellRef.current = null
     if (highlightRef.current) highlightRef.current.style.display = ''
+    if (previewArrowRef.current) previewArrowRef.current.style.display = 'none'
   }, [])
 
   // ── Spacing change ─────────────────────────────────────────────────────────
@@ -382,8 +468,9 @@ export default function SchedulePage({ goals = [], isActive = false }) {
     let color = '#1a73e8'
     if (item.cat?.color) color = item.cat.color
 
+    const hasDeadline = deadlinesRef.current.some(d => d.goalId === item.goal.id)
     setContextMenu({ type: 'cell', x: e.clientX, y: e.clientY, col,
-      goalId: item.goal.id, goalTitle: item.goal.title, color })
+      goalId: item.goal.id, goalTitle: item.goal.title, color, hasDeadline })
   }, [])
 
   // ── Milestone CRUD ─────────────────────────────────────────────────────────
@@ -431,8 +518,16 @@ export default function SchedulePage({ goals = [], isActive = false }) {
     document.body.style.cursor = 'grabbing'
 
     const onMove = e => {
-      const dx = e.clientX - startMouseX
-      if (Math.abs(dx) > 2) dragRef.current.hasMoved = true
+      const rawDx = e.clientX - startMouseX
+      if (Math.abs(rawDx) > 2) dragRef.current.hasMoved = true
+      // Compute clamped dx: can't go before col 0 or past any deadline
+      let dx = rawDx
+      Object.entries(originals).forEach(([id, orig]) => {
+        dx = Math.max(dx, -orig.startCol * sp.colW)
+        const ms = milestonesRef.current.find(m => m.id === id)
+        const dl = deadlinesRef.current.find(d => d.goalId === ms?.goalId)
+        if (dl) dx = Math.min(dx, (dl.col - orig.duration - orig.startCol) * sp.colW)
+      })
       Object.entries(originals).forEach(([id, orig]) => {
         const el = milestoneElsRef.current.get(id)
         if (el) el.style.left = `${orig.startCol * sp.colW + dx}px`
@@ -447,15 +542,22 @@ export default function SchedulePage({ goals = [], isActive = false }) {
       dragRef.current = null
       if (!hasMoved) return
 
-      const colDelta = Math.round((e.clientX - startMouseX) / sp.colW)
+      let colDelta = Math.round((e.clientX - startMouseX) / sp.colW)
       const updates = []
       const next = milestonesRef.current.map(m => {
         if (!originals[m.id]) return m
-        const newStartCol = Math.max(0, originals[m.id].startCol + colDelta)
+        let newStartCol = Math.max(0, originals[m.id].startCol + colDelta)
+        // Clamp to deadline
+        const dl = deadlinesRef.current.find(d => d.goalId === m.goalId)
+        if (dl) newStartCol = Math.min(newStartCol, dl.col - originals[m.id].duration)
+        newStartCol = Math.max(0, newStartCol)
         if (newStartCol !== originals[m.id].startCol) updates.push({ id: m.id, startCol: newStartCol })
         return { ...m, startCol: newStartCol }
       })
       setMilestones(next)
+      // Auto-select any new violations created by this move
+      const viol = computeViolations(next, dependenciesRef.current)
+      if (viol.size > 0) setSelectedIds(prev => new Set([...prev, ...viol]))
       if (updates.length) { try { await api.batchUpdateMilestones(updates) } catch (e) { console.error(e) } }
     }
 
@@ -501,7 +603,10 @@ export default function SchedulePage({ goals = [], isActive = false }) {
       } else {
         newDur = Math.max(1, origDur + colDelta)
       }
-      setMilestones(prev => prev.map(m => m.id === milestoneId ? { ...m, startCol: newStart, duration: newDur } : m))
+      const nextAll = milestonesRef.current.map(m => m.id === milestoneId ? { ...m, startCol: newStart, duration: newDur } : m)
+      setMilestones(nextAll)
+      const viol = computeViolations(nextAll, dependenciesRef.current)
+      if (viol.size > 0) setSelectedIds(prev => new Set([...prev, ...viol]))
       try { await api.updateMilestone(milestoneId, { startCol: newStart, duration: newDur }) }
       catch (err) { console.error(err) }
     }
@@ -558,11 +663,49 @@ export default function SchedulePage({ goals = [], isActive = false }) {
     document.addEventListener('mouseup', onUp)
   }
 
+  // ── Dependency drawing ─────────────────────────────────────────────────────
+  const handleDepEdgeClick = useCallback(async (milestoneId, side) => {
+    if (side === 'right') {
+      // Start drawing an arrow from the right edge of this milestone
+      drawingRef.current = { fromId: milestoneId }
+      setDrawingState({ fromId: milestoneId })
+    } else {
+      // Left edge: complete the arrow (or cancel if same milestone / no source)
+      const fromId = drawingRef.current?.fromId
+      drawingRef.current = null
+      setDrawingState(null)
+      if (previewArrowRef.current) previewArrowRef.current.style.display = 'none'
+      if (!fromId || fromId === milestoneId) return
+      if (hasCycle(fromId, milestoneId, dependenciesRef.current)) return
+      if (dependenciesRef.current.some(d => d.fromId === fromId && d.toId === milestoneId)) return
+      try {
+        const dep = await api.createDependency({ from_id: fromId, to_id: milestoneId })
+        setDependencies(prev => [...prev, dep])
+      } catch (err) { console.error(err) }
+    }
+  }, []) // eslint-disable-line
+
+  // ── Deadlines ──────────────────────────────────────────────────────────────
+  const handleSetDeadline = useCallback(async (goalId, col) => {
+    try {
+      const dl = await api.setDeadline(goalId, col)
+      setDeadlines(prev => { const next = prev.filter(d => d.goalId !== goalId); return [...next, dl] })
+    } catch (err) { console.error(err) }
+  }, [])
+
+  const handleRemoveDeadline = useCallback(async goalId => {
+    try {
+      await api.removeDeadline(goalId)
+      setDeadlines(prev => prev.filter(d => d.goalId !== goalId))
+    } catch (err) { console.error(err) }
+  }, [])
+
   // ── Milestone mouse-down (move / resize) ───────────────────────────────────
   const handleMilestoneMouseDown = useCallback((e, milestoneId, side) => {
     e.stopPropagation()
     if (e.button !== 0) return
     setContextMenu(null)
+    if (modeRef.current === 'dependency') return  // handled by handleDepEdgeClick
 
     if (side) {
       startResizeDrag(e.clientX, milestoneId, side)
@@ -587,6 +730,15 @@ export default function SchedulePage({ goals = [], isActive = false }) {
   const handleGridMouseDown = useCallback(e => {
     if (e.button !== 0) return
     setContextMenu(null)
+    // In dep mode: any background click cancels in-progress arrow drawing
+    if (modeRef.current === 'dependency') {
+      if (drawingRef.current) {
+        drawingRef.current = null
+        setDrawingState(null)
+        if (previewArrowRef.current) previewArrowRef.current.style.display = 'none'
+      }
+      return
+    }
     const rect = gridBodyRef.current?.getBoundingClientRect(); if (!rect) return
     if (e.clientY - rect.top < HEADER_H) return  // in time axis
     if (e.target.closest('[data-ms-id]')) return  // handled by milestone
@@ -626,6 +778,7 @@ export default function SchedulePage({ goals = [], isActive = false }) {
       <GanttToolbar
         dimensions={dimensions} activeDimId={activeDimId} onDimChange={setActiveDimId}
         spacing={spacing} onSpacingChange={handleSpacingChange}
+        mode={mode} onModeChange={setMode}
       />
 
       <div className={styles.canvasRow}>
@@ -713,15 +866,33 @@ export default function SchedulePage({ goals = [], isActive = false }) {
               return null
             })}
 
+            {/* Hard deadline markers */}
+            {deadlines.map(dl => {
+              const row = goalRowMap[dl.goalId]; if (!row) return null
+              if (dl.col < startCol - 1 || dl.col > endCol + 1) return null
+              return (
+                <div key={`dl-${dl.goalId}`} className={styles.deadlineLine}
+                  style={{ left: dl.col * colW, top: HEADER_H + row.top, height: row.height }} />
+              )
+            })}
+
             {/* Milestones */}
             {visMilestones.map(m => {
               const row = goalRowMap[m.goalId]; if (!row) return null
-              const isSelected = selectedIds.has(m.id)
+              const isSelected  = selectedIds.has(m.id)
+              const isViolating = violationIds.has(m.id)
+              const isDepMode   = mode === 'dependency'
+              const isSource    = drawingState?.fromId === m.id
               return (
                 <div key={m.id}
                   data-ms-id={m.id}
                   ref={el => { el ? milestoneElsRef.current.set(m.id, el) : milestoneElsRef.current.delete(m.id) }}
-                  className={`${styles.milestone} ${isSelected ? styles.milestoneSelected : ''}`}
+                  className={[
+                    styles.milestone,
+                    isSelected  && styles.milestoneSelected,
+                    isViolating && styles.milestoneViolation,
+                    isDepMode   && styles.milestoneDepMode,
+                  ].filter(Boolean).join(' ')}
                   style={{
                     left:       m.startCol * colW,
                     top:        HEADER_H + row.top + msY,
@@ -730,14 +901,63 @@ export default function SchedulePage({ goals = [], isActive = false }) {
                     background: m.color,
                   }}
                   onMouseDown={e => handleMilestoneMouseDown(e, m.id, null)}>
-                  <div className={styles.msHandle} data-ms-id={m.id}
-                    onMouseDown={e => { e.stopPropagation(); handleMilestoneMouseDown(e, m.id, 'left') }} />
+                  <div
+                    className={[styles.msHandle, isDepMode && styles.depHandle, isDepMode && isSource && styles.depHandleSource].filter(Boolean).join(' ')}
+                    data-ms-id={m.id}
+                    onMouseDown={e => {
+                      e.stopPropagation()
+                      if (isDepMode) handleDepEdgeClick(m.id, 'left')
+                      else handleMilestoneMouseDown(e, m.id, 'left')
+                    }} />
                   <span className={styles.msLabel}>{m.title || dateFmt(m.startCol)}</span>
-                  <div className={styles.msHandle + ' ' + styles.msHandleRight} data-ms-id={m.id}
-                    onMouseDown={e => { e.stopPropagation(); handleMilestoneMouseDown(e, m.id, 'right') }} />
+                  <div
+                    className={[styles.msHandle, styles.msHandleRight, isDepMode && styles.depHandle, isDepMode && isSource && styles.depHandleSource].filter(Boolean).join(' ')}
+                    data-ms-id={m.id}
+                    onMouseDown={e => {
+                      e.stopPropagation()
+                      if (isDepMode) handleDepEdgeClick(m.id, 'right')
+                      else handleMilestoneMouseDown(e, m.id, 'right')
+                    }} />
                 </div>
               )
             })}
+
+            {/* Dependency arrows SVG — pointer-events none on container, individual paths can override */}
+            <svg className={styles.depSvg}
+              style={{ width: totalDays * colW, height: totalContentH + HEADER_H }}>
+              <defs>
+                <marker id="dep-arrow" markerWidth="8" markerHeight="7" refX="7" refY="3.5" orient="auto">
+                  <path d="M0,0 L0,7 L8,3.5 z" fill="#5b8dee" />
+                </marker>
+                <marker id="dep-arrow-viol" markerWidth="8" markerHeight="7" refX="7" refY="3.5" orient="auto">
+                  <path d="M0,0 L0,7 L8,3.5 z" fill="#ef4444" />
+                </marker>
+              </defs>
+              {dependencies.map(dep => {
+                const from = milestones.find(m => m.id === dep.fromId)
+                const to   = milestones.find(m => m.id === dep.toId)
+                if (!from || !to) return null
+                const fromRow = goalRowMap[from.goalId]; const toRow = goalRowMap[to.goalId]
+                if (!fromRow || !toRow) return null
+                const x1 = (from.startCol + from.duration) * colW
+                const y1 = HEADER_H + fromRow.top + Math.floor(fromRow.height / 2)
+                const x2 = to.startCol * colW
+                const y2 = HEADER_H + toRow.top + Math.floor(toRow.height / 2)
+                const cp = Math.max(40, Math.abs(x2 - x1) * 0.45)
+                const isViol = violationIds.has(dep.toId)
+                return (
+                  <path key={dep.id}
+                    d={`M ${x1} ${y1} C ${x1 + cp} ${y1}, ${x2 - cp} ${y2}, ${x2} ${y2}`}
+                    stroke={isViol ? '#ef4444' : '#5b8dee'} strokeWidth="1.5" fill="none"
+                    strokeOpacity="0.8" markerEnd={`url(#dep-arrow${isViol ? '-viol' : ''})`}
+                  />
+                )
+              })}
+              {/* Live preview arrow while drawing */}
+              <path ref={previewArrowRef} style={{ display: 'none' }}
+                stroke="#5b8dee" strokeWidth="1.5" fill="none"
+                strokeDasharray="5,3" strokeOpacity="0.9" markerEnd="url(#dep-arrow)" />
+            </svg>
 
             {/* Marquee selection rect */}
             <div ref={marqueeRef} className={styles.marqueeRect} />
@@ -753,7 +973,9 @@ export default function SchedulePage({ goals = [], isActive = false }) {
       <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)}
         onCreate={handleCreateMilestone}
         onInsertDay={handleInsertDay}
-        onDeleteDay={handleDeleteDay} />
+        onDeleteDay={handleDeleteDay}
+        onSetDeadline={handleSetDeadline}
+        onRemoveDeadline={handleRemoveDeadline} />
     </div>
   )
 }

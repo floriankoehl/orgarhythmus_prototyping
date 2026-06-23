@@ -74,6 +74,21 @@ def _init_db():
                 color      TEXT NOT NULL DEFAULT '#1a73e8'
             )
         """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS dependencies (
+                id      TEXT PRIMARY KEY,
+                from_id TEXT NOT NULL,
+                to_id   TEXT NOT NULL,
+                UNIQUE (from_id, to_id)
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS deadlines (
+                id      TEXT PRIMARY KEY,
+                goal_id TEXT NOT NULL UNIQUE,
+                col     INTEGER NOT NULL
+            )
+        """)
 
 _init_db()
 
@@ -158,6 +173,13 @@ class MilestonePatch(BaseModel):
 class MilestoneBatch(BaseModel):
     updates: list[dict]
 
+class DependencyIn(BaseModel):
+    from_id: str
+    to_id: str
+
+class DeadlineColIn(BaseModel):
+    col: int
+
 
 # ── Helper converters ─────────────────────────────────────────────────────────
 def _page(row) -> dict:
@@ -177,6 +199,14 @@ def _ms(row) -> dict:
     d = dict(row)
     return {"id": d["id"], "goalId": d["goal_id"], "startCol": d["start_col"],
             "duration": d["duration"], "title": d["title"], "color": d["color"]}
+
+def _dep(row) -> dict:
+    d = dict(row)
+    return {"id": d["id"], "fromId": d["from_id"], "toId": d["to_id"]}
+
+def _dl(row) -> dict:
+    d = dict(row)
+    return {"id": d["id"], "goalId": d["goal_id"], "col": d["col"]}
 
 
 # ── Pages (goals) ─────────────────────────────────────────────────────────────
@@ -392,3 +422,52 @@ def update_milestone(ms_id: str, data: MilestonePatch):
 def delete_milestone(ms_id: str):
     with _db() as con:
         con.execute("DELETE FROM milestones WHERE id = ?", (ms_id,))
+
+
+# ── Dependencies ──────────────────────────────────────────────────────────────
+@app.get("/dependencies")
+def list_dependencies():
+    with _db() as con:
+        rows = con.execute("SELECT * FROM dependencies").fetchall()
+    return [_dep(r) for r in rows]
+
+@app.post("/dependencies", status_code=201)
+def create_dependency(data: DependencyIn):
+    did = str(uuid.uuid4())
+    with _db() as con:
+        try:
+            con.execute("INSERT INTO dependencies (id, from_id, to_id) VALUES (?, ?, ?)",
+                        (did, data.from_id, data.to_id))
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, "Dependency already exists")
+    return _dep({"id": did, "from_id": data.from_id, "to_id": data.to_id})
+
+@app.delete("/dependencies/{dep_id}", status_code=204)
+def delete_dependency(dep_id: str):
+    with _db() as con:
+        con.execute("DELETE FROM dependencies WHERE id = ?", (dep_id,))
+
+
+# ── Deadlines ─────────────────────────────────────────────────────────────────
+@app.get("/deadlines")
+def list_deadlines():
+    with _db() as con:
+        rows = con.execute("SELECT * FROM deadlines").fetchall()
+    return [_dl(r) for r in rows]
+
+@app.put("/deadlines/{goal_id}")
+def set_deadline(goal_id: str, data: DeadlineColIn):
+    with _db() as con:
+        existing = con.execute("SELECT id FROM deadlines WHERE goal_id = ?", (goal_id,)).fetchone()
+        if existing:
+            con.execute("UPDATE deadlines SET col = ? WHERE goal_id = ?", (data.col, goal_id))
+        else:
+            did = str(uuid.uuid4())
+            con.execute("INSERT INTO deadlines (id, goal_id, col) VALUES (?, ?, ?)", (did, goal_id, data.col))
+        row = con.execute("SELECT * FROM deadlines WHERE goal_id = ?", (goal_id,)).fetchone()
+    return _dl(row)
+
+@app.delete("/deadlines/{goal_id}", status_code=204)
+def remove_deadline(goal_id: str):
+    with _db() as con:
+        con.execute("DELETE FROM deadlines WHERE goal_id = ?", (goal_id,))
