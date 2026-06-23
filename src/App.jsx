@@ -28,7 +28,7 @@ export default function App() {
 
         {/* View 2 — Schedule */}
         <div className={styles.view}>
-          <SchedulePage />
+          <SchedulePage goals={goals} isActive={view === 2} />
         </div>
 
       </div>

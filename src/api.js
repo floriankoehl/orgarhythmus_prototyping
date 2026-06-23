@@ -35,4 +35,11 @@ export const api = {
   getAssignments: ()                      => req('GET',    '/assignments'),
   assign:         (goalId, dimId, catId)  => req('PUT',    `/goals/${goalId}/assign/${dimId}`, { categoryId: catId }),
   unassign:       (goalId, dimId)         => req('DELETE', `/goals/${goalId}/assign/${dimId}`),
+
+  // Milestones
+  getMilestones:         ()        => req('GET',    '/milestones'),
+  createMilestone:       (data)    => req('POST',   '/milestones', data),
+  updateMilestone:       (id, patch) => req('PATCH', `/milestones/${id}`, patch),
+  deleteMilestone:       (id)      => req('DELETE', `/milestones/${id}`),
+  batchUpdateMilestones: (updates) => req('PUT',    '/milestones/batch', { updates }),
 }

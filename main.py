@@ -64,6 +64,16 @@ def _init_db():
                 PRIMARY KEY (goal_id, dimension_id)
             )
         """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS milestones (
+                id         TEXT PRIMARY KEY,
+                goal_id    TEXT NOT NULL,
+                start_col  INTEGER NOT NULL,
+                duration   INTEGER NOT NULL DEFAULT 1,
+                title      TEXT NOT NULL DEFAULT '',
+                color      TEXT NOT NULL DEFAULT '#1a73e8'
+            )
+        """)
 
 _init_db()
 
@@ -131,6 +141,23 @@ class CategoryPatch(BaseModel):
 class AssignIn(BaseModel):
     categoryId: str
 
+class MilestoneIn(BaseModel):
+    id: Optional[str] = None
+    goal_id: str
+    start_col: int
+    duration: int = 1
+    title: str = ''
+    color: str = '#1a73e8'
+
+class MilestonePatch(BaseModel):
+    start_col: Optional[int] = None
+    duration: Optional[int] = None
+    title: Optional[str] = None
+    color: Optional[str] = None
+
+class MilestoneBatch(BaseModel):
+    updates: list[dict]
+
 
 # ── Helper converters ─────────────────────────────────────────────────────────
 def _page(row) -> dict:
@@ -145,6 +172,11 @@ def _cat(row) -> dict:
 def _assign(row) -> dict:
     d = dict(row)
     return {"goalId": d["goal_id"], "dimensionId": d["dimension_id"], "categoryId": d["category_id"]}
+
+def _ms(row) -> dict:
+    d = dict(row)
+    return {"id": d["id"], "goalId": d["goal_id"], "startCol": d["start_col"],
+            "duration": d["duration"], "title": d["title"], "color": d["color"]}
 
 
 # ── Pages (goals) ─────────────────────────────────────────────────────────────
@@ -304,3 +336,59 @@ def unassign_category(goal_id: str, dim_id: str):
             "DELETE FROM assignments WHERE goal_id = ? AND dimension_id = ?",
             (goal_id, dim_id),
         )
+
+
+# ── Milestones ────────────────────────────────────────────────────────────────
+@app.get("/milestones")
+def list_milestones():
+    with _db() as con:
+        rows = con.execute("SELECT * FROM milestones ORDER BY start_col").fetchall()
+    return [_ms(r) for r in rows]
+
+@app.post("/milestones", status_code=201)
+def create_milestone(data: MilestoneIn):
+    mid = data.id or str(uuid.uuid4())
+    with _db() as con:
+        con.execute(
+            "INSERT INTO milestones (id, goal_id, start_col, duration, title, color) VALUES (?,?,?,?,?,?)",
+            (mid, data.goal_id, data.start_col, max(1, data.duration), data.title, data.color),
+        )
+    return _ms({"id": mid, "goal_id": data.goal_id, "start_col": data.start_col,
+                "duration": max(1, data.duration), "title": data.title, "color": data.color})
+
+# Registered before /{ms_id} so "batch" is not captured as a path param
+@app.put("/milestones/batch")
+def batch_update_milestones(data: MilestoneBatch):
+    with _db() as con:
+        for u in data.updates:
+            mid = u.get("id")
+            if not mid:
+                continue
+            fields, values = [], []
+            if "startCol" in u: fields.append("start_col = ?"); values.append(u["startCol"])
+            if "duration" in u: fields.append("duration = ?");  values.append(max(1, u["duration"]))
+            if "color"    in u: fields.append("color = ?");     values.append(u["color"])
+            if "title"    in u: fields.append("title = ?");     values.append(u["title"])
+            if fields:
+                con.execute(f"UPDATE milestones SET {', '.join(fields)} WHERE id = ?", (*values, mid))
+    return {"ok": True}
+
+@app.patch("/milestones/{ms_id}")
+def update_milestone(ms_id: str, data: MilestonePatch):
+    with _db() as con:
+        if not con.execute("SELECT id FROM milestones WHERE id = ?", (ms_id,)).fetchone():
+            raise HTTPException(404, "Milestone not found")
+        fields, values = [], []
+        if data.start_col is not None: fields.append("start_col = ?"); values.append(data.start_col)
+        if data.duration  is not None: fields.append("duration = ?");  values.append(max(1, data.duration))
+        if data.title     is not None: fields.append("title = ?");     values.append(data.title)
+        if data.color     is not None: fields.append("color = ?");     values.append(data.color)
+        if fields:
+            con.execute(f"UPDATE milestones SET {', '.join(fields)} WHERE id = ?", (*values, ms_id))
+        row = con.execute("SELECT * FROM milestones WHERE id = ?", (ms_id,)).fetchone()
+    return _ms(row)
+
+@app.delete("/milestones/{ms_id}", status_code=204)
+def delete_milestone(ms_id: str):
+    with _db() as con:
+        con.execute("DELETE FROM milestones WHERE id = ?", (ms_id,))
