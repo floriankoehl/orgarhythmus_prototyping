@@ -6,6 +6,7 @@
   overflow: hidden;
   background: #fff;
   font-family: Arial, sans-serif;
+  position: relative;
 }
 
 /* ── Toolbar ─────────────────────────────────────────────────────────────── */
@@ -15,11 +16,37 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 16px;
+  padding: 0 92px 0 16px;
   border-bottom: 1px solid #e0e0e0;
   background: #fafafa;
   position: relative;
   z-index: 20;
+}
+
+.toolbarDeleteBtn {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  height: 28px;
+  padding: 0 12px;
+  color: #e53e3e;
+  background: #fff;
+  border: 1px solid #e53e3e;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.toolbarDeleteBtn:hover:not(:disabled) {
+  background: #fff0f0;
+}
+
+.toolbarDeleteBtn:disabled {
+  color: #aaa;
+  background: #f5f5f5;
+  border-color: #ddd;
+  cursor: default;
 }
 
 .modePills {
@@ -80,6 +107,113 @@
 
 .dimSelect:focus { outline: 2px solid #1a73e8; outline-offset: 0; }
 
+.categoryFilterWrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.categoryFilterBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #555;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.categoryFilterBtn:hover:not(:disabled) { background: #f5f5f5; }
+
+.categoryFilterBtn:disabled {
+  color: #aaa;
+  background: #f5f5f5;
+  cursor: default;
+}
+
+.categoryFilterBtnOpen {
+  border-color: #1a73e8;
+  color: #1a73e8;
+  background: #e8f0fe;
+}
+
+.categoryFilterMenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 210px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.14);
+  padding: 5px 0;
+  z-index: 100;
+}
+
+.categoryFilterAll {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  color: #1a73e8;
+  background: none;
+  border: none;
+  border-bottom: 1px solid #f0f0f0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.categoryFilterAll:hover { background: #f5f9ff; }
+
+.categoryFilterItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+
+.categoryFilterItem:hover { background: #f5f5f5; }
+
+.categoryFilterItem input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: #1a73e8;
+  flex-shrink: 0;
+}
+
+.categoryFilterDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.categoryFilterName {
+  min-width: 0;
+  flex: 1;
+  font-size: 12px;
+  color: #444;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.categoryFilterEmpty {
+  padding: 9px 12px;
+  font-size: 12px;
+  color: #aaa;
+}
+
 /* Spacing button + panel */
 .spacingWrap {
   position: relative;
@@ -108,6 +242,64 @@
   border-color: #1a73e8;
   color: #1a73e8;
   background: #e8f0fe;
+}
+
+.warningWrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.warningBtn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #555;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.warningBtn:hover { background: #f5f5f5; }
+
+.warningBtnOpen {
+  border-color: #1a73e8;
+  color: #1a73e8;
+  background: #e8f0fe;
+}
+
+.warningMenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 220px;
+  padding: 6px 0;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.14);
+  z-index: 100;
+}
+
+.warningMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  color: #444;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.warningMenuItem:hover { background: #f5f5f5; }
+
+.warningMenuItem input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: #1a73e8;
 }
 
 .spacingPanel {
@@ -176,6 +368,203 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+
+/* ── Floating milestone color legend ─────────────────────────────────────── */
+.legendWidget {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.legendPanel {
+  min-width: 220px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.14);
+}
+
+.legendToggleBtn {
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+  background: rgba(255,255,255,0.88);
+  border: 1px solid #ddd;
+  border-radius: 50%;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.legendToggleBtn:hover {
+  color: #333;
+  background: #fff;
+}
+
+.legendToggleActive {
+  color: #1a73e8 !important;
+  background: #e8f0fe !important;
+  border-color: #1a73e8 !important;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.legendItem:last-of-type { border-bottom: none; }
+
+.legendDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.legendName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: #555;
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.legendEmpty {
+  padding: 10px 12px;
+  color: #aaa;
+  font-size: 12px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.legendDropUpWrap {
+  padding: 0;
+  border-top: 1px solid #ebebeb;
+}
+
+.legendDropUpBtn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 10px 12px;
+  color: #444;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.legendDropUpBtn:hover { background: #f5f5f5; }
+
+.legendDropUpLabel {
+  flex: 1;
+  text-align: left;
+  font-weight: 600;
+}
+
+.legendDropUpMenu {
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  box-shadow: 0 -4px 16px rgba(0,0,0,0.12);
+  z-index: 1000;
+}
+
+.legendDropUpOption {
+  width: 100%;
+  display: block;
+  padding: 9px 14px;
+  color: #444;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+
+.legendDropUpOption:hover { background: #f5f5f5; }
+
+.legendDropUpActive {
+  color: #1a73e8;
+  font-weight: 700;
+}
+
+.warningPrompt {
+  position: absolute;
+  right: 20px;
+  bottom: 72px;
+  z-index: 3000;
+  width: 300px;
+  padding: 14px;
+  background: #fff;
+  border: 1px solid #f3c365;
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.18);
+}
+
+.warningPromptTitle {
+  margin-bottom: 6px;
+  color: #7a4b00;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.warningPromptText {
+  color: #444;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.warningPromptActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.warningIgnoreBtn,
+.warningUndoBtn {
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.warningIgnoreBtn {
+  color: #fff;
+  background: #1a73e8;
+  border: 1px solid #1a73e8;
+}
+
+.warningIgnoreBtn:hover { background: #1558b0; }
+
+.warningUndoBtn {
+  color: #555;
+  background: #fff;
+  border: 1px solid #ddd;
+}
+
+.warningUndoBtn:hover { background: #f5f5f5; }
 
 /* ── Canvas row ──────────────────────────────────────────────────────────── */
 .canvasRow {
@@ -279,6 +668,33 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.laneCollapseBtn {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  padding: 0;
+  color: #aaa;
+  background: rgba(255,255,255,0.6);
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+
+.laneHdr:hover .laneCollapseBtn {
+  opacity: 1;
+}
+
+.laneCollapseBtn:hover {
+  color: #555;
+  background: #fff;
 }
 
 /* Empty / padding row */
@@ -508,16 +924,33 @@
 
 /* ── Dep-mode edge handles ───────────────────────────────────────────────── */
 .depHandle {
+  top: 50%;
+  bottom: auto;
+  left: 0;
+  width: 11px;
+  height: 11px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
   cursor: crosshair;
-  background: rgba(91, 141, 238, 0.35) !important;
+  background: #5b8dee !important;
+  box-shadow: 0 0 0 1px rgba(91,141,238,0.45), 0 1px 4px rgba(0,0,0,0.22);
   opacity: 1;
 }
+
+.msHandleRight.depHandle {
+  left: auto;
+  right: 0;
+  transform: translate(50%, -50%);
+}
+
 .depHandle:hover {
-  background: rgba(91, 141, 238, 0.75) !important;
+  background: #2f6fdf !important;
+  box-shadow: 0 0 0 3px rgba(91,141,238,0.24), 0 1px 4px rgba(0,0,0,0.24);
 }
 /* Source handle: pulsing blue when this milestone is the drawing source */
 .depHandleSource {
-  background: rgba(91, 141, 238, 0.9) !important;
+  background: #1a73e8 !important;
   animation: depPulse 0.9s ease-in-out infinite;
 }
 @keyframes depPulse {
@@ -533,6 +966,27 @@
   overflow: visible;
   pointer-events: none;
   z-index: 3;
+}
+
+.depPath,
+.depPreviewPath {
+  stroke-dasharray: 7 5;
+  animation: depFlow 0.8s linear infinite;
+}
+
+.depPath {
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.depPathSelected {
+  stroke-width: 3;
+  filter: drop-shadow(0 0 3px rgba(26,115,232,0.55));
+}
+
+@keyframes depFlow {
+  from { stroke-dashoffset: 12; }
+  to   { stroke-dashoffset: 0; }
 }
 
 /* ── Hard deadline marker ────────────────────────────────────────────────── */
