@@ -1,0 +1,61 @@
+.ruler {
+  width: 32px;
+  min-height: 1056px;
+  flex-shrink: 0;
+  position: relative;
+  cursor: crosshair;
+  user-select: none;
+
+  /* layered background: subtle warm gradient + thin left accent line */
+  background:
+    linear-gradient(to right, rgba(255,255,255,0.6) 0%, transparent 40%),
+    linear-gradient(to right, #eeede8, #dddbd4);
+  border-right: 1px solid #c4c2bb;
+  box-shadow: 2px 0 5px rgba(0,0,0,0.07), inset -1px 0 0 rgba(255,255,255,0.5);
+}
+
+/* thin accent strip on the very left edge */
+.ruler::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(255,255,255,0.55);
+}
+
+/* Major tick — full width, darker */
+.majorTick {
+  position: absolute;
+  right: 0;
+  width: 14px;
+  height: 1px;
+  background: #888;
+  transform: translateY(-0.5px);
+}
+
+/* Minor tick — half width, lighter */
+.minorTick {
+  position: absolute;
+  right: 0;
+  width: 7px;
+  height: 1px;
+  background: #bbb;
+  transform: translateY(-0.5px);
+}
+
+/* Blue arrow indicator at hover position */
+.indicator {
+  position: absolute;
+  right: -1px;
+  transform: translateY(-5px);
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 8px solid #1a73e8;
+  pointer-events: none;
+  z-index: 5;
+  filter: drop-shadow(0 1px 2px rgba(26,115,232,0.35));
+}

@@ -1,0 +1,250 @@
+.canvas {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+  background: #f0f0f0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 32px 24px 64px;
+}
+
+.addBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1.5px dashed #bbb;
+  background: transparent;
+  color: #bbb;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+  margin-bottom: 4px;
+}
+
+.addBtn:hover {
+  border-color: #888;
+  color: #555;
+  background: rgba(0,0,0,0.03);
+}
+
+.canvas::-webkit-scrollbar { width: 10px; }
+.canvas::-webkit-scrollbar-track { background: #e8e8e8; }
+.canvas::-webkit-scrollbar-thumb { background: #bbb; border-radius: 5px; }
+.canvas::-webkit-scrollbar-thumb:hover { background: #999; }
+
+/* ── Page container (title + card) ──────────────────────── */
+.pageContainer {
+  display: flex;
+  flex-direction: column;
+  width: 816px;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px 6px;
+  min-height: 26px;
+}
+
+.collapseBtn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  color: #bbb;
+  padding: 0;
+  transition: color 0.12s, background 0.12s;
+}
+
+.collapseBtn:hover {
+  background: rgba(0,0,0,0.06);
+  color: #666;
+}
+
+.pageTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: #666;
+  font-family: Arial, sans-serif;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  cursor: default;
+  user-select: none;
+}
+
+.titleInput {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: Arial, sans-serif;
+  color: #333;
+  background: transparent;
+  border: none;
+  border-bottom: 1.5px solid #1a73e8;
+  outline: none;
+  padding: 0;
+}
+
+/* Tag button — appears on hover next to the title */
+.headlineBtn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #aaa;
+  padding: 0;
+  font-size: 12px;
+  transition: color 0.12s, background 0.12s;
+}
+
+.headlineBtn:hover {
+  background: rgba(0,0,0,0.06);
+  color: #555;
+}
+
+.headlineBtnActive {
+  color: #1a73e8;
+}
+
+/* Full-page overlay in headline mode */
+.headlineOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  cursor: default;
+}
+
+/* Invisible hit-area button over each word; text shows through from below */
+.wordBtn {
+  position: absolute;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: transparent;
+  border-radius: 2px;
+}
+
+.wordBtn:hover {
+  background: rgba(26, 115, 232, 0.15);
+  outline: 1.5px solid rgba(26, 115, 232, 0.35);
+  outline-offset: 1px;
+}
+
+/* ── Page card ───────────────────────────────────────────── */
+.page {
+  width: 816px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.18), 0 4px 12px rgba(0,0,0,.09);
+  border-radius: 1px;
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* ── Left zone overlay (captures cut hover/click) ────────── */
+/* Covers the left ~72px which is fully inside the page margin */
+.leftZone {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 72px;
+  cursor: row-resize;
+  z-index: 5;
+  /* subtle visual hint — very faint tint that only shows on hover */
+}
+
+.leftZone:hover {
+  background: linear-gradient(
+    to right,
+    rgba(26, 115, 232, 0.04),
+    transparent
+  );
+}
+
+/* ── Ghost cut line (hover preview) ─────────────────────── */
+.hoverLine {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 10;
+  transform: translateY(-0.5px);
+  border-top: 1.5px dashed rgba(26, 115, 232, 0.55);
+}
+
+/* ── Gap between pages ───────────────────────────────────── */
+.gap {
+  width: 816px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.mergeBtn {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 12px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: #555;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  gap: 2px;
+  transition: border-color 0.12s, color 0.12s;
+}
+
+.mergeBtn:hover {
+  border-color: #1a73e8;
+  color: #1a73e8;
+}
+
+/* ── Editable content ────────────────────────────────────── */
+.editor {
+  padding: 72px 96px;
+  outline: none;
+  font-size: 11pt;
+  font-family: Arial, sans-serif;
+  line-height: 1.5;
+  color: #000;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.editor:empty::before {
+  content: attr(data-placeholder);
+  color: #bbb;
+  pointer-events: none;
+}
+
+.editor ::selection {
+  background: #b4d5fe;
+}
+
+
