@@ -208,15 +208,23 @@ function Page({ page, hoverY, onUpdate, onZoneMove, onZoneLeave, onZoneClick, on
 
 // ── Canvas ────────────────────────────────────────────────────────────────────
 export default function DocumentCanvas() {
-  const [pages, setPages] = useState([mkPage()])
+  const initialPage = useRef(mkPage())
+  const [pages, setPages] = useState([initialPage.current])
   const [hoverInfo, setHoverInfo] = useState(null)
   const refs = useRef({})
-  const htmlSaveTimers = useRef({})   // debounce per-page html saves
+  const htmlSaveTimers = useRef({})
 
   // ── Load from backend on mount ─────────────────────────────────────────────
   useEffect(() => {
     api.getPages()
-      .then(data => { if (data.length > 0) setPages(data) })
+      .then(data => {
+        if (data.length > 0) {
+          setPages(data)
+        } else {
+          // Backend is empty — register the default page so PATCHes don't 404
+          api.createPage(initialPage.current).catch(console.error)
+        }
+      })
       .catch(() => { /* backend not running — use local default */ })
   }, [])
 
@@ -245,15 +253,16 @@ export default function DocumentCanvas() {
   }
 
   // ── Structural operations ──────────────────────────────────────────────────
-  const addPageAtTop = () => {
+  const addPageAtTop = async () => {
     const page = mkPage()
-    setPages(prev => {
-      const next = [page, ...prev]
-      api.createPage(page)
-        .then(() => api.reorderPages(next.map(p => p.id)))
-        .catch(console.error)
-      return next
-    })
+    try {
+      await api.createPage(page)
+      setPages(prev => {
+        const next = [page, ...prev]
+        api.reorderPages(next.map(p => p.id)).catch(console.error)
+        return next
+      })
+    } catch (e) { console.error(e) }
   }
 
   const handleEmpty = id => {
@@ -265,19 +274,20 @@ export default function DocumentCanvas() {
     })
   }
 
-  const handleMerge = i => {
+  const handleMerge = async i => {
     const a = pages[i], b = pages[i + 1]
     const htmlA = refs.current[a.id]?.editor?.innerHTML ?? a.html
     const htmlB = refs.current[b.id]?.editor?.innerHTML ?? b.html
     const merged = mkPage({ html: htmlA + htmlB, title: a.title })
-    setPages(prev => {
-      const next = [...prev]; next.splice(i, 2, merged)
-      Promise.all([api.deletePage(a.id), api.deletePage(b.id)])
-        .then(() => api.createPage(merged))
-        .then(() => api.reorderPages(next.map(p => p.id)))
-        .catch(console.error)
-      return next
-    })
+    try {
+      await Promise.all([api.deletePage(a.id), api.deletePage(b.id)])
+      await api.createPage(merged)
+      setPages(prev => {
+        const next = [...prev]; next.splice(i, 2, merged)
+        api.reorderPages(next.map(p => p.id)).catch(console.error)
+        return next
+      })
+    } catch (e) { console.error(e) }
   }
 
   // ── Cut ────────────────────────────────────────────────────────────────────
@@ -289,7 +299,7 @@ export default function DocumentCanvas() {
 
   const handleZoneLeave = () => setHoverInfo(null)
 
-  const handleZoneClick = pageId => {
+  const handleZoneClick = async pageId => {
     const info = hoverInfo
     if (!info || info.pageId !== pageId) return
     const { page: pageEl, editor: editorEl } = refs.current[pageId] || {}
@@ -303,21 +313,23 @@ export default function DocumentCanvas() {
     const isEmpty = html => { const d = document.createElement('div'); d.innerHTML = html; return d.innerText.trim() === '' }
 
     const original = pages.find(p => p.id === pageId)
-    setPages(prev => {
-      const idx = prev.findIndex(p => p.id === pageId)
-      const halves = [
-        mkPage({ html: html1, title: original?.title ?? 'Untitled' }),
-        mkPage({ html: html2 }),
-      ].filter(p => !isEmpty(p.html))
-      if (!halves.length) return prev
-      const next = [...prev]; next.splice(idx, 1, ...halves)
-      api.deletePage(pageId)
-        .then(() => Promise.all(halves.map(p => api.createPage(p))))
-        .then(() => api.reorderPages(next.map(p => p.id)))
-        .catch(console.error)
-      return next
-    })
+    const idx = pages.findIndex(p => p.id === pageId)
+    const halves = [
+      mkPage({ html: html1, title: original?.title ?? 'Untitled' }),
+      mkPage({ html: html2 }),
+    ].filter(p => !isEmpty(p.html))
+    if (!halves.length) return
+
     setHoverInfo(null)
+    try {
+      await api.deletePage(pageId)
+      await Promise.all(halves.map(p => api.createPage(p)))
+      setPages(prev => {
+        const next = [...prev]; next.splice(idx, 1, ...halves)
+        api.reorderPages(next.map(p => p.id)).catch(console.error)
+        return next
+      })
+    } catch (e) { console.error(e) }
   }
 
   return (

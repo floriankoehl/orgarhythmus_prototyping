@@ -1,8 +1,13 @@
+import sqlite3
+import uuid
+from contextlib import contextmanager
+from typing import Optional
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
-import uuid
+
+DB_PATH = "goals.db"
 
 app = FastAPI()
 
@@ -13,14 +18,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── In-memory store (swap dict + list for SQLite rows later) ──────────────────
-_pages: dict[str, dict] = {}
-_order: list[str] = []          # maintains page sequence
+
+# ── DB setup ──────────────────────────────────────────────────────────────────
+def _init_db():
+    with _db() as con:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS pages (
+                id       TEXT PRIMARY KEY,
+                html     TEXT NOT NULL DEFAULT '',
+                title    TEXT NOT NULL DEFAULT 'Untitled',
+                collapsed INTEGER NOT NULL DEFAULT 0,
+                order_idx INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+
+@contextmanager
+def _db():
+    con = sqlite3.connect(DB_PATH, check_same_thread=False)
+    con.row_factory = sqlite3.Row
+    try:
+        yield con
+        con.commit()
+    finally:
+        con.close()
+
+def _row(row) -> dict:
+    d = dict(row)
+    d["collapsed"] = bool(d["collapsed"])
+    return d
+
+_init_db()
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
 class PageIn(BaseModel):
-    id: Optional[str] = None    # client may supply its own UUID
+    id: Optional[str] = None
     html: str = ""
     title: str = "Untitled"
     collapsed: bool = False
@@ -37,46 +69,58 @@ class OrderIn(BaseModel):
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.get("/pages")
 def list_pages():
-    return [_pages[id] for id in _order if id in _pages]
+    with _db() as con:
+        rows = con.execute("SELECT * FROM pages ORDER BY order_idx").fetchall()
+    return [_row(r) for r in rows]
 
 
 @app.post("/pages", status_code=201)
 def create_page(data: PageIn):
     page_id = data.id or str(uuid.uuid4())
-    if page_id in _pages:
-        raise HTTPException(status_code=409, detail="Page already exists")
-    page = {"id": page_id, "html": data.html, "title": data.title, "collapsed": data.collapsed}
-    _pages[page_id] = page
-    _order.append(page_id)
-    return page
+    with _db() as con:
+        existing = con.execute("SELECT id FROM pages WHERE id = ?", (page_id,)).fetchone()
+        if existing:
+            raise HTTPException(status_code=409, detail="Page already exists")
+        max_order = con.execute("SELECT COALESCE(MAX(order_idx), -1) FROM pages").fetchone()[0]
+        con.execute(
+            "INSERT INTO pages (id, html, title, collapsed, order_idx) VALUES (?, ?, ?, ?, ?)",
+            (page_id, data.html, data.title, int(data.collapsed), max_order + 1),
+        )
+    return {"id": page_id, "html": data.html, "title": data.title, "collapsed": data.collapsed}
 
 
 @app.patch("/pages/{page_id}")
 def update_page(page_id: str, data: PagePatch):
-    if page_id not in _pages:
-        raise HTTPException(status_code=404, detail="Page not found")
-    page = _pages[page_id]
-    if data.html is not None:
-        page["html"] = data.html
-    if data.title is not None:
-        page["title"] = data.title
-    if data.collapsed is not None:
-        page["collapsed"] = data.collapsed
-    return page
+    with _db() as con:
+        row = con.execute("SELECT * FROM pages WHERE id = ?", (page_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Page not found")
+        fields, values = [], []
+        if data.html is not None:
+            fields.append("html = ?"); values.append(data.html)
+        if data.title is not None:
+            fields.append("title = ?"); values.append(data.title)
+        if data.collapsed is not None:
+            fields.append("collapsed = ?"); values.append(int(data.collapsed))
+        if fields:
+            con.execute(f"UPDATE pages SET {', '.join(fields)} WHERE id = ?", (*values, page_id))
+        updated = con.execute("SELECT * FROM pages WHERE id = ?", (page_id,)).fetchone()
+    return _row(updated)
 
 
 @app.delete("/pages/{page_id}", status_code=204)
 def delete_page(page_id: str):
-    if page_id not in _pages:
-        raise HTTPException(status_code=404, detail="Page not found")
-    del _pages[page_id]
-    _order.remove(page_id)
+    with _db() as con:
+        if not con.execute("SELECT id FROM pages WHERE id = ?", (page_id,)).fetchone():
+            raise HTTPException(status_code=404, detail="Page not found")
+        con.execute("DELETE FROM pages WHERE id = ?", (page_id,))
 
 
 @app.put("/pages/order")
 def reorder_pages(data: OrderIn):
-    for id in data.ids:
-        if id not in _pages:
-            raise HTTPException(status_code=404, detail=f"Page {id} not found")
-    _order[:] = data.ids
+    with _db() as con:
+        for i, page_id in enumerate(data.ids):
+            if not con.execute("SELECT id FROM pages WHERE id = ?", (page_id,)).fetchone():
+                raise HTTPException(status_code=404, detail=f"Page {page_id} not found")
+            con.execute("UPDATE pages SET order_idx = ? WHERE id = ?", (i, page_id))
     return {"ok": True}
