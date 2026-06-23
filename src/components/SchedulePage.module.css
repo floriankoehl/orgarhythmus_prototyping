@@ -294,7 +294,7 @@
   overflow: scroll;
   position: relative;
   cursor: default;
-  scrollbar-gutter: stable;
+  will-change: scroll-position;
 }
 
 /* ── Grid inner (virtual canvas) ─────────────────────────────────────────── */
@@ -401,6 +401,96 @@
   pointer-events: none;
   box-sizing: border-box;
 }
+
+/* ── Milestones ──────────────────────────────────────────────────────────── */
+.milestone {
+  position: absolute;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  user-select: none;
+  cursor: grab;
+  z-index: 4;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.22);
+  overflow: visible; /* handles overflow outside bounds */
+  min-width: 4px;
+  transition: box-shadow 0.1s;
+}
+.milestone:active { cursor: grabbing; }
+
+.milestoneSelected {
+  outline: 2px solid rgba(255,255,255,0.9);
+  box-shadow: 0 0 0 3px rgba(26,115,232,0.7), 0 1px 4px rgba(0,0,0,0.22);
+}
+
+.msHandle {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+  border-radius: 3px 0 0 3px;
+  background: rgba(0,0,0,0.15);
+  flex-shrink: 0;
+  z-index: 1;
+}
+.msHandle:hover { background: rgba(0,0,0,0.3); }
+
+.msHandleRight {
+  left: auto;
+  right: 0;
+  border-radius: 0 3px 3px 0;
+}
+
+.msLabel {
+  font-size: 10px;
+  color: rgba(255,255,255,0.95);
+  padding: 0 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  font-weight: 600;
+  pointer-events: none;
+  letter-spacing: 0.1px;
+}
+
+/* ── Marquee selection rect ──────────────────────────────────────────────── */
+.marqueeRect {
+  position: absolute;
+  border: 1.5px dashed #1a73e8;
+  background: rgba(26,115,232,0.07);
+  pointer-events: none;
+  z-index: 5;
+  display: none;
+  border-radius: 2px;
+}
+
+/* ── Context menu ────────────────────────────────────────────────────────── */
+.ctxMenu {
+  position: fixed;
+  min-width: 190px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.14);
+  padding: 4px 0;
+  z-index: 999;
+}
+
+.ctxItem {
+  display: block;
+  width: 100%;
+  padding: 7px 14px;
+  font-size: 12px;
+  color: #333;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+}
+.ctxItem:hover { background: #f5f5f5; color: #1a73e8; }
 
 /* ── Cell hover highlight ────────────────────────────────────────────────── */
 /*
