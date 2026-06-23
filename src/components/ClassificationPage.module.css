@@ -25,17 +25,11 @@
   font-family: Arial, sans-serif;
 }
 
-.topBarRight {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+.topBarRight { display: flex; align-items: center; gap: 8px; }
 
 .controlLabel {
-  font-size: 12px;
-  color: #888;
-  font-family: Arial, sans-serif;
-  white-space: nowrap;
+  font-size: 12px; color: #888;
+  font-family: Arial, sans-serif; white-space: nowrap;
 }
 
 /* ── Body ────────────────────────────────────────────────── */
@@ -43,6 +37,7 @@
   flex: 1;
   display: flex;
   overflow: hidden;
+  min-height: 0;
 }
 
 /* ── Left panel ──────────────────────────────────────────── */
@@ -53,10 +48,8 @@
   border-right: 1px solid #e0e0e0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
 }
 
-/* Upper block scrolls if many dimensions */
 .panelUpper {
   flex: 1;
   overflow-y: auto;
@@ -64,432 +57,290 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 0;
 }
 
-/* Lower block pinned to bottom */
 .panelLower {
   flex-shrink: 0;
   border-top: 1px solid #ebebeb;
-  padding: 14px 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  /* categories grow upward — lower block expands toward panelUpper */
 }
 
 .panelLabel {
-  font-size: 10px;
-  font-weight: 700;
-  color: #aaa;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  font-size: 10px; font-weight: 700; color: #aaa;
+  text-transform: uppercase; letter-spacing: 0.08em;
   font-family: Arial, sans-serif;
 }
 
-/* ── Shared input / button styles ────────────────────────── */
+/* ── Shared controls ─────────────────────────────────────── */
 .dimSelect {
-  width: 100%;
-  padding: 5px 8px;
-  font-size: 12px;
-  font-family: Arial, sans-serif;
-  color: #333;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  background: #fafafa;
-  cursor: pointer;
-  outline: none;
+  width: 100%; padding: 5px 8px; font-size: 12px;
+  font-family: Arial, sans-serif; color: #333;
+  border: 1px solid #ddd; border-radius: 4px;
+  background: #fafafa; cursor: pointer; outline: none;
 }
-
 .dimSelect:focus { border-color: #1a73e8; }
 
 .textInput {
-  width: 100%;
-  padding: 5px 8px;
-  font-size: 12px;
-  font-family: Arial, sans-serif;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  outline: none;
-  box-sizing: border-box;
+  width: 100%; padding: 5px 8px; font-size: 12px;
+  font-family: Arial, sans-serif; border: 1px solid #ddd;
+  border-radius: 4px; outline: none; box-sizing: border-box;
 }
-
 .textInput:focus { border-color: #1a73e8; }
 
 .submitBtn {
-  padding: 4px 10px;
-  font-size: 11px;
-  font-family: Arial, sans-serif;
-  background: #1a73e8;
-  color: #fff;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  white-space: nowrap;
+  padding: 4px 10px; font-size: 11px; font-family: Arial, sans-serif;
+  background: #1a73e8; color: #fff; border: none; border-radius: 4px;
+  cursor: pointer; white-space: nowrap; flex-shrink: 0;
 }
-
 .submitBtn:hover { background: #1558b0; }
 
-.iconBtn {
-  width: 20px;
-  height: 20px;
-  border: none;
-  background: none;
-  font-size: 16px;
-  line-height: 1;
-  color: #666;
-  cursor: pointer;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
+.cancelBtn {
+  background: none; border: none; color: #bbb; font-size: 13px;
+  cursor: pointer; padding: 2px 4px; border-radius: 3px;
+  line-height: 1; flex-shrink: 0;
 }
-
-.iconBtn:hover { background: #f0f0f0; color: #333; }
+.cancelBtn:hover { color: #666; }
 
 .deleteBtn {
-  flex-shrink: 0;
-  background: none;
-  border: none;
-  color: #ccc;
-  font-size: 10px;
-  cursor: pointer;
-  padding: 0 2px;
-  border-radius: 3px;
-  line-height: 1;
+  flex-shrink: 0; background: none; border: none;
+  color: #ccc; font-size: 10px; cursor: pointer;
+  padding: 0 2px; border-radius: 3px; line-height: 1;
 }
-
 .deleteBtn:hover { color: #e53e3e; background: #fff0f0; }
 
-/* ── New dimension form ──────────────────────────────────── */
-.newDimForm {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-}
+/* ── Dimension list (upper panel) ────────────────────────── */
+.newDimForm { display: flex; gap: 4px; align-items: center; }
 
-/* ── Dimension list ──────────────────────────────────────── */
-.dimList {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-top: 6px;
-}
-
-.dimItem {
-  border-radius: 4px;
-  overflow: hidden;
-}
+.dimList { display: flex; flex-direction: column; gap: 2px; }
+.dimItem { border-radius: 4px; overflow: hidden; }
 
 .dimHeader {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 4px;
-  border-radius: 4px;
-  cursor: default;
+  display: flex; align-items: center; gap: 4px;
+  padding: 5px 4px; border-radius: 4px;
 }
-
 .dimHeader:hover { background: #f5f5f5; }
 
 .dimToggle {
-  background: none;
-  border: none;
-  color: #bbb;
-  cursor: pointer;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
+  background: none; border: none; color: #bbb;
+  cursor: pointer; padding: 0; display: flex;
+  align-items: center; flex-shrink: 0;
 }
 
 .dimName {
-  font-size: 12px;
-  font-weight: 600;
-  color: #444;
-  font-family: Arial, sans-serif;
-  flex: 1;
+  font-size: 12px; font-weight: 600; color: #444;
+  font-family: Arial, sans-serif; flex: 1;
 }
 
-/* ── Dimension body (categories + add form) ──────────────── */
 .dimBody {
   padding: 4px 4px 8px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+  display: flex; flex-direction: column; gap: 3px;
 }
 
 .catRow {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 2px;
-  border-radius: 3px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 2px; border-radius: 3px;
 }
-
 .catRow:hover { background: #f8f8f8; }
 
-.catDot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
+.catDot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.catName { font-size: 12px; color: #555; font-family: Arial, sans-serif; flex: 1; }
 
-.catName {
-  font-size: 12px;
-  color: #555;
-  font-family: Arial, sans-serif;
-  flex: 1;
-}
+.newCatForm { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
 
-/* ── New category form ───────────────────────────────────── */
-.newCatForm {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  margin-top: 4px;
-}
-
-.colorPicker {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
+.colorPicker { display: flex; gap: 4px; flex-wrap: wrap; }
 
 .colorSwatch {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: none;
-  cursor: pointer;
-  padding: 0;
-  flex-shrink: 0;
-  transition: transform 0.1s;
+  width: 14px; height: 14px; border-radius: 50%; border: none;
+  cursor: pointer; padding: 0; flex-shrink: 0; transition: transform 0.1s;
 }
-
 .colorSwatch:hover { transform: scale(1.2); }
 
-/* ── Canvas ──────────────────────────────────────────────── */
-.canvas {
-  flex: 1;
-  overflow: auto;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 40px 24px;
+/* ── Legend (lower panel) ────────────────────────────────── */
+.addLegendCatBtn {
+  display: block; width: 100%; padding: 9px 12px;
+  text-align: left; background: none; border: none;
+  font-size: 12px; font-family: Arial, sans-serif;
+  color: #1a73e8; cursor: pointer;
+  border-bottom: 1px solid #f0f0f0;
+}
+.addLegendCatBtn:hover { background: #f5f9ff; }
+
+.legendCatForm {
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 6px;
+  border-bottom: 1px solid #f0f0f0;
 }
 
-/* ── Goals box ───────────────────────────────────────────── */
-.goalsBox {
-  width: 480px;
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.12), 0 4px 16px rgba(0,0,0,0.07);
-  overflow: hidden;
+.legendCatInputRow { display: flex; gap: 4px; align-items: center; }
+
+.legendItem {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid #f5f5f5;
+}
+.legendItem:last-of-type { border-bottom: none; }
+
+.legendDot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+.legendName { font-size: 12px; color: #555; font-family: Arial, sans-serif; }
+
+/* ── Drop-up selector ────────────────────────────────────── */
+.dropUpWrap {
+  border-top: 1px solid #ebebeb;
+  padding: 0;
 }
 
-.goalsBoxHeader {
-  display: flex;
-  align-items: center;
+.dropUpBtn {
+  width: 100%; display: flex; align-items: center;
   justify-content: space-between;
-  padding: 14px 16px 12px;
-  border-bottom: 1px solid #f0f0f0;
+  padding: 10px 12px; background: none; border: none;
+  font-size: 12px; font-family: Arial, sans-serif;
+  color: #444; cursor: pointer; gap: 6px;
 }
+.dropUpBtn:hover { background: #f5f5f5; }
 
-.goalsBoxTitle {
-  font-size: 13px;
-  font-weight: 700;
-  color: #333;
-  font-family: Arial, sans-serif;
-}
+.dropUpLabel { flex: 1; text-align: left; font-weight: 600; }
 
-.goalsBoxCount {
-  font-size: 11px;
-  font-weight: 600;
-  color: #fff;
-  background: #1a73e8;
-  border-radius: 10px;
-  padding: 1px 7px;
-  font-family: Arial, sans-serif;
-}
-
-.empty {
-  font-size: 12px;
-  color: #bbb;
-  font-family: Arial, sans-serif;
-  text-align: center;
-  padding: 28px 16px;
-  margin: 0;
-}
-
-.goalsList {
-  display: flex;
-  flex-direction: column;
-}
-
-/* ── Group header ────────────────────────────────────────── */
-.groupHeader {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  background: #f8f8f8;
-  border-bottom: 1px solid #f0f0f0;
-  border-top: 1px solid #f0f0f0;
-}
-
-.groupStripe {
-  width: 3px;
-  height: 14px;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-
-.groupName {
-  font-size: 11px;
-  font-weight: 700;
-  color: #555;
-  font-family: Arial, sans-serif;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  flex: 1;
-}
-
-.groupCount {
-  font-size: 11px;
-  color: #aaa;
-  font-family: Arial, sans-serif;
-}
-
-/* ── Goal row ────────────────────────────────────────────── */
-.goalRow {
-  border-bottom: 1px solid #f4f4f4;
-}
-
-.goalRow:last-child { border-bottom: none; }
-
-.goalRowHeader {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 9px 14px 9px 10px;
-}
-
-.goalRowHeader:hover { background: #fafafa; }
-
-.rowChevron {
-  background: none;
-  border: none;
-  color: #bbb;
-  cursor: pointer;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.rowTitle {
-  font-size: 12px;
-  font-weight: 600;
-  color: #444;
-  font-family: Arial, sans-serif;
-  flex: 1;
-}
-
-/* ── Color dot + assignment dropdown ─────────────────────── */
-.dotWrap {
-  position: relative;
-  flex-shrink: 0;
-}
-
-.colorDot {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid;
-  cursor: pointer;
-  padding: 0;
-  display: block;
-  transition: transform 0.1s;
-}
-
-.colorDot:hover { transform: scale(1.2); }
-
-.assignDropdown {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  z-index: 300;
+.dropUpMenu {
   background: #fff;
   border: 1px solid #e0e0e0;
   border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.13);
-  min-width: 160px;
-  padding: 4px 0;
+  box-shadow: 0 -4px 16px rgba(0,0,0,0.12);
+  overflow: hidden;
+  z-index: 1000;
 }
 
-.assignOption {
-  width: 100%;
+.dropUpOption {
+  width: 100%; display: block; padding: 9px 14px;
+  text-align: left; background: none; border: none;
+  font-size: 12px; font-family: Arial, sans-serif;
+  color: #444; cursor: pointer;
+}
+.dropUpOption:hover { background: #f5f5f5; }
+.dropUpActive { font-weight: 700; color: #1a73e8; }
+
+/* ── Canvas (grid) ───────────────────────────────────────── */
+.canvas {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+  align-content: start;
+  min-height: 0;
+}
+
+/* ── Category container box ──────────────────────────────── */
+.catBox {
+  background: #fff;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1), 0 2px 8px rgba(0,0,0,0.06);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 280px;
+}
+
+.catBoxHeader {
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px;
+  border-top: 3px solid transparent;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.catBoxName {
+  font-size: 12px; font-weight: 700; color: #444;
+  font-family: Arial, sans-serif;
+}
+
+.catBoxCount {
+  font-size: 11px; color: #aaa;
+  font-family: Arial, sans-serif; font-weight: 600;
+}
+
+.catBoxBody { flex: 1; overflow-y: auto; min-height: 0; }
+
+.catBoxEmpty {
+  padding: 20px 14px; font-size: 12px; color: #ccc;
+  font-family: Arial, sans-serif; text-align: center;
+}
+
+/* ── Drag states ─────────────────────────────────────────── */
+.dragOver {
+  background: #f0f7ff;
+  box-shadow: 0 0 0 2px #1a73e8, 0 2px 8px rgba(26,115,232,0.15);
+}
+
+/* ── Goal row ────────────────────────────────────────────── */
+.goalRow { border-bottom: 1px solid #f4f4f4; cursor: grab; }
+.goalRow:last-child { border-bottom: none; }
+.dragging { opacity: 0.35; }
+
+.goalRowHeader {
+  display: flex; align-items: center; gap: 6px;
+  padding: 9px 12px 9px 8px;
+}
+.goalRowHeader:hover { background: #fafafa; }
+
+.rowChevron {
+  background: none; border: none; color: #bbb;
+  cursor: pointer; padding: 0; display: flex; align-items: center; flex-shrink: 0;
+}
+
+.rowTitle {
+  font-size: 12px; font-weight: 600; color: #444;
+  font-family: Arial, sans-serif; flex: 1;
+}
+
+.goalContent {
+  padding: 4px 12px 12px 26px;
+  font-size: 11pt; font-family: Arial, sans-serif;
+  line-height: 1.5; color: #666; background: #fafafa;
+  border-top: 1px solid #f4f4f4; word-wrap: break-word;
+}
+.goalContent > * { margin: 4px 0 0; }
+
+/* ── Add category box (grid item) ────────────────────────── */
+.addCatBox {
+  min-height: 80px;
+  align-self: start;
+  border: 1.5px dashed #ccc;
+  border-radius: 6px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
-  background: none;
-  border: none;
-  font-size: 12px;
-  font-family: Arial, sans-serif;
-  color: #333;
+  justify-content: center;
   cursor: pointer;
-  text-align: left;
+  color: #ccc;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.addCatBox:hover {
+  border-color: #aaa; color: #888;
+  background: rgba(0,0,0,0.02);
 }
 
-.assignOption:hover { background: #f5f5f5; }
-
-.assignOptionActive { font-weight: 600; }
-
-.dotSmall {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
+.addCatActive {
+  border-style: solid;
+  border-color: #1a73e8;
+  align-self: start;
+  min-height: 80px;
 }
 
-.checkmark {
-  margin-left: auto;
-  color: #1a73e8;
-  font-size: 11px;
-}
-
-.assignDivider {
-  height: 1px;
-  background: #f0f0f0;
-  margin: 3px 0;
-}
-
-.assignRemove {
+.addCatForm {
+  padding: 12px;
+  display: flex; flex-direction: column; gap: 8px;
   width: 100%;
-  padding: 6px 12px;
-  background: none;
-  border: none;
-  font-size: 11px;
-  font-family: Arial, sans-serif;
-  color: #e53e3e;
-  cursor: pointer;
-  text-align: left;
 }
 
-.assignRemove:hover { background: #fff0f0; }
-
-/* ── Expanded goal content ───────────────────────────────── */
-.goalContent {
-  padding: 4px 16px 14px 30px;
-  font-size: 11pt;
-  font-family: Arial, sans-serif;
-  line-height: 1.5;
-  color: #666;
-  background: #fafafa;
-  border-top: 1px solid #f4f4f4;
-  word-wrap: break-word;
+.addCatInput {
+  width: 100%; padding: 6px 8px; font-size: 12px;
+  font-family: Arial, sans-serif; border: 1px solid #ddd;
+  border-radius: 4px; outline: none; box-sizing: border-box;
 }
+.addCatInput:focus { border-color: #1a73e8; }
 
-.goalContent > * { margin: 4px 0 0; }
+.addCatActions { display: flex; gap: 6px; }
