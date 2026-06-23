@@ -2,9 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import styles from './DocumentCanvas.module.css'
 import { api } from '../api'
 
-// ── Page factory ──────────────────────────────────────────────────────────────
-// html is initial content only; live content lives in the DOM via contentEditable
-const mkPage = (overrides = {}) => ({
+const mkGoal = (overrides = {}) => ({
   id: crypto.randomUUID(),
   html: '',
   title: 'Untitled',
@@ -67,13 +65,13 @@ function computeWordRects(editorEl, pageEl) {
   return result
 }
 
-// ── Gap between pages ─────────────────────────────────────────────────────────
-function PageGap({ onMerge, disabled }) {
+// ── Gap between goals ─────────────────────────────────────────────────────────
+function GoalGap({ onMerge, disabled }) {
   const [hot, setHot] = useState(false)
   return (
     <div className={styles.gap} onMouseEnter={() => setHot(true)} onMouseLeave={() => setHot(false)}>
       {hot && !disabled && (
-        <button className={styles.mergeBtn} onClick={onMerge} title="Merge pages">
+        <button className={styles.mergeBtn} onClick={onMerge} title="Merge goals">
           <MergeIcon /> merge
         </button>
       )}
@@ -81,9 +79,9 @@ function PageGap({ onMerge, disabled }) {
   )
 }
 
-// ── Single page card ──────────────────────────────────────────────────────────
-function Page({ page, hoverY, onUpdate, onZoneMove, onZoneLeave, onZoneClick, onRegister, onEmpty }) {
-  const [titleIsCustom, setTitleIsCustom] = useState(page.title !== 'Untitled')
+// ── Single goal card ──────────────────────────────────────────────────────────
+function Goal({ goal, hoverY, onUpdate, onZoneMove, onZoneLeave, onZoneClick, onRegister, onEmpty }) {
+  const [titleIsCustom, setTitleIsCustom] = useState(goal.title !== 'Untitled')
   const [editingTitle, setEditingTitle] = useState(false)
   const [headlineMode, setHeadlineMode] = useState(false)
   const [wordRects, setWordRects] = useState([])
@@ -114,7 +112,7 @@ function Page({ page, hoverY, onUpdate, onZoneMove, onZoneLeave, onZoneClick, on
   }
 
   const handleWordClick = word => {
-    const next = headlineStarted ? page.title + ' ' + word : word
+    const next = headlineStarted ? goal.title + ' ' + word : word
     if (!headlineStarted) setHeadlineStarted(true)
     setTitleIsCustom(true)
     onUpdate({ title: next })
@@ -127,23 +125,23 @@ function Page({ page, hoverY, onUpdate, onZoneMove, onZoneLeave, onZoneClick, on
   }
 
   return (
-    <div className={styles.pageContainer} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+    <div className={styles.goalContainer} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <div className={styles.titleRow}>
-        <button className={styles.collapseBtn} onClick={() => onUpdate({ collapsed: !page.collapsed })} title={page.collapsed ? 'Expand' : 'Collapse'}>
-          <ChevronIcon collapsed={page.collapsed} />
+        <button className={styles.collapseBtn} onClick={() => onUpdate({ collapsed: !goal.collapsed })} title={goal.collapsed ? 'Expand' : 'Collapse'}>
+          <ChevronIcon collapsed={goal.collapsed} />
         </button>
         {editingTitle ? (
           <input
             className={styles.titleInput}
-            defaultValue={page.title}
+            defaultValue={goal.title}
             autoFocus
             onFocus={e => e.target.select()}
             onBlur={e => commitTitle(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') e.target.blur() }}
           />
         ) : (
-          <span className={styles.pageTitle} onDoubleClick={() => setEditingTitle(true)} title="Double-click to edit">
-            {page.title}
+          <span className={styles.goalTitle} onDoubleClick={() => setEditingTitle(true)} title="Double-click to edit">
+            {goal.title}
           </span>
         )}
         {(hovered || headlineMode) && !editingTitle && (
@@ -157,89 +155,89 @@ function Page({ page, hoverY, onUpdate, onZoneMove, onZoneLeave, onZoneClick, on
         )}
       </div>
 
-      {!page.collapsed && <div
-        ref={el => { onRegister(page.id, 'page', el); pageElRef.current = el }}
-        className={styles.page}
-      >
-        {!headlineMode && (
-          <div className={styles.leftZone} onMouseMove={onZoneMove} onMouseLeave={onZoneLeave} onClick={onZoneClick} />
-        )}
-        {!headlineMode && hoverY !== null && (
-          <div className={styles.hoverLine} style={{ top: hoverY }} />
-        )}
-        {headlineMode && (
-          <div className={styles.headlineOverlay} onClick={() => setHeadlineMode(false)}>
-            {wordRects.map((w, i) => (
-              <button key={i} className={styles.wordBtn}
-                style={{ top: w.top, left: w.left, width: w.width, height: w.height }}
-                onClick={e => { e.stopPropagation(); handleWordClick(w.word) }}
-              />
-            ))}
-          </div>
-        )}
-        <div
-          ref={el => {
-            onRegister(page.id, 'editor', el)
-            if (el && !el._ready) { el.innerHTML = page.html; el._ready = true; editorElRef.current = el }
-          }}
-          className={styles.editor}
-          contentEditable={!headlineMode}
-          suppressContentEditableWarning
-          spellCheck={!headlineMode}
-          onInput={e => {
-            const el = e.currentTarget
-            if (!titleIsCustom) onUpdate({ title: deriveTitle(el) })
-            onUpdate({ html: el.innerHTML })
-            if (el.innerText.trim() === '') onEmpty?.()
-          }}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              document.execCommand('insertParagraph')
-              document.execCommand('insertParagraph')
-            }
-          }}
-          data-placeholder="Start typing…"
-        />
-      </div>}
+      {!goal.collapsed && (
+        <div ref={el => { onRegister(goal.id, 'page', el); pageElRef.current = el }} className={styles.goal}>
+          {!headlineMode && (
+            <div className={styles.leftZone} onMouseMove={onZoneMove} onMouseLeave={onZoneLeave} onClick={onZoneClick} />
+          )}
+          {!headlineMode && hoverY !== null && (
+            <div className={styles.hoverLine} style={{ top: hoverY }} />
+          )}
+          {headlineMode && (
+            <div className={styles.headlineOverlay} onClick={() => setHeadlineMode(false)}>
+              {wordRects.map((w, i) => (
+                <button key={i} className={styles.wordBtn}
+                  style={{ top: w.top, left: w.left, width: w.width, height: w.height }}
+                  onClick={e => { e.stopPropagation(); handleWordClick(w.word) }}
+                />
+              ))}
+            </div>
+          )}
+          <div
+            ref={el => {
+              onRegister(goal.id, 'editor', el)
+              if (el && !el._ready) { el.innerHTML = goal.html; el._ready = true; editorElRef.current = el }
+            }}
+            className={styles.editor}
+            contentEditable={!headlineMode}
+            suppressContentEditableWarning
+            spellCheck={!headlineMode}
+            onInput={e => {
+              const el = e.currentTarget
+              if (!titleIsCustom) onUpdate({ title: deriveTitle(el) })
+              onUpdate({ html: el.innerHTML })
+              if (el.innerText.trim() === '') onEmpty?.()
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                document.execCommand('insertParagraph')
+                document.execCommand('insertParagraph')
+              }
+            }}
+            data-placeholder="Start typing…"
+          />
+        </div>
+      )}
     </div>
   )
 }
 
 // ── Canvas ────────────────────────────────────────────────────────────────────
-export default function DocumentCanvas() {
-  const initialPage = useRef(mkPage())
-  const [pages, setPages] = useState([initialPage.current])
+export default function DocumentCanvas({ onGoalsChange }) {
+  const initialGoal = useRef(mkGoal())
+  const [goals, setGoals] = useState([initialGoal.current])
   const [hoverInfo, setHoverInfo] = useState(null)
   const refs = useRef({})
   const htmlSaveTimers = useRef({})
+
+  // Notify parent whenever goals change (for Classification page)
+  useEffect(() => {
+    onGoalsChange?.(goals)
+  }, [goals]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Load from backend on mount ─────────────────────────────────────────────
   useEffect(() => {
     api.getPages()
       .then(data => {
         if (data.length > 0) {
-          setPages(data)
+          setGoals(data)
         } else {
-          // Backend is empty — register the default page so PATCHes don't 404
-          api.createPage(initialPage.current).catch(console.error)
+          api.createPage(initialGoal.current).catch(console.error)
         }
       })
-      .catch(() => { /* backend not running — use local default */ })
+      .catch(() => {})
   }, [])
 
-  // ── Registration ───────────────────────────────────────────────────────────
-  const register = (pageId, type, el) => {
-    if (!refs.current[pageId]) refs.current[pageId] = {}
-    refs.current[pageId][type] = el
+  const register = (goalId, type, el) => {
+    if (!refs.current[goalId]) refs.current[goalId] = {}
+    refs.current[goalId][type] = el
   }
 
-  // ── Page updates (title / collapsed / html) ────────────────────────────────
-  const updatePage = (id, patch) => {
-    setPages(prev => prev.map(p => p.id === id ? { ...p, ...patch } : p))
+  const updateGoal = (id, patch) => {
+    setGoals(prev => prev.map(g => g.id === id ? { ...g, ...patch } : g))
 
     if (patch.html !== undefined) {
-      // Debounce html saves — no point hitting the API on every keystroke
       clearTimeout(htmlSaveTimers.current[id])
       htmlSaveTimers.current[id] = setTimeout(() => {
         api.updatePage(id, { html: patch.html }).catch(console.error)
@@ -253,56 +251,56 @@ export default function DocumentCanvas() {
   }
 
   // ── Structural operations ──────────────────────────────────────────────────
-  const addPageAtTop = async () => {
-    const page = mkPage()
+  const addGoalAtTop = async () => {
+    const goal = mkGoal()
     try {
-      await api.createPage(page)
-      setPages(prev => {
-        const next = [page, ...prev]
-        api.reorderPages(next.map(p => p.id)).catch(console.error)
+      await api.createPage(goal)
+      setGoals(prev => {
+        const next = [goal, ...prev]
+        api.reorderPages(next.map(g => g.id)).catch(console.error)
         return next
       })
     } catch (e) { console.error(e) }
   }
 
   const handleEmpty = id => {
-    setPages(prev => {
+    setGoals(prev => {
       if (prev.length <= 1) return prev
-      const next = prev.filter(p => p.id !== id)
+      const next = prev.filter(g => g.id !== id)
       api.deletePage(id).catch(console.error)
       return next
     })
   }
 
   const handleMerge = async i => {
-    const a = pages[i], b = pages[i + 1]
+    const a = goals[i], b = goals[i + 1]
     const htmlA = refs.current[a.id]?.editor?.innerHTML ?? a.html
     const htmlB = refs.current[b.id]?.editor?.innerHTML ?? b.html
-    const merged = mkPage({ html: htmlA + htmlB, title: a.title })
+    const merged = mkGoal({ html: htmlA + htmlB, title: a.title })
     try {
       await Promise.all([api.deletePage(a.id), api.deletePage(b.id)])
       await api.createPage(merged)
-      setPages(prev => {
+      setGoals(prev => {
         const next = [...prev]; next.splice(i, 2, merged)
-        api.reorderPages(next.map(p => p.id)).catch(console.error)
+        api.reorderPages(next.map(g => g.id)).catch(console.error)
         return next
       })
     } catch (e) { console.error(e) }
   }
 
   // ── Cut ────────────────────────────────────────────────────────────────────
-  const handleZoneMove = (pageId, e) => {
-    const pageEl = refs.current[pageId]?.page
+  const handleZoneMove = (goalId, e) => {
+    const pageEl = refs.current[goalId]?.page
     if (!pageEl) return
-    setHoverInfo({ pageId, snapY: snapToLineTop(pageEl, e.clientY) })
+    setHoverInfo({ goalId, snapY: snapToLineTop(pageEl, e.clientY) })
   }
 
   const handleZoneLeave = () => setHoverInfo(null)
 
-  const handleZoneClick = async pageId => {
+  const handleZoneClick = async goalId => {
     const info = hoverInfo
-    if (!info || info.pageId !== pageId) return
-    const { page: pageEl, editor: editorEl } = refs.current[pageId] || {}
+    if (!info || info.goalId !== goalId) return
+    const { page: pageEl, editor: editorEl } = refs.current[goalId] || {}
     if (!pageEl || !editorEl) return
 
     const pageRect = pageEl.getBoundingClientRect()
@@ -312,21 +310,21 @@ export default function DocumentCanvas() {
     const [html1, html2] = splitAt(editorEl, cutRange)
     const isEmpty = html => { const d = document.createElement('div'); d.innerHTML = html; return d.innerText.trim() === '' }
 
-    const original = pages.find(p => p.id === pageId)
-    const idx = pages.findIndex(p => p.id === pageId)
+    const original = goals.find(g => g.id === goalId)
+    const idx = goals.findIndex(g => g.id === goalId)
     const halves = [
-      mkPage({ html: html1, title: original?.title ?? 'Untitled' }),
-      mkPage({ html: html2 }),
-    ].filter(p => !isEmpty(p.html))
+      mkGoal({ html: html1, title: original?.title ?? 'Untitled' }),
+      mkGoal({ html: html2 }),
+    ].filter(g => !isEmpty(g.html))
     if (!halves.length) return
 
     setHoverInfo(null)
     try {
-      await api.deletePage(pageId)
-      await Promise.all(halves.map(p => api.createPage(p)))
-      setPages(prev => {
+      await api.deletePage(goalId)
+      await Promise.all(halves.map(g => api.createPage(g)))
+      setGoals(prev => {
         const next = [...prev]; next.splice(idx, 1, ...halves)
-        api.reorderPages(next.map(p => p.id)).catch(console.error)
+        api.reorderPages(next.map(g => g.id)).catch(console.error)
         return next
       })
     } catch (e) { console.error(e) }
@@ -334,28 +332,28 @@ export default function DocumentCanvas() {
 
   return (
     <div className={styles.canvas}>
-      <button className={styles.addBtn} onClick={addPageAtTop} title="New page">
+      <button className={styles.addBtn} onClick={addGoalAtTop} title="New goal">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
           <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
         </svg>
       </button>
-      {pages.flatMap((page, i) => {
+      {goals.flatMap((goal, i) => {
         const elements = [
-          <Page
-            key={page.id}
-            page={page}
-            hoverY={hoverInfo?.pageId === page.id ? hoverInfo.snapY : null}
-            onUpdate={patch => updatePage(page.id, patch)}
+          <Goal
+            key={goal.id}
+            goal={goal}
+            hoverY={hoverInfo?.goalId === goal.id ? hoverInfo.snapY : null}
+            onUpdate={patch => updateGoal(goal.id, patch)}
             onRegister={register}
-            onZoneMove={e => handleZoneMove(page.id, e)}
+            onZoneMove={e => handleZoneMove(goal.id, e)}
             onZoneLeave={handleZoneLeave}
-            onZoneClick={() => handleZoneClick(page.id)}
-            onEmpty={() => handleEmpty(page.id)}
+            onZoneClick={() => handleZoneClick(goal.id)}
+            onEmpty={() => handleEmpty(goal.id)}
           />
         ]
-        if (i < pages.length - 1) {
-          const mergeDisabled = pages[i].collapsed || pages[i + 1].collapsed
-          elements.push(<PageGap key={`gap-${i}`} onMerge={() => handleMerge(i)} disabled={mergeDisabled} />)
+        if (i < goals.length - 1) {
+          const mergeDisabled = goals[i].collapsed || goals[i + 1].collapsed
+          elements.push(<GoalGap key={`gap-${i}`} onMerge={() => handleMerge(i)} disabled={mergeDisabled} />)
         }
         return elements
       })}

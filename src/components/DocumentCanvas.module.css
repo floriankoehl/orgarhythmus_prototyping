@@ -37,7 +37,7 @@
 .canvas::-webkit-scrollbar-thumb:hover { background: #999; }
 
 /* ── Page container (title + card) ──────────────────────── */
-.pageContainer {
+.goalContainer {
   display: flex;
   flex-direction: column;
   width: 816px;
@@ -72,7 +72,7 @@
   color: #666;
 }
 
-.pageTitle {
+.goalTitle {
   font-size: 12px;
   font-weight: 600;
   color: #666;
@@ -151,8 +151,8 @@
   outline-offset: 1px;
 }
 
-/* ── Page card ───────────────────────────────────────────── */
-.page {
+/* ── Goal card ───────────────────────────────────────────── */
+.goal {
   width: 816px;
   background: #fff;
   box-shadow: 0 1px 3px rgba(0,0,0,.18), 0 4px 12px rgba(0,0,0,.09);

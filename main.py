@@ -20,18 +20,6 @@ app.add_middleware(
 
 
 # ── DB setup ──────────────────────────────────────────────────────────────────
-def _init_db():
-    with _db() as con:
-        con.execute("""
-            CREATE TABLE IF NOT EXISTS pages (
-                id       TEXT PRIMARY KEY,
-                html     TEXT NOT NULL DEFAULT '',
-                title    TEXT NOT NULL DEFAULT 'Untitled',
-                collapsed INTEGER NOT NULL DEFAULT 0,
-                order_idx INTEGER NOT NULL DEFAULT 0
-            )
-        """)
-
 @contextmanager
 def _db():
     con = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -42,10 +30,39 @@ def _db():
     finally:
         con.close()
 
-def _row(row) -> dict:
-    d = dict(row)
-    d["collapsed"] = bool(d["collapsed"])
-    return d
+def _init_db():
+    with _db() as con:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS pages (
+                id        TEXT PRIMARY KEY,
+                html      TEXT NOT NULL DEFAULT '',
+                title     TEXT NOT NULL DEFAULT 'Untitled',
+                collapsed INTEGER NOT NULL DEFAULT 0,
+                order_idx INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS dimensions (
+                id   TEXT PRIMARY KEY,
+                name TEXT NOT NULL
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS categories (
+                id           TEXT PRIMARY KEY,
+                dimension_id TEXT NOT NULL,
+                name         TEXT NOT NULL,
+                color        TEXT NOT NULL DEFAULT '#94a3b8'
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS assignments (
+                goal_id      TEXT NOT NULL,
+                dimension_id TEXT NOT NULL,
+                category_id  TEXT NOT NULL,
+                PRIMARY KEY (goal_id, dimension_id)
+            )
+        """)
 
 _init_db()
 
@@ -65,62 +82,161 @@ class PagePatch(BaseModel):
 class OrderIn(BaseModel):
     ids: list[str]
 
+class DimensionIn(BaseModel):
+    id: Optional[str] = None
+    name: str
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+class CategoryIn(BaseModel):
+    id: Optional[str] = None
+    name: str
+    color: str = "#94a3b8"
+
+class AssignIn(BaseModel):
+    categoryId: str
+
+
+# ── Helper converters ─────────────────────────────────────────────────────────
+def _page(row) -> dict:
+    d = dict(row)
+    d["collapsed"] = bool(d["collapsed"])
+    return d
+
+def _cat(row) -> dict:
+    d = dict(row)
+    return {"id": d["id"], "dimensionId": d["dimension_id"], "name": d["name"], "color": d["color"]}
+
+def _assign(row) -> dict:
+    d = dict(row)
+    return {"goalId": d["goal_id"], "dimensionId": d["dimension_id"], "categoryId": d["category_id"]}
+
+
+# ── Pages (goals) ─────────────────────────────────────────────────────────────
 @app.get("/pages")
 def list_pages():
     with _db() as con:
         rows = con.execute("SELECT * FROM pages ORDER BY order_idx").fetchall()
-    return [_row(r) for r in rows]
-
+    return [_page(r) for r in rows]
 
 @app.post("/pages", status_code=201)
 def create_page(data: PageIn):
-    page_id = data.id or str(uuid.uuid4())
+    pid = data.id or str(uuid.uuid4())
     with _db() as con:
-        existing = con.execute("SELECT id FROM pages WHERE id = ?", (page_id,)).fetchone()
-        if existing:
-            raise HTTPException(status_code=409, detail="Page already exists")
-        max_order = con.execute("SELECT COALESCE(MAX(order_idx), -1) FROM pages").fetchone()[0]
+        if con.execute("SELECT id FROM pages WHERE id = ?", (pid,)).fetchone():
+            raise HTTPException(409, "Page already exists")
+        max_ord = con.execute("SELECT COALESCE(MAX(order_idx), -1) FROM pages").fetchone()[0]
         con.execute(
             "INSERT INTO pages (id, html, title, collapsed, order_idx) VALUES (?, ?, ?, ?, ?)",
-            (page_id, data.html, data.title, int(data.collapsed), max_order + 1),
+            (pid, data.html, data.title, int(data.collapsed), max_ord + 1),
         )
-    return {"id": page_id, "html": data.html, "title": data.title, "collapsed": data.collapsed}
-
+    return {"id": pid, "html": data.html, "title": data.title, "collapsed": data.collapsed}
 
 @app.patch("/pages/{page_id}")
 def update_page(page_id: str, data: PagePatch):
     with _db() as con:
-        row = con.execute("SELECT * FROM pages WHERE id = ?", (page_id,)).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Page not found")
+        if not con.execute("SELECT id FROM pages WHERE id = ?", (page_id,)).fetchone():
+            raise HTTPException(404, "Page not found")
         fields, values = [], []
-        if data.html is not None:
-            fields.append("html = ?"); values.append(data.html)
-        if data.title is not None:
-            fields.append("title = ?"); values.append(data.title)
-        if data.collapsed is not None:
-            fields.append("collapsed = ?"); values.append(int(data.collapsed))
+        if data.html is not None:      fields.append("html = ?");      values.append(data.html)
+        if data.title is not None:     fields.append("title = ?");     values.append(data.title)
+        if data.collapsed is not None: fields.append("collapsed = ?"); values.append(int(data.collapsed))
         if fields:
             con.execute(f"UPDATE pages SET {', '.join(fields)} WHERE id = ?", (*values, page_id))
-        updated = con.execute("SELECT * FROM pages WHERE id = ?", (page_id,)).fetchone()
-    return _row(updated)
-
+        row = con.execute("SELECT * FROM pages WHERE id = ?", (page_id,)).fetchone()
+    return _page(row)
 
 @app.delete("/pages/{page_id}", status_code=204)
 def delete_page(page_id: str):
     with _db() as con:
         if not con.execute("SELECT id FROM pages WHERE id = ?", (page_id,)).fetchone():
-            raise HTTPException(status_code=404, detail="Page not found")
+            raise HTTPException(404, "Page not found")
         con.execute("DELETE FROM pages WHERE id = ?", (page_id,))
-
 
 @app.put("/pages/order")
 def reorder_pages(data: OrderIn):
     with _db() as con:
-        for i, page_id in enumerate(data.ids):
-            if not con.execute("SELECT id FROM pages WHERE id = ?", (page_id,)).fetchone():
-                raise HTTPException(status_code=404, detail=f"Page {page_id} not found")
-            con.execute("UPDATE pages SET order_idx = ? WHERE id = ?", (i, page_id))
+        for i, pid in enumerate(data.ids):
+            if not con.execute("SELECT id FROM pages WHERE id = ?", (pid,)).fetchone():
+                raise HTTPException(404, f"Page {pid} not found")
+            con.execute("UPDATE pages SET order_idx = ? WHERE id = ?", (i, pid))
     return {"ok": True}
+
+
+# ── Dimensions ────────────────────────────────────────────────────────────────
+@app.get("/dimensions")
+def list_dimensions():
+    with _db() as con:
+        rows = con.execute("SELECT * FROM dimensions").fetchall()
+    return [dict(r) for r in rows]
+
+@app.post("/dimensions", status_code=201)
+def create_dimension(data: DimensionIn):
+    did = data.id or str(uuid.uuid4())
+    with _db() as con:
+        if con.execute("SELECT id FROM dimensions WHERE id = ?", (did,)).fetchone():
+            raise HTTPException(409, "Dimension already exists")
+        con.execute("INSERT INTO dimensions (id, name) VALUES (?, ?)", (did, data.name))
+    return {"id": did, "name": data.name}
+
+@app.delete("/dimensions/{dim_id}", status_code=204)
+def delete_dimension(dim_id: str):
+    with _db() as con:
+        if not con.execute("SELECT id FROM dimensions WHERE id = ?", (dim_id,)).fetchone():
+            raise HTTPException(404, "Dimension not found")
+        con.execute("DELETE FROM assignments WHERE dimension_id = ?", (dim_id,))
+        con.execute("DELETE FROM categories WHERE dimension_id = ?", (dim_id,))
+        con.execute("DELETE FROM dimensions WHERE id = ?", (dim_id,))
+
+
+# ── Categories ────────────────────────────────────────────────────────────────
+@app.get("/categories")
+def list_all_categories():
+    with _db() as con:
+        rows = con.execute("SELECT * FROM categories").fetchall()
+    return [_cat(r) for r in rows]
+
+@app.post("/dimensions/{dim_id}/categories", status_code=201)
+def create_category(dim_id: str, data: CategoryIn):
+    if not data.name.strip():
+        raise HTTPException(400, "Category name required")
+    cid = data.id or str(uuid.uuid4())
+    with _db() as con:
+        if not con.execute("SELECT id FROM dimensions WHERE id = ?", (dim_id,)).fetchone():
+            raise HTTPException(404, "Dimension not found")
+        con.execute(
+            "INSERT INTO categories (id, dimension_id, name, color) VALUES (?, ?, ?, ?)",
+            (cid, dim_id, data.name.strip(), data.color),
+        )
+    return {"id": cid, "dimensionId": dim_id, "name": data.name.strip(), "color": data.color}
+
+@app.delete("/categories/{cat_id}", status_code=204)
+def delete_category(cat_id: str):
+    with _db() as con:
+        if not con.execute("SELECT id FROM categories WHERE id = ?", (cat_id,)).fetchone():
+            raise HTTPException(404, "Category not found")
+        con.execute("DELETE FROM assignments WHERE category_id = ?", (cat_id,))
+        con.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
+
+
+# ── Assignments ───────────────────────────────────────────────────────────────
+@app.get("/assignments")
+def list_assignments():
+    with _db() as con:
+        rows = con.execute("SELECT * FROM assignments").fetchall()
+    return [_assign(r) for r in rows]
+
+@app.put("/goals/{goal_id}/assign/{dim_id}")
+def assign_category(goal_id: str, dim_id: str, data: AssignIn):
+    with _db() as con:
+        con.execute(
+            "INSERT OR REPLACE INTO assignments (goal_id, dimension_id, category_id) VALUES (?, ?, ?)",
+            (goal_id, dim_id, data.categoryId),
+        )
+    return {"goalId": goal_id, "dimensionId": dim_id, "categoryId": data.categoryId}
+
+@app.delete("/goals/{goal_id}/assign/{dim_id}", status_code=204)
+def unassign_category(goal_id: str, dim_id: str):
+    with _db() as con:
+        con.execute(
+            "DELETE FROM assignments WHERE goal_id = ? AND dimension_id = ?",
+            (goal_id, dim_id),
+        )
