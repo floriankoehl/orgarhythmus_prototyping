@@ -27,6 +27,7 @@ export const api = {
   // Categories
   getAllCategories: ()         => req('GET',    '/categories'),
   createCategory:  (dimId, d) => req('POST',   `/dimensions/${dimId}/categories`, d),
+  updateCategory:  (id, patch) => req('PATCH', `/categories/${id}`, patch),
   deleteCategory:  (id)       => req('DELETE', `/categories/${id}`),
 
   // Assignments

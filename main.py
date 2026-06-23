@@ -91,6 +91,10 @@ class CategoryIn(BaseModel):
     name: str
     color: str = "#94a3b8"
 
+class CategoryPatch(BaseModel):
+    name: Optional[str] = None
+    color: Optional[str] = None
+
 class AssignIn(BaseModel):
     categoryId: str
 
@@ -207,6 +211,19 @@ def create_category(dim_id: str, data: CategoryIn):
             (cid, dim_id, data.name.strip(), data.color),
         )
     return {"id": cid, "dimensionId": dim_id, "name": data.name.strip(), "color": data.color}
+
+@app.patch("/categories/{cat_id}")
+def update_category(cat_id: str, data: CategoryPatch):
+    with _db() as con:
+        if not con.execute("SELECT id FROM categories WHERE id = ?", (cat_id,)).fetchone():
+            raise HTTPException(404, "Category not found")
+        fields, values = [], []
+        if data.name is not None:  fields.append("name = ?");  values.append(data.name.strip())
+        if data.color is not None: fields.append("color = ?"); values.append(data.color)
+        if fields:
+            con.execute(f"UPDATE categories SET {', '.join(fields)} WHERE id = ?", (*values, cat_id))
+        row = con.execute("SELECT * FROM categories WHERE id = ?", (cat_id,)).fetchone()
+    return _cat(row)
 
 @app.delete("/categories/{cat_id}", status_code=204)
 def delete_category(cat_id: str):
