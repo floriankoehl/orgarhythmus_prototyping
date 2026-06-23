@@ -25,10 +25,11 @@ export const api = {
   deleteDimension: (id)       => req('DELETE', `/dimensions/${id}`),
 
   // Categories
-  getAllCategories: ()         => req('GET',    '/categories'),
-  createCategory:  (dimId, d) => req('POST',   `/dimensions/${dimId}/categories`, d),
-  updateCategory:  (id, patch) => req('PATCH', `/categories/${id}`, patch),
-  deleteCategory:  (id)       => req('DELETE', `/categories/${id}`),
+  getAllCategories:    ()         => req('GET',    '/categories'),
+  createCategory:     (dimId, d) => req('POST',   `/dimensions/${dimId}/categories`, d),
+  updateCategory:     (id, patch) => req('PATCH', `/categories/${id}`, patch),
+  deleteCategory:     (id)       => req('DELETE', `/categories/${id}`),
+  reorderCategories:  (ids)      => req('PUT',    '/categories/order', { ids }),
 
   // Assignments
   getAssignments: ()                      => req('GET',    '/assignments'),

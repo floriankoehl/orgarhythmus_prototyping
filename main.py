@@ -52,7 +52,8 @@ def _init_db():
                 id           TEXT PRIMARY KEY,
                 dimension_id TEXT NOT NULL,
                 name         TEXT NOT NULL,
-                color        TEXT NOT NULL DEFAULT '#94a3b8'
+                color        TEXT NOT NULL DEFAULT '#94a3b8',
+                order_idx    INTEGER NOT NULL DEFAULT 0
             )
         """)
         con.execute("""
@@ -65,6 +66,38 @@ def _init_db():
         """)
 
 _init_db()
+
+
+def _migrate():
+    with _db() as con:
+        cols = [r[1] for r in con.execute("PRAGMA table_info(categories)").fetchall()]
+        if 'order_idx' not in cols:
+            con.execute("ALTER TABLE categories ADD COLUMN order_idx INTEGER NOT NULL DEFAULT 0")
+            rows = con.execute("SELECT id FROM categories ORDER BY rowid").fetchall()
+            for i, row in enumerate(rows):
+                con.execute("UPDATE categories SET order_idx = ? WHERE id = ?", (i, row[0]))
+
+_migrate()
+
+
+def _seed_defaults():
+    defaults = [
+        ("Group",    [("All",    "#94a3b8")]),
+        ("Priority", [("High",   "#ef4444"), ("Medium", "#eab308"), ("Low", "#94a3b8")]),
+    ]
+    with _db() as con:
+        for dim_name, cats in defaults:
+            if con.execute("SELECT id FROM dimensions WHERE name = ?", (dim_name,)).fetchone():
+                continue
+            dim_id = str(uuid.uuid4())
+            con.execute("INSERT INTO dimensions (id, name) VALUES (?, ?)", (dim_id, dim_name))
+            for cat_name, color in cats:
+                con.execute(
+                    "INSERT INTO categories (id, dimension_id, name, color) VALUES (?, ?, ?, ?)",
+                    (str(uuid.uuid4()), dim_id, cat_name, color),
+                )
+
+_seed_defaults()
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -195,7 +228,7 @@ def delete_dimension(dim_id: str):
 @app.get("/categories")
 def list_all_categories():
     with _db() as con:
-        rows = con.execute("SELECT * FROM categories").fetchall()
+        rows = con.execute("SELECT * FROM categories ORDER BY order_idx").fetchall()
     return [_cat(r) for r in rows]
 
 @app.post("/dimensions/{dim_id}/categories", status_code=201)
@@ -206,11 +239,25 @@ def create_category(dim_id: str, data: CategoryIn):
     with _db() as con:
         if not con.execute("SELECT id FROM dimensions WHERE id = ?", (dim_id,)).fetchone():
             raise HTTPException(404, "Dimension not found")
+        max_ord = con.execute(
+            "SELECT COALESCE(MAX(order_idx), -1) FROM categories WHERE dimension_id = ?", (dim_id,)
+        ).fetchone()[0]
         con.execute(
-            "INSERT INTO categories (id, dimension_id, name, color) VALUES (?, ?, ?, ?)",
-            (cid, dim_id, data.name.strip(), data.color),
+            "INSERT INTO categories (id, dimension_id, name, color, order_idx) VALUES (?, ?, ?, ?, ?)",
+            (cid, dim_id, data.name.strip(), data.color, max_ord + 1),
         )
     return {"id": cid, "dimensionId": dim_id, "name": data.name.strip(), "color": data.color}
+
+
+@app.put("/categories/order")
+def reorder_categories(data: dict):
+    ids = data.get("ids", [])
+    with _db() as con:
+        for i, cid in enumerate(ids):
+            if not con.execute("SELECT id FROM categories WHERE id = ?", (cid,)).fetchone():
+                raise HTTPException(404, f"Category {cid} not found")
+            con.execute("UPDATE categories SET order_idx = ? WHERE id = ?", (i, cid))
+    return {"ok": True}
 
 @app.patch("/categories/{cat_id}")
 def update_category(cat_id: str, data: CategoryPatch):

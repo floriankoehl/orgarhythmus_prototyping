@@ -1,0 +1,13 @@
+.page {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f0f0f0;
+}
+
+.placeholder {
+  font-size: 14px;
+  color: #bbb;
+  font-family: Arial, sans-serif;
+}

@@ -5,40 +5,200 @@
   background: #f0f0f0;
 }
 
-/* ── Top toolbar ─────────────────────────────────────────── */
-.topBar {
+/* ── Classification toolbar ──────────────────────────────── */
+.classToolbar {
   height: 44px;
   background: #fff;
   border-bottom: 1px solid #e0e0e0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 16px;
+  padding: 0 20px;
   flex-shrink: 0;
   box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  position: relative;
+  z-index: 10;
 }
 
-.pageLabel {
-  font-size: 13px;
-  font-weight: 600;
-  color: #555;
-  font-family: Arial, sans-serif;
-}
+.tbSelector { position: relative; display: flex; align-items: center; gap: 7px; }
 
-.topBarRight { display: flex; align-items: center; gap: 8px; }
-
-.controlLabel {
-  font-size: 12px; color: #888;
+.tbSelectorLabel {
+  font-size: 12px; color: #999;
   font-family: Arial, sans-serif; white-space: nowrap;
 }
+
+.tbSelectorBtn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 10px; font-size: 12px; font-weight: 600;
+  font-family: Arial, sans-serif; color: #333;
+  background: #f5f5f5; border: 1px solid #e0e0e0;
+  border-radius: 6px; cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.tbSelectorBtn:hover { background: #ebebeb; }
+.tbSelectorBtnOpen { background: #e8f0fe !important; border-color: #1a73e8 !important; color: #1a73e8 !important; }
+
+.tbGroupBy {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tbGroupByPill {
+  padding: 4px 12px;
+  font-size: 12px; font-weight: 500;
+  font-family: Arial, sans-serif;
+  color: #555; background: none;
+  border: 1px solid transparent;
+  border-radius: 20px; cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+.tbGroupByPill:hover { background: #f0f0f0; color: #222; }
+.tbGroupByPillActive {
+  background: #e8f0fe; color: #1a73e8;
+  border-color: #c5d8fb; font-weight: 700;
+}
+
+.tbDropdown {
+  position: absolute; top: calc(100% + 6px); left: 0;
+  background: #fff; border: 1px solid #e0e0e0;
+  border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  overflow: hidden; min-width: 160px; z-index: 200;
+}
+.tbDropdownRight { left: auto; right: 0; }
+
+.tbDropdownItem {
+  display: block; width: 100%; padding: 8px 14px;
+  text-align: left; background: none; border: none;
+  font-size: 12px; font-family: Arial, sans-serif;
+  color: #444; cursor: pointer;
+}
+.tbDropdownItem:hover { background: #f5f5f5; }
+.tbDropdownActive { font-weight: 700; color: #1a73e8; }
+.tbDropdownEmpty { padding: 10px 14px; font-size: 12px; color: #bbb; font-family: Arial, sans-serif; }
+
+.tbDimRow {
+  display: flex; align-items: center;
+  padding: 8px 10px 8px 14px;
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.tbDimRowName {
+  flex: 1; font-size: 12px; font-weight: 500;
+  font-family: Arial, sans-serif; color: #333;
+}
+
+.tbDimRowDelete {
+  background: none; border: none; color: #ccc;
+  font-size: 10px; cursor: pointer; padding: 2px 4px;
+  border-radius: 3px; line-height: 1;
+}
+.tbDimRowDelete:hover { color: #e53e3e; background: #fff0f0; }
+
+.tbAddDimForm {
+  display: flex; align-items: center; gap: 4px;
+  margin-left: 6px;
+}
+
+.tbAddDimInput {
+  flex: 1; padding: 4px 8px; font-size: 12px;
+  font-family: Arial, sans-serif; border: 1px solid #ddd;
+  border-radius: 4px; outline: none;
+}
+.tbAddDimInput:focus { border-color: #1a73e8; }
+
+.tbAddDimBtn {
+  padding: 4px 10px; font-size: 12px; font-family: Arial, sans-serif;
+  background: #1a73e8; color: #fff; border: none;
+  border-radius: 4px; cursor: pointer; white-space: nowrap;
+}
+.tbAddDimBtn:hover { background: #1558b0; }
+
+.tbAddDimTrigger {
+  padding: 5px 12px; font-size: 12px; font-family: Arial, sans-serif;
+  background: #1a73e8; color: #fff; border: none;
+  border-radius: 4px; cursor: pointer; white-space: nowrap;
+  margin-left: 6px;
+}
+.tbAddDimTrigger:hover { background: #1558b0; }
+
+/* ── Legend widget (floating) ────────────────────────────── */
+.legendWidget {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.legendPanel {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.14);
+  overflow: hidden;
+  min-width: 220px;
+}
+
+.legendToggleBtn {
+  width: 38px; height: 38px; border-radius: 50%;
+  background: rgba(255,255,255,0.88);
+  border: 1px solid #ddd;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+  cursor: pointer; color: #888;
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(4px);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.legendToggleBtn:hover { background: #fff; color: #333; }
+.legendToggleActive { background: #e8f0fe !important; color: #1a73e8 !important; border-color: #1a73e8 !important; }
 
 /* ── Body ────────────────────────────────────────────────── */
 .body {
   flex: 1;
   display: flex;
+  flex-direction: column;
   overflow: hidden;
   min-height: 0;
+  position: relative;
 }
+
+/* ── Collapsed-categories strip ──────────────────────────── */
+.collapsedStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px 20px 0;
+  flex-shrink: 0;
+}
+
+.collapsedChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px 4px 8px;
+  border-radius: 20px;
+  border: 1.5px solid;
+  background: rgba(255,255,255,0.7);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: Arial, sans-serif;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s;
+}
+.collapsedChip:hover { background: #fff; }
+
+.collapsedDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
 
 /* ── Left panel ──────────────────────────────────────────── */
 .leftPanel {
@@ -269,21 +429,26 @@
 .catBoxName {
   font-size: 12px; font-weight: 700; color: #444;
   font-family: Arial, sans-serif; flex: 1;
+  user-select: none;
 }
 
 .catBoxCount {
-  font-size: 11px; color: #aaa;
-  font-family: Arial, sans-serif; font-weight: 600;
+  font-size: 11px; color: #bbb;
+  font-family: Arial, sans-serif; font-weight: 500;
 }
 
-.catBoxDeleteBtn {
+.catEditBtn,
+.catCollapseBtn {
   flex-shrink: 0; background: none; border: none;
-  color: #ccc; font-size: 11px; cursor: pointer;
-  padding: 2px 4px; border-radius: 3px; line-height: 1;
-  margin-left: 6px; opacity: 0; transition: opacity 0.15s, color 0.15s;
+  color: #ccc; cursor: pointer;
+  padding: 3px; border-radius: 3px; line-height: 0;
+  margin-left: 2px; opacity: 0; transition: opacity 0.1s, color 0.1s;
+  display: flex; align-items: center;
 }
-.catBoxHeader:hover .catBoxDeleteBtn { opacity: 1; }
-.catBoxDeleteBtn:hover { color: #e53e3e; background: #fff0f0; }
+.catBoxHeader:hover .catEditBtn,
+.catBoxHeader:hover .catCollapseBtn { opacity: 1; }
+.catEditBtn:hover { color: #1a73e8; background: #e8f0fe; }
+.catCollapseBtn:hover { color: #555; background: #f0f0f0; }
 
 .catBoxBody { flex: 1; overflow-y: auto; min-height: 0; }
 
@@ -363,10 +528,33 @@
 }
 .confirmText strong { color: #222; }
 
+/* ── Drag handle (category reorder) ─────────────────────── */
+.dragHandle {
+  display: flex; align-items: center;
+  padding: 0 6px 0 0;
+  color: #ccc;
+  cursor: grab;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.catBoxHeader:hover .dragHandle { opacity: 1; }
+.dragHandle:hover { color: #aaa; }
+.dragHandle:active { cursor: grabbing; }
+
 /* ── Drag states ─────────────────────────────────────────── */
 .dragOver {
   background: #f0f7ff;
   box-shadow: 0 0 0 2px #1a73e8, 0 2px 8px rgba(26,115,232,0.15);
+}
+
+.catDragging { opacity: 0.35; }
+
+.insertBefore {
+  box-shadow: inset 4px 0 0 0 #1a73e8, 0 1px 3px rgba(0,0,0,0.1), 0 2px 8px rgba(0,0,0,0.06);
+}
+.insertAfter {
+  box-shadow: inset -4px 0 0 0 #1a73e8, 0 1px 3px rgba(0,0,0,0.1), 0 2px 8px rgba(0,0,0,0.06);
 }
 
 /* ── Paint mode ──────────────────────────────────────────── */
