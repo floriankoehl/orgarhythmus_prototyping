@@ -32,6 +32,30 @@ function dateFmt(col) {
   return colToDate(col).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
+function isoWeekInfo(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+  const day = d.getUTCDay() || 7
+  d.setUTCDate(d.getUTCDate() + 4 - day)
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  const week = Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
+  return { week, year: d.getUTCFullYear() }
+}
+
+function buildAxisSegments(cols, getKey, getLabel) {
+  const segments = []
+  cols.forEach(col => {
+    const date = colToDate(col)
+    const key = getKey(date)
+    const last = segments[segments.length - 1]
+    if (last?.key === key) {
+      last.endCol = col + 1
+    } else {
+      segments.push({ key, label: getLabel(date), startCol: col, endCol: col + 1 })
+    }
+  })
+  return segments
+}
+
 function snapPxToCol(px, colW) {
   const raw = px / colW
   const lower = Math.floor(raw)
@@ -75,7 +99,13 @@ function computeViolations(msList, deps) {
 }
 
 // ── Row model ─────────────────────────────────────────────────────────────────
-function buildRowItems(goals, categories, assignments, activeDimId, spacing, hiddenCatIds = new Set()) {
+const UNASSIGNED_LANE = '__unassigned__'
+
+function laneKeyForCat(cat) {
+  return cat?.id ?? UNASSIGNED_LANE
+}
+
+function buildRowItems(goals, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds = new Set(), hiddenGoalsByLane = {}) {
   const { rowH, rowGap, laneGap } = spacing
   const slotH = rowH + rowGap
 
@@ -98,18 +128,27 @@ function buildRowItems(goals, categories, assignments, activeDimId, spacing, hid
     else unassigned.push(g)
   })
 
+  const sortLaneGoals = laneGoals => [...laneGoals].sort((a, b) => {
+    const ao = assignmentOrders[a.id]?.[activeDimId] ?? Number.MAX_SAFE_INTEGER
+    const bo = assignmentOrders[b.id]?.[activeDimId] ?? Number.MAX_SAFE_INTEGER
+    return ao - bo
+  })
+
   const items = []; let top = 0
   const addLane = (cat, laneGoals, first) => {
+    const hiddenGoalIds = hiddenGoalsByLane[laneKeyForCat(cat)] ?? new Set()
+    const visibleLaneGoals = sortLaneGoals(laneGoals).filter(g => !hiddenGoalIds.has(g.id))
     if (!first) { items.push({ type: 'lane-gap', cat: null, top, height: laneGap }); top += laneGap }
     items.push({ type: 'lane-header', cat, top, height: LANE_HDR_H }); top += LANE_HDR_H
-    if (laneGoals.length === 0) {
+    if (visibleLaneGoals.length === 0) {
       items.push({ type: 'empty', cat, top, height: slotH }); top += slotH
     } else {
-      laneGoals.forEach(g => { items.push({ type: 'goal', goal: g, cat, top, height: slotH }); top += slotH })
+      visibleLaneGoals.forEach(g => { items.push({ type: 'goal', goal: g, cat, top, height: slotH }); top += slotH })
     }
   }
   cats.forEach((cat, i) => addLane(cat, catMap[cat.id] ?? [], i === 0))
-  if (unassigned.length > 0 || cats.length === 0) addLane(null, unassigned, cats.length === 0)
+  if (!hiddenCatIds.has(UNASSIGNED_LANE) && (unassigned.length > 0 || cats.length === 0))
+    addLane(null, unassigned, cats.length === 0)
   const minH = MIN_ROWS * slotH
   if (top < minH) { items.push({ type: 'empty', top, height: minH - top }); top = minH }
   return items
@@ -228,22 +267,96 @@ function CategoryVisibilityDropdown({ categories, hiddenCatIds, onToggle, onShow
               <button className={styles.categoryFilterAll} onClick={onShowAll}>
                 Show all
               </button>
-              {categories.map(cat => (
-                <label key={cat.id} className={styles.categoryFilterItem}>
-                  <input
-                    type="checkbox"
-                    checked={!hiddenCatIds.has(cat.id)}
-                    onChange={() => onToggle(cat.id)}
-                  />
-                  <span className={styles.categoryFilterDot} style={{ background: cat.color }} />
-                  <span className={styles.categoryFilterName}>{cat.name}</span>
-                </label>
-              ))}
+              {categories.map((cat, i) => {
+                const isUnassigned = cat.id === UNASSIGNED_LANE
+                return (
+                  <label key={cat.id}
+                    className={styles.categoryFilterItem}
+                    style={isUnassigned ? { borderTop: i > 0 ? '1px solid #f0f0f0' : undefined, marginTop: i > 0 ? 2 : 0 } : undefined}>
+                    <input
+                      type="checkbox"
+                      checked={!hiddenCatIds.has(cat.id)}
+                      onChange={() => onToggle(cat.id)}
+                    />
+                    <span className={styles.categoryFilterDot} style={{ background: cat.color }} />
+                    <span className={styles.categoryFilterName} style={isUnassigned ? { color: '#888', fontStyle: 'italic' } : undefined}>
+                      {cat.name}
+                    </span>
+                  </label>
+                )
+              })}
             </>
           )}
         </div>
       )}
     </div>
+  )
+}
+
+function LaneGoalFilter({ laneKey, goals, hiddenGoalIds, onToggleGoal, onShowAllGoals }) {
+  const [open, setOpen] = useState(false)
+  const btnRef = useRef()
+  const menuRef = useRef()
+  const [pos, setPos] = useState(null)
+
+  const openMenu = e => {
+    e.stopPropagation()
+    const rect = btnRef.current?.getBoundingClientRect()
+    if (rect) setPos({ top: rect.bottom + 6, left: rect.left, width: Math.max(220, rect.width) })
+    setOpen(v => !v)
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const close = e => {
+      if (btnRef.current?.contains(e.target)) return
+      if (menuRef.current?.contains(e.target)) return
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+
+  const hiddenCount = goals.filter(g => hiddenGoalIds.has(g.id)).length
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        className={`${styles.laneFilterBtn} ${hiddenCount > 0 ? styles.laneFilterBtnActive : ''}`}
+        disabled={goals.length === 0}
+        title="Filter goals in this lane"
+        onClick={openMenu}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/>
+        </svg>
+      </button>
+      {open && pos && createPortal(
+        <div ref={menuRef} className={styles.laneFilterMenu}
+          style={{ top: pos.top, left: pos.left, minWidth: pos.width }}>
+          {goals.length === 0 ? (
+            <div className={styles.laneFilterEmpty}>No goals</div>
+          ) : (
+            <>
+              <button className={styles.laneFilterAll} onClick={() => onShowAllGoals(laneKey)}>
+                Show all
+              </button>
+              {goals.map(goal => (
+                <label key={goal.id} className={styles.laneFilterItem}>
+                  <input
+                    type="checkbox"
+                    checked={!hiddenGoalIds.has(goal.id)}
+                    onChange={() => onToggleGoal(laneKey, goal.id)}
+                  />
+                  <span className={styles.laneFilterName}>{goal.title}</span>
+                </label>
+              ))}
+            </>
+          )}
+        </div>,
+        document.body
+      )}
+    </>
   )
 }
 
@@ -289,7 +402,7 @@ function GanttToolbar({
         {dimensions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
       </select>
       <CategoryVisibilityDropdown
-        categories={activeCategories}
+        categories={activeDimId ? [...activeCategories, { id: UNASSIGNED_LANE, name: 'Unassigned', color: '#bbb' }] : activeCategories}
         hiddenCatIds={hiddenCatIds}
         onToggle={onToggleCategory}
         onShowAll={onShowAllCategories}
@@ -426,11 +539,12 @@ function ScheduleColorLegendWidget({ dimensions, categories, colorDimId, onColor
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function SchedulePage({ goals = [], isActive = false }) {
+export default function SchedulePage({ goals = [], isActive = false, onGoalOpen }) {
   // ── API data ───────────────────────────────────────────────────────────────
   const [dimensions,   setDimensions]   = useState([])
   const [categories,   setCategories]   = useState([])
   const [assignments,  setAssignments]  = useState({})
+  const [assignmentOrders, setAssignmentOrders] = useState({})
   const [milestones,   setMilestones]   = useState([])
   const [dependencies, setDependencies] = useState([])
   const [deadlines,    setDeadlines]    = useState([])
@@ -444,8 +558,15 @@ export default function SchedulePage({ goals = [], isActive = false }) {
     ]).then(([dims, cats, assigns, mss, deps, dls]) => {
       setDimensions(dims); setCategories(cats)
       const map = {}
-      assigns.forEach(a => { if (!map[a.goalId]) map[a.goalId] = {}; map[a.goalId][a.dimensionId] = a.categoryId })
+      const orderMap = {}
+      assigns.forEach(a => {
+        if (!map[a.goalId]) map[a.goalId] = {}
+        if (!orderMap[a.goalId]) orderMap[a.goalId] = {}
+        map[a.goalId][a.dimensionId] = a.categoryId
+        orderMap[a.goalId][a.dimensionId] = a.orderIdx ?? 0
+      })
       setAssignments(map)
+      setAssignmentOrders(orderMap)
       setMilestones(mss)
       setDependencies(deps)
       setDeadlines(dls)
@@ -460,21 +581,11 @@ export default function SchedulePage({ goals = [], isActive = false }) {
   const [colorDimId,  setColorDimId]  = useState('')
   const [spacing,     setSpacing]     = useState(DEFAULT_SPACING)
   const [hiddenCatIds, setHiddenCatIds] = useState(new Set())
+  const [hiddenGoalsByLane, setHiddenGoalsByLane] = useState({})
   const [warningPopupsEnabled, setWarningPopupsEnabled] = useState(true)
   const [warningPrompt, setWarningPrompt] = useState(null)
-
-  useEffect(() => {
-    if (!isActive) return
-    const onKeyDown = e => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return
-      const tag = e.target?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable) return
-      if (e.key.toLowerCase() === 'd') setMode('dependency')
-      if (e.key.toLowerCase() === 'e') setMode('edit')
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [isActive])
+  const [deleteDraft, setDeleteDraft] = useState(null)
+  const [dragOverGoalId, setDragOverGoalId] = useState(null)
 
   const activeCategories = useMemo(
     () => categories.filter(c => c.dimensionId === activeDimId),
@@ -483,7 +594,22 @@ export default function SchedulePage({ goals = [], isActive = false }) {
 
   useEffect(() => {
     setHiddenCatIds(new Set())
+    setHiddenGoalsByLane({})
   }, [activeDimId])
+
+  const toggleGoalVisibility = useCallback((laneKey, goalId) => {
+    setHiddenGoalsByLane(prev => {
+      const nextLane = new Set(prev[laneKey] ?? [])
+      if (nextLane.has(goalId)) nextLane.delete(goalId)
+      else nextLane.add(goalId)
+      return { ...prev, [laneKey]: nextLane }
+    })
+  }, [])
+
+  const showAllLaneGoals = useCallback(laneKey => {
+    setHiddenGoalsByLane(prev => ({ ...prev, [laneKey]: new Set() }))
+  }, [])
+
 
   const toggleCategoryVisibility = useCallback(catId => {
     setHiddenCatIds(prev => {
@@ -551,8 +677,8 @@ export default function SchedulePage({ goals = [], isActive = false }) {
 
   // ── Row model ──────────────────────────────────────────────────────────────
   const rowItems = useMemo(
-    () => buildRowItems(goals, categories, assignments, activeDimId, spacing, hiddenCatIds),
-    [goals, categories, assignments, activeDimId, spacing, hiddenCatIds]
+    () => buildRowItems(goals, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenGoalsByLane),
+    [goals, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenGoalsByLane]
   )
   const rowItemsRef = useRef([])
   rowItemsRef.current = rowItems
@@ -564,6 +690,42 @@ export default function SchedulePage({ goals = [], isActive = false }) {
   }, [rowItems])
   const goalRowMapRef = useRef({})
   goalRowMapRef.current = goalRowMap
+
+  const goalsForLane = useCallback(cat => {
+    if (!activeDimId) return goals
+    const key = laneKeyForCat(cat)
+    return goals.filter(goal => {
+      const assignedCatId = assignments[goal.id]?.[activeDimId]
+      return key === UNASSIGNED_LANE ? !assignedCatId : assignedCatId === key
+    }).sort((a, b) => {
+      const ao = assignmentOrders[a.id]?.[activeDimId] ?? Number.MAX_SAFE_INTEGER
+      const bo = assignmentOrders[b.id]?.[activeDimId] ?? Number.MAX_SAFE_INTEGER
+      return ao - bo
+    })
+  }, [activeDimId, assignmentOrders, assignments, goals])
+
+  const reorderGoalInLane = useCallback(async (dragGoalId, targetGoalId) => {
+    if (!activeDimId || dragGoalId === targetGoalId) return
+    const catId = assignments[dragGoalId]?.[activeDimId]
+    if (!catId || assignments[targetGoalId]?.[activeDimId] !== catId) return
+    const laneGoals = goalsForLane(categories.find(c => c.id === catId))
+    const fromIdx = laneGoals.findIndex(g => g.id === dragGoalId)
+    const toIdx = laneGoals.findIndex(g => g.id === targetGoalId)
+    if (fromIdx === -1 || toIdx === -1) return
+    const reordered = [...laneGoals]
+    const [moved] = reordered.splice(fromIdx, 1)
+    reordered.splice(toIdx, 0, moved)
+    const goalIds = reordered.map(g => g.id)
+    setAssignmentOrders(prev => {
+      const next = { ...prev }
+      goalIds.forEach((goalId, idx) => {
+        next[goalId] = { ...(next[goalId] ?? {}), [activeDimId]: idx }
+      })
+      return next
+    })
+    try { await api.reorderAssignments(activeDimId, catId, goalIds) }
+    catch (err) { console.error(err) }
+  }, [activeDimId, assignments, categories, goalsForLane])
 
   const getMilestoneColor = useCallback(milestone => {
     if (!colorDimId) return milestone.color
@@ -1113,10 +1275,55 @@ export default function SchedulePage({ goals = [], isActive = false }) {
     } catch (err) { console.error(err) }
   }, [])
 
-  const handleDeleteSelection = useCallback(async () => {
+  const buildDeleteItems = useCallback(() => {
     const milestoneIds = [...selectedIdsRef.current]
     const dependencyIds = [...selectedDepIdsRef.current]
-    if (milestoneIds.length === 0 && dependencyIds.length === 0) return
+    const milestoneItems = milestoneIds
+      .map(id => {
+        const milestone = milestonesRef.current.find(m => m.id === id)
+        if (!milestone) return null
+        const goal = goals.find(g => g.id === milestone.goalId)
+        return {
+          key: `milestone:${id}`,
+          type: 'milestone',
+          id,
+          label: `${goal?.title ?? 'Milestone'} · ${milestone.title || dateFmt(milestone.startCol)}`,
+          checked: true,
+        }
+      })
+      .filter(Boolean)
+    const dependencyItems = dependencyIds
+      .map(id => {
+        const dep = dependenciesRef.current.find(d => d.id === id)
+        if (!dep) return null
+        const from = milestonesRef.current.find(m => m.id === dep.fromId)
+        const to = milestonesRef.current.find(m => m.id === dep.toId)
+        const fromGoal = goals.find(g => g.id === from?.goalId)
+        const toGoal = goals.find(g => g.id === to?.goalId)
+        return {
+          key: `dependency:${id}`,
+          type: 'dependency',
+          id,
+          label: `${fromGoal?.title ?? 'Milestone'} -> ${toGoal?.title ?? 'Milestone'}`,
+          checked: true,
+        }
+      })
+      .filter(Boolean)
+    return [...milestoneItems, ...dependencyItems]
+  }, [goals])
+
+  const handleRequestDeleteSelection = useCallback(() => {
+    const items = buildDeleteItems()
+    if (items.length === 0) return
+    setDeleteDraft({ items })
+  }, [buildDeleteItems])
+
+  const handleConfirmDeleteDraft = useCallback(async () => {
+    if (!deleteDraft) return
+    const checked = deleteDraft.items.filter(item => item.checked)
+    if (checked.length === 0) { setDeleteDraft(null); return }
+    const milestoneIds = checked.filter(item => item.type === 'milestone').map(item => item.id)
+    const dependencyIds = checked.filter(item => item.type === 'dependency').map(item => item.id)
 
     const milestoneSet = new Set(milestoneIds)
     const dependencySet = new Set(dependencyIds)
@@ -1129,6 +1336,7 @@ export default function SchedulePage({ goals = [], isActive = false }) {
     setDeadlines(prev => prev.filter(d => !milestoneSet.has(d.goalId)))
     setSelectedIds(new Set())
     setSelectedDepIds(new Set())
+    setDeleteDraft(null)
 
     try {
       await Promise.all([
@@ -1136,7 +1344,30 @@ export default function SchedulePage({ goals = [], isActive = false }) {
         ...milestoneIds.map(id => api.deleteMilestone(id)),
       ])
     } catch (err) { console.error(err) }
-  }, [])
+  }, [deleteDraft])
+
+  useEffect(() => {
+    if (!isActive) return
+    const onKeyDown = e => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const tag = e.target?.tagName
+      const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable
+      if (deleteDraft) {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          handleConfirmDeleteDraft()
+        }
+        if (e.key === 'Escape') setDeleteDraft(null)
+        return
+      }
+      if (isTyping) return
+      if (e.key.toLowerCase() === 'd') setMode('dependency')
+      if (e.key.toLowerCase() === 'e') setMode('edit')
+      if (e.key === 'Delete' || e.key === 'Del') handleRequestDeleteSelection()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [deleteDraft, handleConfirmDeleteDraft, handleRequestDeleteSelection, isActive])
 
   // ── Milestone mouse-down (move / resize) ───────────────────────────────────
   const handleMilestoneMouseDown = useCallback((e, milestoneId, side) => {
@@ -1194,6 +1425,19 @@ export default function SchedulePage({ goals = [], isActive = false }) {
   const startCol = Math.max(0,         Math.floor(scrollLeft / colW) - COL_BUF)
   const endCol   = Math.min(totalDays, Math.ceil((scrollLeft + vpSize.w) / colW) + COL_BUF)
   const visCols  = Array.from({ length: Math.max(0, endCol - startCol) }, (_, i) => startCol + i)
+  const visibleMonthSegments = buildAxisSegments(
+    visCols,
+    date => `${date.getFullYear()}-${date.getMonth()}`,
+    date => `${MONTH_ABR[date.getMonth()]} ${date.getFullYear()}`
+  )
+  const visibleWeekSegments = buildAxisSegments(
+    visCols,
+    date => {
+      const { week, year } = isoWeekInfo(date)
+      return `${year}-${week}`
+    },
+    date => `KW ${isoWeekInfo(date).week}`
+  )
 
   const bufH    = ROW_BUF * rowH
   const visItems = rowItems.filter(r => r.top + r.height >= scrollTop - bufH && r.top <= scrollTop + vpSize.h + bufH)
@@ -1224,7 +1468,7 @@ export default function SchedulePage({ goals = [], isActive = false }) {
         warningPopupsEnabled={warningPopupsEnabled}
         onWarningPopupsEnabledChange={setWarningPopupsEnabled}
         canDeleteSelection={selectedIds.size > 0 || selectedDepIds.size > 0}
-        onDeleteSelection={handleDeleteSelection}
+        onDeleteSelection={handleRequestDeleteSelection}
         spacing={spacing} onSpacingChange={handleSpacingChange}
         mode={mode} onModeChange={setMode}
       />
@@ -1244,22 +1488,60 @@ export default function SchedulePage({ goals = [], isActive = false }) {
                     <div key={`lh-${item.cat?.id ?? 'none'}`} className={styles.laneHdr}
                       style={{ top: item.top, height: item.height, borderLeftColor: item.cat?.color ?? '#bbb', background: item.cat ? `${item.cat.color}18` : '#f3f3f3' }}>
                       <span className={styles.laneHdrName}>{item.cat?.name ?? 'Unassigned'}</span>
-                      {item.cat && (
-                        <button
-                          className={styles.laneCollapseBtn}
-                          title="Hide category"
-                          onClick={() => toggleCategoryVisibility(item.cat.id)}>
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M19 13H5v-2h14v2z"/>
-                          </svg>
-                        </button>
-                      )}
+                      <LaneGoalFilter
+                        laneKey={laneKeyForCat(item.cat)}
+                        goals={goalsForLane(item.cat)}
+                        hiddenGoalIds={hiddenGoalsByLane[laneKeyForCat(item.cat)] ?? new Set()}
+                        onToggleGoal={toggleGoalVisibility}
+                        onShowAllGoals={showAllLaneGoals}
+                      />
+                      <button
+                        className={styles.laneCollapseBtn}
+                        title="Hide category"
+                        onClick={() => toggleCategoryVisibility(item.cat?.id ?? UNASSIGNED_LANE)}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M19 13H5v-2h14v2z"/>
+                        </svg>
+                      </button>
                     </div>
                   )
                 if (item.type === 'goal')
                   return (
                     <div key={item.goal.id}
-                      className={inLaneMode ? styles.goalRowLane : styles.goalRow}
+                      className={[
+                        inLaneMode ? styles.goalRowLane : styles.goalRow,
+                        dragOverGoalId === item.goal.id && styles.goalRowDropTarget,
+                      ].filter(Boolean).join(' ')}
+                      draggable={Boolean(activeDimId && item.cat)}
+                      onDragStart={e => {
+                        if (!activeDimId || !item.cat) return
+                        e.dataTransfer.setData('schedule-goal-id', item.goal.id)
+                        e.dataTransfer.effectAllowed = 'move'
+                        // Ghost must be in the viewport for browsers to render it at full opacity
+                        const el = e.currentTarget
+                        const r = el.getBoundingClientRect()
+                        const ghost = el.cloneNode(true)
+                        Object.assign(ghost.style, {
+                          position: 'fixed', left: r.left + 'px', top: r.top + 'px',
+                          width: r.width + 'px', margin: '0',
+                          opacity: '1', pointerEvents: 'none', zIndex: '9999',
+                        })
+                        document.body.appendChild(ghost)
+                        e.dataTransfer.setDragImage(ghost, e.nativeEvent.offsetX ?? 0, e.nativeEvent.offsetY ?? 0)
+                        setTimeout(() => ghost.remove(), 0)
+                      }}
+                      onDragOver={e => {
+                        if (!activeDimId || !item.cat || !e.dataTransfer.types.includes('schedule-goal-id')) return
+                        e.preventDefault()
+                        setDragOverGoalId(item.goal.id)
+                      }}
+                      onDragLeave={() => setDragOverGoalId(prev => prev === item.goal.id ? null : prev)}
+                      onDrop={e => {
+                        const dragGoalId = e.dataTransfer.getData('schedule-goal-id')
+                        setDragOverGoalId(null)
+                        if (dragGoalId) reorderGoalInLane(dragGoalId, item.goal.id)
+                      }}
+                      onDragEnd={() => setDragOverGoalId(null)}
                       style={{ top: item.top, height: item.height, borderLeftColor: item.cat?.color ?? 'transparent' }}>
                       <span className={styles.goalTitle}>{item.goal.title}</span>
                     </div>
@@ -1283,6 +1565,24 @@ export default function SchedulePage({ goals = [], isActive = false }) {
 
             {/* Sticky time axis */}
             <div className={styles.timeAxis}>
+              <div className={styles.monthBand}>
+                {visibleMonthSegments.map(segment => (
+                  <div key={segment.key}
+                    className={styles.monthSegment}
+                    style={{ left: segment.startCol * colW, width: (segment.endCol - segment.startCol) * colW }}>
+                    {segment.label}
+                  </div>
+                ))}
+              </div>
+              <div className={styles.weekBand}>
+                {visibleWeekSegments.map(segment => (
+                  <div key={segment.key}
+                    className={styles.weekSegment}
+                    style={{ left: segment.startCol * colW, width: (segment.endCol - segment.startCol) * colW }}>
+                    {segment.label}
+                  </div>
+                ))}
+              </div>
               {visCols.map(ci => {
                 const date = colToDate(ci)
                 const dow  = date.getDay()
@@ -1292,9 +1592,6 @@ export default function SchedulePage({ goals = [], isActive = false }) {
                   <div key={ci}
                     className={[styles.dayHeader, isToday && styles.dayHeaderToday, isWeekend && !isToday && styles.dayHeaderWeekend].filter(Boolean).join(' ')}
                     style={{ left: ci * colW, width: colW }}>
-                    <span className={styles.monthLabel}>
-                      {MONTH_ABR[date.getMonth()]}
-                    </span>
                     <span className={[styles.dayNum, isToday && styles.dayNumToday].filter(Boolean).join(' ')}>
                       {date.getDate()}
                     </span>
@@ -1318,7 +1615,11 @@ export default function SchedulePage({ goals = [], isActive = false }) {
                 return <div key={`gg-${idx}`} className={styles.gridLaneGap} style={{ top: HEADER_H + item.top, height: item.height }} />
               if (item.type === 'lane-header')
                 return <div key={`gh-${item.cat?.id ?? 'none'}`} className={styles.gridLaneHdr}
-                  style={{ top: HEADER_H + item.top, height: item.height, background: item.cat ? `${item.cat.color}0d` : 'rgba(0,0,0,0.02)' }} />
+                  style={{
+                    top: HEADER_H + item.top,
+                    height: item.height,
+                    background: item.cat ? `${item.cat.color}24` : 'rgba(0,0,0,0.05)',
+                  }} />
               if (item.type === 'goal')
                 return <div key={`gr-${item.goal.id}`} className={styles.gridGoalRow} style={{ top: HEADER_H + item.top, height: item.height }} />
               return null
@@ -1358,7 +1659,8 @@ export default function SchedulePage({ goals = [], isActive = false }) {
                     height:     msH,
                     background: getMilestoneColor(m),
                   }}
-                  onMouseDown={e => handleMilestoneMouseDown(e, m.id, null)}>
+                  onMouseDown={e => handleMilestoneMouseDown(e, m.id, null)}
+                  onDoubleClick={e => { e.stopPropagation(); onGoalOpen?.(m.goalId) }}>
                   <div
                     className={[styles.msHandle, isDepMode && styles.depHandle, isDepMode && isSource && styles.depHandleSource].filter(Boolean).join(' ')}
                     data-ms-id={m.id}
@@ -1405,7 +1707,7 @@ export default function SchedulePage({ goals = [], isActive = false }) {
                     ref={el => { el ? depPathElsRef.current.set(dep.id, el) : depPathElsRef.current.delete(dep.id) }}
                     className={`${styles.depPath} ${isSelected ? styles.depPathSelected : ''}`}
                     d={`M ${x1} ${y1} C ${x1 + cp} ${y1}, ${x2 - cp} ${y2}, ${x2} ${y2}`}
-                    stroke={isViol ? '#ef4444' : '#5b8dee'} strokeWidth="1.5" fill="none"
+                    stroke={isViol ? '#ef4444' : '#555'} strokeWidth="1.5" fill="none"
                     strokeOpacity="0.8"
                     onMouseDown={e => {
                       e.stopPropagation()
@@ -1422,7 +1724,7 @@ export default function SchedulePage({ goals = [], isActive = false }) {
               })}
               {/* Live preview arrow while drawing */}
               <path ref={previewArrowRef} className={styles.depPreviewPath} style={{ display: 'none' }}
-                stroke="#5b8dee" strokeWidth="1.5" fill="none"
+                stroke="#333" strokeWidth="1.5" fill="none"
                 strokeDasharray="5,3" strokeOpacity="0.9" />
             </svg>
 
@@ -1472,6 +1774,49 @@ export default function SchedulePage({ goals = [], isActive = false }) {
             </button>
           </div>
         </div>
+      )}
+
+      {deleteDraft && createPortal(
+        <div className={styles.deleteModalBackdrop} onMouseDown={() => setDeleteDraft(null)}>
+          <div className={styles.deleteModal} role="dialog" aria-modal="true" onMouseDown={e => e.stopPropagation()}>
+            <div className={styles.deleteModalTitle}>Delete selected items?</div>
+            <div className={styles.deleteModalText}>
+              {deleteDraft.items.length === 1
+                ? 'This item will be deleted.'
+                : 'Choose which selected items should be deleted.'}
+            </div>
+            <div className={styles.deleteList}>
+              {deleteDraft.items.map(item => (
+                <label key={item.key} className={styles.deleteItem}>
+                  {deleteDraft.items.length > 1 && (
+                    <input
+                      type="checkbox"
+                      checked={item.checked}
+                      onChange={() => setDeleteDraft(prev => ({
+                        ...prev,
+                        items: prev.items.map(candidate =>
+                          candidate.key === item.key ? { ...candidate, checked: !candidate.checked } : candidate
+                        ),
+                      }))}
+                    />
+                  )}
+                  <span className={styles.deleteItemType}>{item.type === 'milestone' ? 'Milestone' : 'Dependency'}</span>
+                  <span className={styles.deleteItemLabel}>{item.label}</span>
+                </label>
+              ))}
+            </div>
+            <div className={styles.deleteModalActions}>
+              <button className={styles.deleteCancelBtn} onClick={() => setDeleteDraft(null)}>Cancel</button>
+              <button
+                className={styles.deleteConfirmBtn}
+                disabled={!deleteDraft.items.some(item => item.checked)}
+                onClick={handleConfirmDeleteDraft}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   )

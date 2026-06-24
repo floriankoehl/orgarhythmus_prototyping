@@ -32,3 +32,119 @@
 
 .active { color: #1a73e8; font-weight: 700; background: #e8f0fe; }
 .active:hover { background: #d2e3fc; }
+
+/* ── Quick-add ─────────────────────────────────────────────────────────────── */
+.quickAddWrap {
+  position: relative;
+  margin-right: 12px;
+}
+
+.quickAddBtn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #888;
+  transition: color 0.15s, background 0.15s;
+}
+.quickAddBtn:hover {
+  color: #1a73e8;
+  background: #e8f0fe;
+}
+
+.quickAddPopup {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.14);
+  z-index: 200;
+  width: 420px;
+  max-width: calc(100vw - 40px);
+}
+
+.quickAddLabel {
+  font-size: 11px;
+  font-family: Arial, sans-serif;
+  font-weight: 700;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Subtle optional title field */
+.quickAddTitleInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: Arial, sans-serif;
+  color: #555;
+  background: transparent;
+  border: none;
+  border-bottom: 1px dashed #ddd;
+  border-radius: 0;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.quickAddTitleInput::placeholder { color: #ccc; }
+.quickAddTitleInput:focus { border-bottom-color: #1a73e8; }
+
+.quickAddRow {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.quickAddInput {
+  flex: 1;
+  padding: 9px 12px;
+  font-size: 13px;
+  font-family: Arial, sans-serif;
+  line-height: 1.5;
+  border: 1px solid #ddd;
+  border-radius: 7px;
+  outline: none;
+  color: #222;
+  background: #fafafa;
+  resize: none;
+}
+.quickAddInput:focus {
+  border-color: #1a73e8;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(26,115,232,0.12);
+}
+
+.quickAddHint {
+  font-size: 11px;
+  font-family: Arial, sans-serif;
+  color: #bbb;
+  margin: 0;
+}
+
+.quickAddSubmit {
+  padding: 9px 18px;
+  font-size: 13px;
+  font-family: Arial, sans-serif;
+  font-weight: 600;
+  background: #1a73e8;
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.quickAddSubmit:hover { background: #1765cc; }

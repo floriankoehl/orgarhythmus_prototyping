@@ -204,7 +204,7 @@ function Goal({ goal, hoverY, onUpdate, onZoneMove, onZoneLeave, onZoneClick, on
 }
 
 // ── Canvas ────────────────────────────────────────────────────────────────────
-export default function DocumentCanvas({ onGoalsChange }) {
+export default function DocumentCanvas({ onGoalsChange, refreshKey }) {
   const initialGoal = useRef(mkGoal())
   const [goals, setGoals] = useState([initialGoal.current])
   const [hoverInfo, setHoverInfo] = useState(null)
@@ -228,6 +228,12 @@ export default function DocumentCanvas({ onGoalsChange }) {
       })
       .catch(() => {})
   }, [])
+
+  // ── Re-fetch when a goal is added externally (e.g. quick-add in header) ────
+  useEffect(() => {
+    if (!refreshKey) return
+    api.getPages().then(data => { if (data.length > 0) setGoals(data) }).catch(console.error)
+  }, [refreshKey])
 
   const register = (goalId, type, el) => {
     if (!refs.current[goalId]) refs.current[goalId] = {}

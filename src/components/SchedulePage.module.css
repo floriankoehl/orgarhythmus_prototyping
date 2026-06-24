@@ -566,6 +566,124 @@
 
 .warningUndoBtn:hover { background: #f5f5f5; }
 
+.deleteModalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.28);
+}
+
+.deleteModal {
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.24);
+}
+
+.deleteModalTitle {
+  color: #222;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.deleteModalText {
+  margin-top: 6px;
+  color: #666;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.deleteList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 14px;
+  overflow-y: auto;
+}
+
+.deleteItem {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  background: #fafafa;
+  color: #444;
+  font-size: 12px;
+}
+
+.deleteItem:hover { background: #f3f3f3; }
+
+.deleteItem input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: #e53e3e;
+}
+
+.deleteItemType {
+  color: #999;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.deleteItemLabel {
+  min-width: 0;
+  overflow: hidden;
+  color: #333;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.deleteModalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.deleteCancelBtn,
+.deleteConfirmBtn {
+  padding: 7px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.deleteCancelBtn {
+  color: #555;
+  background: #fff;
+  border: 1px solid #ddd;
+}
+
+.deleteCancelBtn:hover { background: #f5f5f5; }
+
+.deleteConfirmBtn {
+  color: #fff;
+  background: #e53e3e;
+  border: 1px solid #e53e3e;
+}
+
+.deleteConfirmBtn:hover:not(:disabled) { background: #c53030; }
+
+.deleteConfirmBtn:disabled {
+  color: #aaa;
+  background: #f5f5f5;
+  border-color: #ddd;
+  cursor: default;
+}
+
 /* ── Canvas row ──────────────────────────────────────────────────────────── */
 .canvasRow {
   flex: 1;
@@ -629,6 +747,19 @@
   border-bottom: 1px solid #f0f0f0;
   border-left: 3px solid transparent;
   box-sizing: border-box;
+}
+
+.goalRowLane[draggable="true"] {
+  cursor: grab;
+}
+
+.goalRowLane[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.goalRowDropTarget {
+  background: rgba(26,115,232,0.08);
+  box-shadow: inset 0 2px 0 #1a73e8;
 }
 
 .goalTitle {
@@ -697,6 +828,101 @@
   background: #fff;
 }
 
+.laneFilterBtn {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  padding: 0;
+  color: #aaa;
+  background: rgba(255,255,255,0.6);
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+
+.laneHdr:hover .laneFilterBtn,
+.laneFilterBtnActive {
+  opacity: 1;
+}
+
+.laneFilterBtn:hover:not(:disabled),
+.laneFilterBtnActive {
+  color: #555;
+  background: #fff;
+}
+
+.laneFilterBtn:disabled {
+  cursor: default;
+}
+
+.laneFilterMenu {
+  position: fixed;
+  z-index: 4000;
+  max-width: 320px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 5px 0;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.16);
+}
+
+.laneFilterAll {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  color: #1a73e8;
+  background: none;
+  border: none;
+  border-bottom: 1px solid #f0f0f0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+
+.laneFilterAll:hover { background: #f5f9ff; }
+
+.laneFilterItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+
+.laneFilterItem:hover { background: #f5f5f5; }
+
+.laneFilterItem input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: #1a73e8;
+  flex-shrink: 0;
+}
+
+.laneFilterName {
+  min-width: 0;
+  overflow: hidden;
+  color: #444;
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.laneFilterEmpty {
+  padding: 9px 12px;
+  color: #aaa;
+  font-size: 12px;
+}
+
 /* Empty / padding row */
 .emptyRow {
   position: absolute;
@@ -733,32 +959,75 @@
   border-bottom: 2px solid #e0e0e0;
   z-index: 10;
   overflow: hidden;
+  user-select: none;
+}
+
+.monthBand,
+.weekBand {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+}
+
+.monthBand {
+  top: 0;
+  height: 17px;
+}
+
+.weekBand {
+  top: 17px;
+  height: 15px;
+}
+
+.monthSegment,
+.weekSegment {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+
+.monthSegment {
+  top: 0;
+  height: 17px;
+  border-right: 1px solid #ddd;
+  color: #1a73e8;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.weekSegment {
+  top: 0;
+  height: 15px;
+  border-right: 1px solid #e6e6e6;
+  color: #999;
+  font-size: 9px;
+  font-weight: 600;
 }
 
 .dayHeader {
   position: absolute;
-  top: 0; height: 100%;
+  top: 32px;
+  height: 20px;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
   border-right: 1px solid #e8e8e8;
   box-sizing: border-box;
   overflow: hidden;
+  user-select: none;
 }
 
 .dayHeaderToday   { background: #e8f0fe; }
 .dayHeaderWeekend { background: #f5f5f5; }
-
-.monthLabel {
-  font-size: 9px;
-  font-weight: 700;
-  color: #1a73e8;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  line-height: 1;
-}
 
 .dayAbr {
   font-size: 9px;
@@ -767,7 +1036,7 @@
   letter-spacing: 0.2px;
 }
 
-.dayNum       { font-size: 13px; font-weight: 600; color: #555; line-height: 1; }
+.dayNum       { font-size: 13px; font-weight: 600; color: #555; line-height: 1; user-select: none; }
 .dayNumToday  { color: #1a73e8; }
 
 .dayHeaderWeekend .dayNum { color: #999; }
@@ -933,8 +1202,8 @@
   border-radius: 50%;
   transform: translate(-50%, -50%);
   cursor: crosshair;
-  background: #5b8dee !important;
-  box-shadow: 0 0 0 1px rgba(91,141,238,0.45), 0 1px 4px rgba(0,0,0,0.22);
+  background: #8a8f98 !important;
+  box-shadow: 0 0 0 1px rgba(80,85,92,0.35), 0 1px 4px rgba(0,0,0,0.22);
   opacity: 1;
 }
 
@@ -945,12 +1214,12 @@
 }
 
 .depHandle:hover {
-  background: #2f6fdf !important;
-  box-shadow: 0 0 0 3px rgba(91,141,238,0.24), 0 1px 4px rgba(0,0,0,0.24);
+  background: #5f6670 !important;
+  box-shadow: 0 0 0 3px rgba(80,85,92,0.2), 0 1px 4px rgba(0,0,0,0.24);
 }
-/* Source handle: pulsing blue when this milestone is the drawing source */
+/* Source handle: pulsing gray when this milestone is the drawing source */
 .depHandleSource {
-  background: #1a73e8 !important;
+  background: #3f454d !important;
   animation: depPulse 0.9s ease-in-out infinite;
 }
 @keyframes depPulse {
@@ -981,7 +1250,7 @@
 
 .depPathSelected {
   stroke-width: 3;
-  filter: drop-shadow(0 0 3px rgba(26,115,232,0.55));
+  filter: drop-shadow(0 0 3px rgba(0,0,0,0.35));
 }
 
 @keyframes depFlow {

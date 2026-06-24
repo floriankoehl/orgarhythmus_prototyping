@@ -548,7 +548,7 @@
   box-shadow: 0 0 0 2px #1a73e8, 0 2px 8px rgba(26,115,232,0.15);
 }
 
-.catDragging { opacity: 0.35; }
+.catDragging { opacity: 0.5; }
 
 .insertBefore {
   box-shadow: inset 4px 0 0 0 #1a73e8, 0 1px 3px rgba(0,0,0,0.1), 0 2px 8px rgba(0,0,0,0.06);
@@ -565,7 +565,7 @@
 /* ── Goal row ────────────────────────────────────────────── */
 .goalRow { border-bottom: 1px solid #f4f4f4; cursor: grab; }
 .goalRow:last-child { border-bottom: none; }
-.dragging { opacity: 0.35; }
+.dragging { opacity: 0.5; }
 
 .goalRowHeader {
   display: flex; align-items: center; gap: 6px;

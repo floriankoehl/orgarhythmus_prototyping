@@ -61,6 +61,7 @@ def _init_db():
                 goal_id      TEXT NOT NULL,
                 dimension_id TEXT NOT NULL,
                 category_id  TEXT NOT NULL,
+                order_idx    INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (goal_id, dimension_id)
             )
         """)
@@ -101,6 +102,21 @@ def _migrate():
             rows = con.execute("SELECT id FROM categories ORDER BY rowid").fetchall()
             for i, row in enumerate(rows):
                 con.execute("UPDATE categories SET order_idx = ? WHERE id = ?", (i, row[0]))
+        assignment_cols = [r[1] for r in con.execute("PRAGMA table_info(assignments)").fetchall()]
+        if 'order_idx' not in assignment_cols:
+            con.execute("ALTER TABLE assignments ADD COLUMN order_idx INTEGER NOT NULL DEFAULT 0")
+            rows = con.execute(
+                "SELECT goal_id, dimension_id, category_id FROM assignments ORDER BY dimension_id, category_id, rowid"
+            ).fetchall()
+            counters = {}
+            for row in rows:
+                key = (row["dimension_id"], row["category_id"])
+                idx = counters.get(key, 0)
+                counters[key] = idx + 1
+                con.execute(
+                    "UPDATE assignments SET order_idx = ? WHERE goal_id = ? AND dimension_id = ?",
+                    (idx, row["goal_id"], row["dimension_id"]),
+                )
 
 _migrate()
 
@@ -193,7 +209,7 @@ def _cat(row) -> dict:
 
 def _assign(row) -> dict:
     d = dict(row)
-    return {"goalId": d["goal_id"], "dimensionId": d["dimension_id"], "categoryId": d["category_id"]}
+    return {"goalId": d["goal_id"], "dimensionId": d["dimension_id"], "categoryId": d["category_id"], "orderIdx": d["order_idx"]}
 
 def _ms(row) -> dict:
     d = dict(row)
@@ -347,17 +363,49 @@ def delete_category(cat_id: str):
 @app.get("/assignments")
 def list_assignments():
     with _db() as con:
-        rows = con.execute("SELECT * FROM assignments").fetchall()
+        rows = con.execute("SELECT * FROM assignments ORDER BY dimension_id, category_id, order_idx").fetchall()
     return [_assign(r) for r in rows]
 
 @app.put("/goals/{goal_id}/assign/{dim_id}")
 def assign_category(goal_id: str, dim_id: str, data: AssignIn):
     with _db() as con:
+        existing = con.execute(
+            "SELECT category_id, order_idx FROM assignments WHERE goal_id = ? AND dimension_id = ?",
+            (goal_id, dim_id),
+        ).fetchone()
+        if existing and existing["category_id"] == data.categoryId:
+            order_idx = existing["order_idx"]
+        else:
+            order_idx = con.execute(
+                "SELECT COALESCE(MAX(order_idx), -1) + 1 FROM assignments WHERE dimension_id = ? AND category_id = ?",
+                (dim_id, data.categoryId),
+            ).fetchone()[0]
         con.execute(
-            "INSERT OR REPLACE INTO assignments (goal_id, dimension_id, category_id) VALUES (?, ?, ?)",
-            (goal_id, dim_id, data.categoryId),
+            "INSERT OR REPLACE INTO assignments (goal_id, dimension_id, category_id, order_idx) VALUES (?, ?, ?, ?)",
+            (goal_id, dim_id, data.categoryId, order_idx),
         )
-    return {"goalId": goal_id, "dimensionId": dim_id, "categoryId": data.categoryId}
+    return {"goalId": goal_id, "dimensionId": dim_id, "categoryId": data.categoryId, "orderIdx": order_idx}
+
+@app.put("/assignments/order")
+def reorder_assignments(data: dict):
+    dim_id = data.get("dimensionId")
+    cat_id = data.get("categoryId")
+    goal_ids = data.get("goalIds", [])
+    if not dim_id:
+        raise HTTPException(400, "dimensionId is required")
+    with _db() as con:
+        if cat_id is None:
+            return {"ok": True}
+        for i, goal_id in enumerate(goal_ids):
+            con.execute(
+                """
+                UPDATE assignments
+                SET order_idx = ?
+                WHERE goal_id = ? AND dimension_id = ? AND category_id = ?
+                """,
+                (i, goal_id, dim_id, cat_id),
+            )
+    return {"ok": True}
 
 @app.delete("/goals/{goal_id}/assign/{dim_id}", status_code=204)
 def unassign_category(goal_id: str, dim_id: str):

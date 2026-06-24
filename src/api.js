@@ -35,6 +35,7 @@ export const api = {
   getAssignments: ()                      => req('GET',    '/assignments'),
   assign:         (goalId, dimId, catId)  => req('PUT',    `/goals/${goalId}/assign/${dimId}`, { categoryId: catId }),
   unassign:       (goalId, dimId)         => req('DELETE', `/goals/${goalId}/assign/${dimId}`),
+  reorderAssignments: (dimId, catId, goalIds) => req('PUT', '/assignments/order', { dimensionId: dimId, categoryId: catId, goalIds }),
 
   // Milestones
   getMilestones:         ()        => req('GET',    '/milestones'),

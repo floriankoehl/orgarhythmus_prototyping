@@ -184,7 +184,7 @@ function CategoryEditModal({ cat, onClose, onSave, onDelete }) {
 }
 
 // ── Goal row inside a container ───────────────────────────────────────────────
-function GoalRow({ goal, paintCat, onPaint, legendColor }) {
+function GoalRow({ goal, paintCat, onPaint, legendColor, onReorder, onOpen }) {
   const [expanded, setExpanded] = useState(false)
   const [dragging, setDragging] = useState(false)
 
@@ -197,9 +197,31 @@ function GoalRow({ goal, paintCat, onPaint, legendColor }) {
         e.dataTransfer.setData('goalId', goal.id)
         e.dataTransfer.effectAllowed = 'move'
         setDragging(true)
+        const el = e.currentTarget
+        const r = el.getBoundingClientRect()
+        const ghost = el.cloneNode(true)
+        Object.assign(ghost.style, {
+          position: 'fixed', left: r.left + 'px', top: r.top + 'px',
+          width: r.width + 'px', margin: '0',
+          opacity: '1', pointerEvents: 'none', zIndex: '9999',
+        })
+        document.body.appendChild(ghost)
+        e.dataTransfer.setDragImage(ghost, e.nativeEvent.offsetX ?? 0, e.nativeEvent.offsetY ?? 0)
+        setTimeout(() => ghost.remove(), 0)
+      }}
+      onDragOver={paintCat ? undefined : e => {
+        if (!e.dataTransfer.types.includes('goalid')) return
+        e.preventDefault()
+      }}
+      onDrop={paintCat ? undefined : e => {
+        e.preventDefault()
+        e.stopPropagation()
+        const dragGoalId = e.dataTransfer.getData('goalId')
+        if (dragGoalId) onReorder?.(dragGoalId, goal.id)
       }}
       onDragEnd={paintCat ? undefined : () => setDragging(false)}
       onClick={paintCat ? e => { e.stopPropagation(); onPaint(goal.id) } : undefined}
+      onDoubleClick={paintCat ? undefined : e => { e.stopPropagation(); onOpen?.(goal.id) }}
     >
       <div className={styles.goalRowHeader}>
         <button className={styles.rowChevron}
@@ -220,7 +242,7 @@ function GoalRow({ goal, paintCat, onPaint, legendColor }) {
 
 // ── Category container box ────────────────────────────────────────────────────
 function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onEdit, onCollapse,
-  onCatDragStart, onCatDragEnd, onCatDragOver, onCatDrop, insertSide, isDraggingCat }) {
+  onCatDragStart, onCatDragEnd, onCatDragOver, onCatDrop, onReorderGoal, insertSide, isDraggingCat, onGoalOpen }) {
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounter = useRef(0)
   const boxRef = useRef()
@@ -280,6 +302,17 @@ function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onE
               e.dataTransfer.setData('catdrag', cat.id)
               e.dataTransfer.effectAllowed = 'move'
               onCatDragStart?.(cat.id)
+              const ghostSrc = e.currentTarget.parentElement || e.currentTarget
+              const r = ghostSrc.getBoundingClientRect()
+              const ghost = ghostSrc.cloneNode(true)
+              Object.assign(ghost.style, {
+                position: 'fixed', left: r.left + 'px', top: r.top + 'px',
+                width: r.width + 'px', margin: '0',
+                opacity: '1', pointerEvents: 'none', zIndex: '9999',
+              })
+              document.body.appendChild(ghost)
+              e.dataTransfer.setDragImage(ghost, e.nativeEvent.offsetX ?? 0, e.nativeEvent.offsetY ?? 0)
+              setTimeout(() => ghost.remove(), 0)
             }}
             onDragEnd={() => onCatDragEnd?.()}
             title="Drag to reorder"
@@ -313,7 +346,9 @@ function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onE
       <div className={styles.catBoxBody}>
         {goals.length === 0
           ? <div className={styles.catBoxEmpty}>Drop goals here</div>
-          : goals.map(g => <GoalRow key={g.id} goal={g} paintCat={paintCat} onPaint={onPaint} legendColor={getGoalColor?.(g.id)} />)
+          : goals.map(g => <GoalRow key={g.id} goal={g} paintCat={paintCat} onPaint={onPaint} legendColor={getGoalColor?.(g.id)}
+              onReorder={(dragGoalId, targetGoalId) => onReorderGoal?.(cat?.id, dragGoalId, targetGoalId)}
+              onOpen={onGoalOpen} />)
         }
       </div>
     </div>
@@ -505,10 +540,11 @@ function LegendWidget({
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ClassificationPage({ goals = [] }) {
+export default function ClassificationPage({ goals = [], onGoalOpen }) {
   const [dimensions, setDimensions]         = useState([])
   const [categories, setCategories]         = useState([])
   const [assignments, setAssignments]       = useState({})
+  const [assignmentOrders, setAssignmentOrders] = useState({})
   const [containerDimId, setContainerDimId] = useState('')
   const [legendDimId, setLegendDimId]       = useState('')
   const [filterLegendCatId, setFilterLegendCatId] = useState('')
@@ -526,11 +562,15 @@ export default function ClassificationPage({ goals = [] }) {
         setDimensions(dims)
         setCategories(cats)
         const map = {}
+        const orderMap = {}
         assigns.forEach(a => {
           if (!map[a.goalId]) map[a.goalId] = {}
+          if (!orderMap[a.goalId]) orderMap[a.goalId] = {}
           map[a.goalId][a.dimensionId] = a.categoryId
+          orderMap[a.goalId][a.dimensionId] = a.orderIdx ?? 0
         })
         setAssignments(map)
+        setAssignmentOrders(orderMap)
         const groupDim    = dims.find(d => d.name === 'Group')
         const priorityDim = dims.find(d => d.name === 'Priority')
         if (groupDim)    setContainerDimId(groupDim.id)
@@ -601,9 +641,15 @@ export default function ClassificationPage({ goals = [] }) {
       if (catId) {
         await api.assign(goalId, containerDimId, catId)
         setAssignments(prev => ({ ...prev, [goalId]: { ...(prev[goalId] ?? {}), [containerDimId]: catId } }))
+        setAssignmentOrders(prev => ({ ...prev, [goalId]: { ...(prev[goalId] ?? {}), [containerDimId]: Number.MAX_SAFE_INTEGER } }))
       } else {
         await api.unassign(goalId, containerDimId)
         setAssignments(prev => {
+          const g = { ...(prev[goalId] ?? {}) }
+          delete g[containerDimId]
+          return { ...prev, [goalId]: g }
+        })
+        setAssignmentOrders(prev => {
           const g = { ...(prev[goalId] ?? {}) }
           delete g[containerDimId]
           return { ...prev, [goalId]: g }
@@ -666,9 +712,32 @@ export default function ClassificationPage({ goals = [] }) {
     : goals
 
   const goalsForCat = catId => visibleGoals.filter(g => assignments[g.id]?.[containerDimId] === catId)
+    .sort((a, b) => (assignmentOrders[a.id]?.[containerDimId] ?? Number.MAX_SAFE_INTEGER) - (assignmentOrders[b.id]?.[containerDimId] ?? Number.MAX_SAFE_INTEGER))
   const unassignedGoals = containerDimId
     ? visibleGoals.filter(g => !assignments[g.id]?.[containerDimId])
     : visibleGoals
+
+  const reorderGoalInCategory = async (catId, dragGoalId, targetGoalId) => {
+    if (!containerDimId || !catId || dragGoalId === targetGoalId) return
+    if (assignments[dragGoalId]?.[containerDimId] !== catId || assignments[targetGoalId]?.[containerDimId] !== catId) return
+    const laneGoals = goalsForCat(catId)
+    const fromIdx = laneGoals.findIndex(g => g.id === dragGoalId)
+    const toIdx = laneGoals.findIndex(g => g.id === targetGoalId)
+    if (fromIdx === -1 || toIdx === -1) return
+    const reordered = [...laneGoals]
+    const [moved] = reordered.splice(fromIdx, 1)
+    reordered.splice(toIdx, 0, moved)
+    const goalIds = reordered.map(g => g.id)
+    setAssignmentOrders(prev => {
+      const next = { ...prev }
+      goalIds.forEach((goalId, idx) => {
+        next[goalId] = { ...(next[goalId] ?? {}), [containerDimId]: idx }
+      })
+      return next
+    })
+    try { await api.reorderAssignments(containerDimId, catId, goalIds) }
+    catch (e) { console.error(e) }
+  }
 
   const visibleContainerCats = containerCats.filter(c => !collapsedCatIds.has(c.id))
   const numBoxes = visibleContainerCats.length + 1
@@ -734,15 +803,19 @@ export default function ClassificationPage({ goals = [] }) {
               onCatDragEnd={catDragCleanup}
               onCatDragOver={handleCatDragOver}
               onCatDrop={() => { reorderCatsDrop(); catDragCleanup() }}
+              onReorderGoal={reorderGoalInCategory}
               insertSide={getCatInsertSide(cat.id)}
               isDraggingCat={catDragId === cat.id}
+              onGoalOpen={onGoalOpen}
             />
           ))}
           {!unassignedCollapsed && (
             <ContainerBox cat={null} goals={unassignedGoals}
               onDrop={goalId => assignGoal(goalId, null)}
               onCollapse={() => setUnassignedCollapsed(true)}
-              paintCat={paintCat} onPaint={paintGoal} getGoalColor={getGoalLegendColor} />
+              onReorderGoal={reorderGoalInCategory}
+              paintCat={paintCat} onPaint={paintGoal} getGoalColor={getGoalLegendColor}
+              onGoalOpen={onGoalOpen} />
           )}
           {containerDimId && <AddCatBox onAdd={name => createCategory(containerDimId, name, PRESET_COLORS[containerCats.length % PRESET_COLORS.length])} />}
         </div>
