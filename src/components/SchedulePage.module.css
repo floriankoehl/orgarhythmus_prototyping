@@ -308,6 +308,255 @@
   accent-color: #1a73e8;
 }
 
+.perspectiveWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.perspectiveBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  max-width: 180px;
+  padding: 0 12px;
+  color: #555;
+  background: rgba(255,255,255,0.92);
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.perspectiveBtn span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.perspectiveBtn:hover { background: #f5f5f5; }
+
+.perspectiveBtnOpen {
+  color: #1a73e8;
+  background: #e8f0fe;
+  border-color: #1a73e8;
+}
+
+.perspectiveToolbarSaveBtn {
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  background: rgba(255,255,255,0.92);
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+}
+
+.perspectiveToolbarSaveBtn:hover {
+  color: #1a73e8;
+  background: #f5f9ff;
+  border-color: #c5d8fb;
+}
+
+.perspectiveToolbarSaveBtn:disabled {
+  color: #bbb;
+  background: rgba(255,255,255,0.72);
+  border-color: #e5e5e5;
+  cursor: default;
+}
+
+.floatingHint {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: max-content;
+  max-width: 190px;
+  padding: 7px 9px;
+  color: #333;
+  background: rgba(255,255,255,0.96);
+  border: 1px solid #e0e0e0;
+  border-radius: 7px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 0.14s, transform 0.14s;
+}
+
+.floatingHint strong,
+.floatingHint small {
+  display: block;
+  white-space: nowrap;
+}
+
+.floatingHint strong {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.floatingHint small {
+  margin-top: 2px;
+  color: #777;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.perspectiveWrap:hover .floatingHint,
+.legendWidget:hover .floatingHint {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.perspectiveMenu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  width: min(280px, calc(100vw - 40px));
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.14);
+  z-index: 120;
+}
+
+.perspectiveCreateRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.perspectiveCreateRow input {
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  color: #333;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.perspectiveCreateRow button,
+.perspectiveIconBtn {
+  height: 28px;
+  color: #555;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.perspectiveCreateRow button:hover,
+.perspectiveIconBtn:hover {
+  background: #f5f5f5;
+}
+
+.perspectiveList {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.perspectiveEmpty {
+  padding: 10px 12px;
+  color: #aaa;
+  font-size: 12px;
+}
+
+.perspectiveItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+}
+
+.perspectiveItem:hover {
+  background: #f8f8f8;
+}
+
+.perspectiveItemActive {
+  background: #f0f7ff;
+}
+
+.perspectiveApplyBtn {
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  color: #444;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+
+.perspectiveApplyBtn span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.perspectiveApplyBtn:hover {
+  color: #1a73e8;
+  background: #eef5ff;
+}
+
+.perspectiveRenameInput {
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  color: #333;
+  background: #fff;
+  border: 1px solid #1a73e8;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.perspectiveIconBtn {
+  width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: #888;
+}
+
+.perspectiveIconBtnActive {
+  color: #b7791f;
+  background: #fff7e6;
+  border-color: #f3c365;
+}
+
+.perspectiveIconBtn:disabled {
+  color: #c8c8c8;
+  background: #fafafa;
+  border-color: #eee;
+  cursor: default;
+}
+
 .spacingPanel {
   position: absolute;
   top: calc(100% + 6px);
@@ -433,11 +682,20 @@
 }
 
 /* ── Floating milestone color legend ─────────────────────────────────────── */
-.legendWidget {
+.floatingViewTools {
   position: absolute;
   right: 20px;
   bottom: 20px;
   z-index: 100;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.legendWidget {
+  position: relative;
+  width: 38px;
+  height: 38px;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -445,6 +703,9 @@
 }
 
 .legendPanel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
   min-width: 220px;
   overflow: hidden;
   background: #fff;

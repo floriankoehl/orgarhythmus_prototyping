@@ -48,12 +48,64 @@ function filterIdFromCategoryId(catId) {
   return catId?.startsWith(FILTER_CATEGORY_PREFIX) ? catId.slice(FILTER_CATEGORY_PREFIX.length) : null
 }
 
+function ClassificationVisualSettings({ maxGridCols, onMaxGridColsChange, onClose, anchorRef }) {
+  const panelRef = useRef()
+
+  useEffect(() => {
+    const close = e => {
+      if (panelRef.current?.contains(e.target)) return
+      if (anchorRef.current?.contains(e.target)) return
+      onClose()
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [anchorRef, onClose])
+
+  const setCols = value => onMaxGridColsChange(Math.max(1, Math.min(12, Number(value) || 1)))
+
+  return (
+    <div ref={panelRef} className={styles.visualPanel}>
+      <div className={styles.visualPanelHdr}>
+        <span>Visual settings</span>
+        <button className={styles.visualClose} onClick={onClose}>✕</button>
+      </div>
+      <div className={styles.visualSectionTitle}>Grid structure</div>
+      <label className={styles.visualRow}>
+        <span className={styles.visualLabel}>Max columns</span>
+        <input
+          type="range"
+          min="1"
+          max="12"
+          value={maxGridCols}
+          className={styles.visualSlider}
+          onChange={e => setCols(e.target.value)}
+        />
+        <input
+          type="number"
+          min="1"
+          max="12"
+          value={maxGridCols}
+          className={styles.visualNumber}
+          onChange={e => setCols(e.target.value)}
+        />
+      </label>
+    </div>
+  )
+}
+
 // ── Classification toolbar ────────────────────────────────────────────────────
-function ClassificationToolbar({ dimensions, containerDimId, onContainerDimChange, onCreateDim, onRequestDeleteDim }) {
+function ClassificationToolbar({
+  dimensions, containerDimId, onContainerDimChange, onCreateDim, onRenameDim, onRequestDeleteDim,
+  maxGridCols, onMaxGridColsChange,
+}) {
   const [dimMenuOpen, setDimMenuOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [adding, setAdding]           = useState(false)
   const [newDimName, setNewDimName]   = useState('')
+  const [editingDimId, setEditingDimId] = useState('')
+  const [editingDimName, setEditingDimName] = useState('')
   const dimMenuRef  = useRef()
+  const settingsBtnRef = useRef()
   const addInputRef = useRef()
 
   useEffect(() => {
@@ -74,6 +126,19 @@ function ClassificationToolbar({ dimensions, containerDimId, onContainerDimChang
   }
 
   const cancel = () => { setAdding(false); setNewDimName('') }
+
+  const startEditDim = dim => {
+    if (dim.dynamic) return
+    setEditingDimId(dim.id)
+    setEditingDimName(dim.name)
+  }
+
+  const commitEditDim = () => {
+    const name = editingDimName.trim()
+    if (editingDimId && name) onRenameDim(editingDimId, name)
+    setEditingDimId('')
+    setEditingDimName('')
+  }
 
   const Chevron = ({ open }) => (
     <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"
@@ -115,15 +180,58 @@ function ClassificationToolbar({ dimensions, containerDimId, onContainerDimChang
               ? <div className={styles.tbDropdownEmpty}>No dimensions yet</div>
               : dimensions.map(dim => (
                   <div key={dim.id} className={styles.tbDimRow}>
-                    <span className={styles.tbDimRowName}>{dim.name}</span>
+                    {editingDimId === dim.id ? (
+                      <input
+                        className={styles.tbDimRowInput}
+                        value={editingDimName}
+                        autoFocus
+                        onChange={e => setEditingDimName(e.target.value)}
+                        onBlur={commitEditDim}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') commitEditDim()
+                          if (e.key === 'Escape') { setEditingDimId(''); setEditingDimName('') }
+                        }}
+                      />
+                    ) : (
+                      <span className={styles.tbDimRowName} onDoubleClick={() => startEditDim(dim)}>
+                        {dim.name}
+                      </span>
+                    )}
                     {!dim.dynamic && (
-                      <button className={styles.tbDimRowDelete}
-                        onClick={() => onRequestDeleteDim(dim.id)}>✕</button>
+                      <>
+                        <button className={styles.tbDimRowEdit}
+                          title="Rename dimension"
+                          onClick={() => startEditDim(dim)}>
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                          </svg>
+                        </button>
+                        <button className={styles.tbDimRowDelete}
+                          title="Delete dimension"
+                          onClick={() => onRequestDeleteDim(dim.id)}>✕</button>
+                      </>
                     )}
                   </div>
                 ))
             }
           </div>
+        )}
+      </div>
+
+      <div className={styles.tbSettingsWrap}>
+        <button
+          ref={settingsBtnRef}
+          className={`${styles.tbSelectorBtn} ${settingsOpen ? styles.tbSelectorBtnOpen : ''}`}
+          onClick={() => setSettingsOpen(v => !v)}>
+          Visual settings<Chevron open={settingsOpen} />
+        </button>
+        {settingsOpen && (
+          <ClassificationVisualSettings
+            maxGridCols={maxGridCols}
+            onMaxGridColsChange={onMaxGridColsChange}
+            onClose={() => setSettingsOpen(false)}
+            anchorRef={settingsBtnRef}
+          />
         )}
       </div>
 
@@ -762,6 +870,7 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
   const [activeFilterIds, setActiveFilterIds] = useState([])
   const [quickFilters, setQuickFilters] = useState([])
   const [editingFilter, setEditingFilter] = useState(null)
+  const [maxGridCols, setMaxGridCols] = useState(6)
   const [paintCat, setPaintCat]             = useState(null)
   const [editCat, setEditCat]               = useState(null)
   const [confirmDeleteDimId, setConfirmDeleteDimId] = useState(null)
@@ -805,6 +914,13 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
   const createDimension = async name => {
     try { const d = await api.createDimension({ name }); setDimensions(p => [...p, d]) }
     catch (e) { console.error(e) }
+  }
+
+  const renameDimension = async (id, name) => {
+    try {
+      const d = await api.updateDimension(id, { name })
+      setDimensions(prev => prev.map(dim => dim.id === id ? d : dim))
+    } catch (e) { console.error(e) }
   }
 
   const deleteDimension = async id => {
@@ -1038,7 +1154,7 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
 
   const visibleContainerCats = containerCats.filter(c => !collapsedCatIds.has(c.id))
   const numBoxes = visibleContainerCats.length + 1
-  const gridCols = Math.min(numBoxes, 6)
+  const gridCols = Math.min(numBoxes, maxGridCols)
   const colTemplate = gridCols === 1 ? 'min(100%, 480px)' : '1fr'
   const gridStyle = {
     gridTemplateColumns: `repeat(${gridCols}, ${colTemplate})`,
@@ -1058,7 +1174,10 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
         containerDimId={containerDimId}
         onContainerDimChange={setContainerDimId}
         onCreateDim={createDimension}
+        onRenameDim={renameDimension}
         onRequestDeleteDim={setConfirmDeleteDimId}
+        maxGridCols={maxGridCols}
+        onMaxGridColsChange={setMaxGridCols}
       />
 
       <div className={styles.body}>

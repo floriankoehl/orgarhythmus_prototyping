@@ -102,6 +102,13 @@ def _init_db():
                 quick_key       TEXT
             )
         """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS schedule_perspectives (
+                id         TEXT PRIMARY KEY,
+                name       TEXT NOT NULL,
+                state_json TEXT NOT NULL DEFAULT '{}'
+            )
+        """)
 
 _init_db()
 
@@ -178,6 +185,9 @@ class DimensionIn(BaseModel):
     id: Optional[str] = None
     name: str
 
+class DimensionPatch(BaseModel):
+    name: Optional[str] = None
+
 class CategoryIn(BaseModel):
     id: Optional[str] = None
     name: str
@@ -233,6 +243,15 @@ class SavedFilterPatch(BaseModel):
     selections: Optional[dict[str, list[str]]] = None
     quickKey: Optional[str] = None
 
+class SchedulePerspectiveIn(BaseModel):
+    id: Optional[str] = None
+    name: str
+    state: dict = {}
+
+class SchedulePerspectivePatch(BaseModel):
+    name: Optional[str] = None
+    state: Optional[dict] = None
+
 
 # ── Helper converters ─────────────────────────────────────────────────────────
 def _page(row) -> dict:
@@ -275,6 +294,14 @@ def _filter(row) -> dict:
         "selections": selections,
         "quickKey": d["quick_key"],
     }
+
+def _schedule_perspective(row) -> dict:
+    d = dict(row)
+    try:
+        state = json.loads(d["state_json"] or "{}")
+    except json.JSONDecodeError:
+        state = {}
+    return {"id": d["id"], "name": d["name"], "state": state}
 
 def _normalize_filter_payload(data) -> tuple[str, str, str | None]:
     gate = data.gate if data.gate in ("AND", "OR") else "AND"
@@ -355,6 +382,20 @@ def create_dimension(data: DimensionIn):
             raise HTTPException(409, "Dimension already exists")
         con.execute("INSERT INTO dimensions (id, name) VALUES (?, ?)", (did, data.name))
     return {"id": did, "name": data.name}
+
+@app.patch("/dimensions/{dim_id}")
+def update_dimension(dim_id: str, data: DimensionPatch):
+    with _db() as con:
+        if not con.execute("SELECT id FROM dimensions WHERE id = ?", (dim_id,)).fetchone():
+            raise HTTPException(404, "Dimension not found")
+        fields, values = [], []
+        if data.name is not None:
+            fields.append("name = ?")
+            values.append(data.name.strip() or "Untitled dimension")
+        if fields:
+            con.execute(f"UPDATE dimensions SET {', '.join(fields)} WHERE id = ?", (*values, dim_id))
+        row = con.execute("SELECT * FROM dimensions WHERE id = ?", (dim_id,)).fetchone()
+    return dict(row)
 
 @app.delete("/dimensions/{dim_id}", status_code=204)
 def delete_dimension(dim_id: str):
@@ -542,6 +583,52 @@ def delete_filter(filter_id: str):
         if not con.execute("SELECT id FROM saved_filters WHERE id = ?", (filter_id,)).fetchone():
             raise HTTPException(404, "Filter not found")
         con.execute("DELETE FROM saved_filters WHERE id = ?", (filter_id,))
+
+
+# ── Schedule perspectives ────────────────────────────────────────────────────
+@app.get("/schedule-perspectives")
+def list_schedule_perspectives():
+    with _db() as con:
+        rows = con.execute("SELECT * FROM schedule_perspectives ORDER BY name COLLATE NOCASE").fetchall()
+    return [_schedule_perspective(r) for r in rows]
+
+@app.post("/schedule-perspectives", status_code=201)
+def create_schedule_perspective(data: SchedulePerspectiveIn):
+    pid = data.id or str(uuid.uuid4())
+    name = data.name.strip() or "Untitled perspective"
+    with _db() as con:
+        if con.execute("SELECT id FROM schedule_perspectives WHERE id = ?", (pid,)).fetchone():
+            raise HTTPException(409, "Perspective already exists")
+        con.execute(
+            "INSERT INTO schedule_perspectives (id, name, state_json) VALUES (?, ?, ?)",
+            (pid, name, json.dumps(data.state or {})),
+        )
+        row = con.execute("SELECT * FROM schedule_perspectives WHERE id = ?", (pid,)).fetchone()
+    return _schedule_perspective(row)
+
+@app.patch("/schedule-perspectives/{perspective_id}")
+def update_schedule_perspective(perspective_id: str, data: SchedulePerspectivePatch):
+    with _db() as con:
+        if not con.execute("SELECT id FROM schedule_perspectives WHERE id = ?", (perspective_id,)).fetchone():
+            raise HTTPException(404, "Perspective not found")
+        fields, values = [], []
+        if data.name is not None:
+            fields.append("name = ?")
+            values.append(data.name.strip() or "Untitled perspective")
+        if data.state is not None:
+            fields.append("state_json = ?")
+            values.append(json.dumps(data.state or {}))
+        if fields:
+            con.execute(f"UPDATE schedule_perspectives SET {', '.join(fields)} WHERE id = ?", (*values, perspective_id))
+        row = con.execute("SELECT * FROM schedule_perspectives WHERE id = ?", (perspective_id,)).fetchone()
+    return _schedule_perspective(row)
+
+@app.delete("/schedule-perspectives/{perspective_id}", status_code=204)
+def delete_schedule_perspective(perspective_id: str):
+    with _db() as con:
+        if not con.execute("SELECT id FROM schedule_perspectives WHERE id = ?", (perspective_id,)).fetchone():
+            raise HTTPException(404, "Perspective not found")
+        con.execute("DELETE FROM schedule_perspectives WHERE id = ?", (perspective_id,))
 
 
 # ── Milestones ────────────────────────────────────────────────────────────────

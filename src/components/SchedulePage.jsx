@@ -18,6 +18,8 @@ const EDGE_COLS       = 5     // columns from right edge before extending
 const MONTH_ABR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 const FILTER_DIMENSION_ID = '__filters__'
 const FILTER_CATEGORY_PREFIX = 'filter:'
+const NONE_PERSPECTIVE_ID = '__none__'
+const SCHEDULE_DEFAULT_PERSPECTIVE_KEY = 'schedule.defaultPerspectiveId'
 
 function makeColorCursor(color) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="10" fill="${color}" stroke="white" stroke-width="2"/></svg>`
@@ -568,6 +570,7 @@ function ScheduleLegendDropUp({ dimensions, colorDimId, onColorDimChange }) {
   const btnRef = useRef()
   const menuRef = useRef()
   const [pos, setPos] = useState(null)
+  const wheelAtRef = useRef(0)
 
   const toggle = () => {
     if (!open) {
@@ -589,10 +592,24 @@ function ScheduleLegendDropUp({ dimensions, colorDimId, onColorDimChange }) {
   }, [open])
 
   const current = dimensions.find(d => d.id === colorDimId)
+  const cycleDimension = deltaY => {
+    const options = ['', ...dimensions.map(d => d.id)]
+    if (options.length === 0) return
+    const now = Date.now()
+    if (now - wheelAtRef.current < 180) return
+    wheelAtRef.current = now
+    const activeIdx = Math.max(0, options.indexOf(colorDimId))
+    const dir = deltaY > 0 ? 1 : -1
+    onColorDimChange(options[(activeIdx + dir + options.length) % options.length])
+  }
 
   return (
     <div className={styles.legendDropUpWrap}>
-      <button ref={btnRef} className={styles.legendDropUpBtn} onClick={toggle}>
+      <button
+        ref={btnRef}
+        className={styles.legendDropUpBtn}
+        onWheel={e => { e.preventDefault(); cycleDimension(e.deltaY) }}
+        onClick={toggle}>
         <span className={styles.legendDropUpLabel}>{current?.name ?? 'Color legend'}</span>
         <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"
           style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s', flexShrink: 0 }}>
@@ -719,11 +736,176 @@ function ScheduleFilterEditorModal({ filter, dimensions, categories, onSave, onD
   )
 }
 
+function normalizePerspective(perspective) {
+  return {
+    ...perspective,
+    name: (perspective?.name || 'Untitled perspective').trim(),
+    state: perspective?.state ?? {},
+  }
+}
+
+function SaveIcon({ size = 12 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M5 3h12l2 2v16H5V3zm2 2v5h9V5H7zm1 10v4h8v-4H8zm10-8.17V19h-1v-6H7v6H6V5h10.17L18 6.83z"/>
+    </svg>
+  )
+}
+
+function PerspectiveMenu({ perspectives, activePerspectiveId, defaultPerspectiveId, open, onOpenChange, onApply, onCreate, onUpdate, onRename, onDelete, onSetDefault }) {
+  const [name, setName] = useState('')
+  const [editingId, setEditingId] = useState('')
+  const [editingName, setEditingName] = useState('')
+  const wrapRef = useRef()
+  const wheelAtRef = useRef(0)
+  const applyTimerRef = useRef(null)
+  const active = perspectives.find(p => p.id === activePerspectiveId)
+  const canSaveActive = Boolean(active && !active.readOnly)
+
+  useEffect(() => {
+    if (!open) return
+    const close = e => { if (!wrapRef.current?.contains(e.target)) onOpenChange(false) }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [onOpenChange, open])
+
+  useEffect(() => () => {
+    if (applyTimerRef.current) window.clearTimeout(applyTimerRef.current)
+  }, [])
+
+  const create = () => {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    onCreate(trimmed)
+    setName('')
+  }
+
+  const cycle = deltaY => {
+    if (perspectives.length === 0) return
+    const now = Date.now()
+    if (now - wheelAtRef.current < 180) return
+    wheelAtRef.current = now
+    const activeIdx = Math.max(0, perspectives.findIndex(p => p.id === activePerspectiveId))
+    const dir = deltaY > 0 ? 1 : -1
+    const nextIdx = (activeIdx + dir + perspectives.length) % perspectives.length
+    onApply(perspectives[nextIdx])
+  }
+
+  const startRename = perspective => {
+    if (applyTimerRef.current) {
+      window.clearTimeout(applyTimerRef.current)
+      applyTimerRef.current = null
+    }
+    setEditingId(perspective.id)
+    setEditingName(perspective.name)
+  }
+
+  const commitRename = () => {
+    const trimmed = editingName.trim()
+    if (editingId && trimmed) onRename(editingId, trimmed)
+    setEditingId('')
+    setEditingName('')
+  }
+
+  const applyFromMenu = perspective => {
+    if (applyTimerRef.current) window.clearTimeout(applyTimerRef.current)
+    applyTimerRef.current = window.setTimeout(() => {
+      onApply(perspective)
+      onOpenChange(false)
+      applyTimerRef.current = null
+    }, 180)
+  }
+
+  return (
+    <div ref={wrapRef} className={styles.perspectiveWrap}>
+      <button
+        className={styles.perspectiveToolbarSaveBtn}
+        title={canSaveActive ? 'Update current perspective snapshot' : 'None cannot be saved'}
+        disabled={!canSaveActive}
+        onClick={() => canSaveActive && onUpdate(active.id)}>
+        <SaveIcon />
+      </button>
+      <button
+        className={`${styles.perspectiveBtn} ${open ? styles.perspectiveBtnOpen : ''}`}
+        onWheel={e => { e.preventDefault(); cycle(e.deltaY) }}
+        onClick={() => onOpenChange(!open)}>
+        <span>{active?.name ?? 'None'}</span>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M7 10l5 5 5-5z" />
+        </svg>
+      </button>
+      {!open && (
+        <span className={styles.floatingHint}>
+          <strong>Perspective</strong>
+          <small>Switch saved Gantt views</small>
+        </span>
+      )}
+      {open && (
+        <div className={styles.perspectiveMenu}>
+          <div className={styles.perspectiveCreateRow}>
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') create() }}
+              placeholder="Perspective name"
+            />
+            <button onClick={create}>Save</button>
+          </div>
+          <div className={styles.perspectiveList}>
+            {perspectives.length === 0 ? (
+              <div className={styles.perspectiveEmpty}>No perspectives yet</div>
+            ) : perspectives.map(p => (
+              <div key={p.id} className={`${styles.perspectiveItem} ${p.id === activePerspectiveId ? styles.perspectiveItemActive : ''}`}>
+                {editingId === p.id ? (
+                  <input
+                    className={styles.perspectiveRenameInput}
+                    value={editingName}
+                    autoFocus
+                    onChange={e => setEditingName(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') commitRename()
+                      if (e.key === 'Escape') { setEditingId(''); setEditingName('') }
+                    }}
+                  />
+                ) : (
+                  <button
+                    className={styles.perspectiveApplyBtn}
+                    onClick={() => applyFromMenu(p)}
+                    onDoubleClick={e => { e.preventDefault(); e.stopPropagation(); if (!p.readOnly) startRename(p) }}>
+                    <span>{p.name}</span>
+                  </button>
+                )}
+                <button
+                  className={`${styles.perspectiveIconBtn} ${defaultPerspectiveId === p.id ? styles.perspectiveIconBtnActive : ''}`}
+                  title="Use as schedule default"
+                  onClick={() => onSetDefault(p.id)}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27z"/>
+                  </svg>
+                </button>
+                <button className={styles.perspectiveIconBtn} title={p.readOnly ? 'None cannot be saved' : 'Update snapshot'} disabled={p.readOnly} onClick={() => !p.readOnly && onUpdate(p.id)}>
+                  <SaveIcon />
+                </button>
+                <button className={styles.perspectiveIconBtn} title={p.readOnly ? 'None cannot be deleted' : 'Delete'} disabled={p.readOnly} onClick={() => !p.readOnly && onDelete(p.id)}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 4l1-1h6l1 1h4v2H4V4h4z"/>
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ScheduleColorLegendWidget({
   dimensions, categories, colorDimId, onColorDimChange,
   activeFilterIds, onToggleSavedFilter, quickFilters, onToggleQuickFilter, onEditFilter, paintCat, onPaintActivate,
+  expanded, onExpandedChange,
 }) {
-  const [expanded, setExpanded] = useState(false)
   const legendCats = categories.filter(c => c.dimensionId === colorDimId)
 
   return (
@@ -781,12 +963,18 @@ function ScheduleColorLegendWidget({
 
       <button
         className={`${styles.legendToggleBtn} ${expanded ? styles.legendToggleActive : ''}`}
-        onClick={() => setExpanded(v => !v)}
+        onClick={() => onExpandedChange(!expanded)}
         title={expanded ? 'Collapse legend' : 'Color legend'}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/>
         </svg>
       </button>
+      {!expanded && (
+        <span className={styles.floatingHint}>
+          <strong>Color dimension</strong>
+          <small>Color and quick-filter goals</small>
+        </span>
+      )}
     </div>
   )
 }
@@ -802,6 +990,13 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const [dependencies, setDependencies] = useState([])
   const [deadlines,    setDeadlines]    = useState([])
   const [savedFilters, setSavedFilters] = useState([])
+  const [perspectives, setPerspectives] = useState([])
+  const [activePerspectiveId, setActivePerspectiveId] = useState(NONE_PERSPECTIVE_ID)
+  const [defaultPerspectiveId, setDefaultPerspectiveId] = useState(() => {
+    try { return window.localStorage.getItem(SCHEDULE_DEFAULT_PERSPECTIVE_KEY) || NONE_PERSPECTIVE_ID }
+    catch { return NONE_PERSPECTIVE_ID }
+  })
+  const appliedDefaultRef = useRef(false)
   const [editingFilter, setEditingFilter] = useState(null)
   const [drawingState, setDrawingState] = useState(null)  // { fromId } while drawing
 
@@ -809,10 +1004,11 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     if (!isActive) return
     Promise.all([
       api.getDimensions(), api.getAllCategories(), api.getAssignments(),
-      api.getMilestones(), api.getDependencies(), api.getDeadlines(), api.getFilters(),
-    ]).then(([dims, cats, assigns, mss, deps, dls, filters]) => {
+      api.getMilestones(), api.getDependencies(), api.getDeadlines(), api.getFilters(), api.getSchedulePerspectives(),
+    ]).then(([dims, cats, assigns, mss, deps, dls, filters, loadedPerspectives]) => {
       setDimensions(dims); setCategories(cats)
       setSavedFilters(filters)
+      setPerspectives(loadedPerspectives.map(normalizePerspective))
       const map = {}
       const orderMap = {}
       assigns.forEach(a => {
@@ -846,6 +1042,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const [activeFilterIds, setActiveFilterIds] = useState([])
   const [quickFilters, setQuickFilters] = useState([])
   const [paintCat, setPaintCat] = useState(null)
+  const [floatingPanel, setFloatingPanel] = useState(null)
   const [spacing,     setSpacing]     = useState(DEFAULT_SPACING)
   const [hiddenCatIds, setHiddenCatIds] = useState(new Set())
   const [hiddenGoalsByLane, setHiddenGoalsByLane] = useState({})
@@ -867,18 +1064,60 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     [savedFilters, activeLaneFilterId]
   )
 
+  const nonePerspective = useMemo(() => {
+    const priorityDim = dimensions.find(d => d.name === 'Priority')
+    return normalizePerspective({
+      id: NONE_PERSPECTIVE_ID,
+      name: 'None',
+      readOnly: true,
+      state: {
+        spacing: DEFAULT_SPACING,
+        axisMode: 'full',
+        showDepLabels: true,
+        showDeps: true,
+        hideCrossCatDeps: false,
+        leftPanelWidth: 220,
+        group: { activeDimId: '', activeLaneFilterId: '' },
+        collapsedCategories: [],
+        hiddenGoalsByLane: {},
+        scrollLeft: 0,
+        color: {
+          colorDimId: priorityDim?.id ?? '',
+          activeFilterIds: [],
+          quickFilters: [],
+        },
+      },
+    })
+  }, [dimensions])
+
+  const perspectiveOptions = useMemo(
+    () => [nonePerspective, ...perspectives],
+    [nonePerspective, perspectives]
+  )
+
   const handleLaneGroupChange = useCallback((value) => {
     if (!value) { setActiveDimId(''); setActiveLaneFilterId('') }
     else if (value.startsWith('d:')) { setActiveDimId(value.slice(2)); setActiveLaneFilterId('') }
     else { setActiveLaneFilterId(value.slice(2)); setActiveDimId('') }
   }, [])
 
+  const restoringPerspectiveRef = useRef(false)
+  const restoringColorRef = useRef(false)
+
   useEffect(() => {
+    if (restoringPerspectiveRef.current) {
+      restoringPerspectiveRef.current = false
+      return
+    }
     setHiddenCatIds(activeLaneFilterId ? new Set([UNASSIGNED_LANE]) : new Set())
     setHiddenGoalsByLane({})
   }, [activeDimId, activeLaneFilterId])
 
   useEffect(() => {
+    if (restoringColorRef.current) {
+      restoringColorRef.current = false
+      return
+    }
     setQuickFilters([])
     if (colorDimId !== FILTER_DIMENSION_ID) setActiveFilterIds([])
     setPaintCat(null)
@@ -1894,6 +2133,127 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const leftPanelWidthRef = useRef(220)
   leftPanelWidthRef.current = leftPanelWidth
 
+  const capturePerspectiveState = useCallback(() => ({
+    spacing,
+    axisMode,
+    showDepLabels,
+    showDeps,
+    hideCrossCatDeps,
+    leftPanelWidth,
+    group: {
+      activeDimId,
+      activeLaneFilterId,
+    },
+    collapsedCategories: [...hiddenCatIds],
+    hiddenGoalsByLane: Object.fromEntries(
+      Object.entries(hiddenGoalsByLane).map(([laneKey, ids]) => [laneKey, [...ids]])
+    ),
+    scrollLeft: scrollLeftRef.current,
+    color: {
+      colorDimId,
+      activeFilterIds,
+      quickFilters,
+    },
+  }), [
+    activeDimId, activeFilterIds, activeLaneFilterId, axisMode, colorDimId,
+    hiddenCatIds, hiddenGoalsByLane, hideCrossCatDeps, leftPanelWidth,
+    quickFilters, showDepLabels, showDeps, spacing,
+  ])
+
+  const applyPerspective = useCallback(perspective => {
+    const state = perspective?.state ?? {}
+    const nextActiveDimId = state.group?.activeDimId || ''
+    const nextActiveLaneFilterId = state.group?.activeLaneFilterId || ''
+    const nextColorDimId = state.color?.colorDimId || ''
+    restoringPerspectiveRef.current = nextActiveDimId !== activeDimId || nextActiveLaneFilterId !== activeLaneFilterId
+    restoringColorRef.current = nextColorDimId !== colorDimId
+
+    if (state.spacing) setSpacing({ ...DEFAULT_SPACING, ...state.spacing })
+    if (state.axisMode) setAxisMode(state.axisMode)
+    if (typeof state.showDepLabels === 'boolean') setShowDepLabels(state.showDepLabels)
+    if (typeof state.showDeps === 'boolean') setShowDeps(state.showDeps)
+    if (typeof state.hideCrossCatDeps === 'boolean') setHideCrossCatDeps(state.hideCrossCatDeps)
+    if (typeof state.leftPanelWidth === 'number') setLeftPanelWidth(Math.max(120, Math.min(600, state.leftPanelWidth)))
+
+    setActiveDimId(nextActiveDimId)
+    setActiveLaneFilterId(nextActiveLaneFilterId)
+    setHiddenCatIds(new Set(Array.isArray(state.collapsedCategories) ? state.collapsedCategories : []))
+    setHiddenGoalsByLane(Object.fromEntries(
+      Object.entries(state.hiddenGoalsByLane ?? {}).map(([laneKey, ids]) => [laneKey, new Set(Array.isArray(ids) ? ids : [])])
+    ))
+
+    setColorDimId(nextColorDimId)
+    setActiveFilterIds(Array.isArray(state.color?.activeFilterIds) ? state.color.activeFilterIds : [])
+    setQuickFilters(Array.isArray(state.color?.quickFilters) ? state.color.quickFilters : [])
+    setPaintCat(null)
+    setActivePerspectiveId(perspective?.id ?? NONE_PERSPECTIVE_ID)
+
+    requestAnimationFrame(() => {
+      const nextLeft = Math.max(0, Number(state.scrollLeft) || 0)
+      if (gridBodyRef.current) gridBodyRef.current.scrollLeft = nextLeft
+      scrollLeftRef.current = gridBodyRef.current?.scrollLeft ?? nextLeft
+      setScrollLeft(scrollLeftRef.current)
+    })
+  }, [activeDimId, activeLaneFilterId, colorDimId])
+
+  const createPerspective = useCallback(async name => {
+    try {
+      const created = normalizePerspective(await api.createSchedulePerspective({ name, state: capturePerspectiveState() }))
+      setPerspectives(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
+      setActivePerspectiveId(created.id)
+    } catch (err) { console.error(err) }
+  }, [capturePerspectiveState])
+
+  const updatePerspectiveSnapshot = useCallback(async perspectiveId => {
+    if (perspectiveId === NONE_PERSPECTIVE_ID) return
+    const current = perspectives.find(p => p.id === perspectiveId)
+    if (!current) return
+    try {
+      const saved = normalizePerspective(await api.updateSchedulePerspective(perspectiveId, { state: capturePerspectiveState() }))
+      setPerspectives(prev => prev.map(p => p.id === saved.id ? saved : p))
+      setActivePerspectiveId(saved.id)
+    } catch (err) { console.error(err) }
+  }, [capturePerspectiveState, perspectives])
+
+  const renamePerspective = useCallback(async (perspectiveId, name) => {
+    if (perspectiveId === NONE_PERSPECTIVE_ID) return
+    try {
+      const saved = normalizePerspective(await api.updateSchedulePerspective(perspectiveId, { name }))
+      setPerspectives(prev => prev.map(p => p.id === saved.id ? saved : p).sort((a, b) => a.name.localeCompare(b.name)))
+    } catch (err) { console.error(err) }
+  }, [])
+
+  const deletePerspective = useCallback(async perspectiveId => {
+    if (perspectiveId === NONE_PERSPECTIVE_ID) return
+    try {
+      await api.deleteSchedulePerspective(perspectiveId)
+      setPerspectives(prev => prev.filter(p => p.id !== perspectiveId))
+      if (activePerspectiveId === perspectiveId) applyPerspective(nonePerspective)
+      setDefaultPerspectiveId(prev => {
+        if (prev !== perspectiveId) return prev
+        try { window.localStorage.setItem(SCHEDULE_DEFAULT_PERSPECTIVE_KEY, NONE_PERSPECTIVE_ID) } catch {}
+        return NONE_PERSPECTIVE_ID
+      })
+    } catch (err) { console.error(err) }
+  }, [activePerspectiveId, applyPerspective, nonePerspective])
+
+  const setScheduleDefaultPerspective = useCallback(perspectiveId => {
+    const nextId = perspectiveId || NONE_PERSPECTIVE_ID
+    setDefaultPerspectiveId(nextId)
+    try { window.localStorage.setItem(SCHEDULE_DEFAULT_PERSPECTIVE_KEY, nextId) } catch {}
+  }, [])
+
+  useEffect(() => {
+    if (!isActive) {
+      appliedDefaultRef.current = false
+      return
+    }
+    if (appliedDefaultRef.current || dimensions.length === 0) return
+    const defaultPerspective = perspectiveOptions.find(p => p.id === defaultPerspectiveId) ?? nonePerspective
+    appliedDefaultRef.current = true
+    applyPerspective(defaultPerspective)
+  }, [applyPerspective, defaultPerspectiveId, dimensions.length, isActive, nonePerspective, perspectiveOptions])
+
   const handlePanelResizeStart = useCallback(e => {
     if (e.button !== 0) return
     e.preventDefault()
@@ -2512,19 +2872,36 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
       </div>
 
-      <ScheduleColorLegendWidget
-        dimensions={colorDimensions}
-        categories={colorCategories}
-        colorDimId={colorDimId}
-        onColorDimChange={setColorDimId}
-        activeFilterIds={activeFilterIds}
-        onToggleSavedFilter={toggleSavedFilter}
-        quickFilters={quickFilters}
-        onToggleQuickFilter={toggleQuickFilter}
-        onEditFilter={filterId => setEditingFilter(savedFilters.find(filter => filter.id === filterId))}
-        paintCat={paintCat}
-        onPaintActivate={activatePaint}
-      />
+      <div className={styles.floatingViewTools}>
+        <PerspectiveMenu
+          perspectives={perspectiveOptions}
+          activePerspectiveId={activePerspectiveId}
+          defaultPerspectiveId={defaultPerspectiveId}
+          open={floatingPanel === 'perspective'}
+          onOpenChange={open => setFloatingPanel(open ? 'perspective' : null)}
+          onApply={applyPerspective}
+          onCreate={createPerspective}
+          onUpdate={updatePerspectiveSnapshot}
+          onRename={renamePerspective}
+          onDelete={deletePerspective}
+          onSetDefault={setScheduleDefaultPerspective}
+        />
+        <ScheduleColorLegendWidget
+          dimensions={colorDimensions}
+          categories={colorCategories}
+          colorDimId={colorDimId}
+          onColorDimChange={setColorDimId}
+          activeFilterIds={activeFilterIds}
+          onToggleSavedFilter={toggleSavedFilter}
+          quickFilters={quickFilters}
+          onToggleQuickFilter={toggleQuickFilter}
+          onEditFilter={filterId => setEditingFilter(savedFilters.find(filter => filter.id === filterId))}
+          paintCat={paintCat}
+          onPaintActivate={activatePaint}
+          expanded={floatingPanel === 'color'}
+          onExpandedChange={open => setFloatingPanel(open ? 'color' : null)}
+        />
+      </div>
 
       <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)}
         onCreate={handleCreateMilestone}

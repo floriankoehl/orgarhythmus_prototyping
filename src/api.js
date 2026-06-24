@@ -22,6 +22,7 @@ export const api = {
   // Dimensions
   getDimensions:   ()         => req('GET',    '/dimensions'),
   createDimension: (data)     => req('POST',   '/dimensions', data),
+  updateDimension: (id, patch)=> req('PATCH',  `/dimensions/${id}`, patch),
   deleteDimension: (id)       => req('DELETE', `/dimensions/${id}`),
 
   // Categories
@@ -42,6 +43,12 @@ export const api = {
   createFilter:  (filter)     => req('POST',   '/filters', filter),
   updateFilter:  (id, patch)  => req('PATCH',  `/filters/${id}`, patch),
   deleteFilter:  (id)         => req('DELETE', `/filters/${id}`),
+
+  // Schedule perspectives
+  getSchedulePerspectives:    ()              => req('GET',    '/schedule-perspectives'),
+  createSchedulePerspective:  (perspective)   => req('POST',   '/schedule-perspectives', perspective),
+  updateSchedulePerspective:  (id, patch)     => req('PATCH',  `/schedule-perspectives/${id}`, patch),
+  deleteSchedulePerspective:  (id)            => req('DELETE', `/schedule-perspectives/${id}`),
 
   // Milestones
   getMilestones:         ()        => req('GET',    '/milestones'),
