@@ -4,7 +4,8 @@ import styles from './ClassificationPage.module.css'
 import { api } from '../api'
 
 const PRESET_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#94a3b8']
-const FILTER_STORAGE_KEY = 'goals.classification.namedFilters.v1'
+const FILTER_DIMENSION_ID = '__filters__'
+const FILTER_CATEGORY_PREFIX = 'filter:'
 
 function makeColorCursor(color) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="10" fill="${color}" stroke="white" stroke-width="2"/></svg>`
@@ -25,16 +26,26 @@ function normalizeFilter(filter) {
     id: filter?.id || makeFilterId(),
     name: (filter?.name || 'Untitled filter').trim(),
     gate: filter?.gate === 'OR' ? 'OR' : 'AND',
+    color: filter?.color || '#64748b',
     selections,
     quickKey: filter?.quickKey || null,
   }
 }
 
 function filterMatchesGoal(filter, goalId, assignments) {
+  if (!filter) return false
   const entries = Object.entries(filter.selections).filter(([, catIds]) => catIds.length > 0)
   if (entries.length === 0) return false
   const matchesDim = ([dimId, catIds]) => catIds.includes(assignments[goalId]?.[dimId])
   return filter.gate === 'OR' ? entries.some(matchesDim) : entries.every(matchesDim)
+}
+
+function filterCategoryId(filterId) {
+  return `${FILTER_CATEGORY_PREFIX}${filterId}`
+}
+
+function filterIdFromCategoryId(catId) {
+  return catId?.startsWith(FILTER_CATEGORY_PREFIX) ? catId.slice(FILTER_CATEGORY_PREFIX.length) : null
 }
 
 // ── Classification toolbar ────────────────────────────────────────────────────
@@ -105,8 +116,10 @@ function ClassificationToolbar({ dimensions, containerDimId, onContainerDimChang
               : dimensions.map(dim => (
                   <div key={dim.id} className={styles.tbDimRow}>
                     <span className={styles.tbDimRowName}>{dim.name}</span>
-                    <button className={styles.tbDimRowDelete}
-                      onClick={() => onRequestDeleteDim(dim.id)}>✕</button>
+                    {!dim.dynamic && (
+                      <button className={styles.tbDimRowDelete}
+                        onClick={() => onRequestDeleteDim(dim.id)}>✕</button>
+                    )}
                   </div>
                 ))
             }
@@ -211,7 +224,7 @@ function CategoryEditModal({ cat, onClose, onSave, onDelete }) {
 }
 
 // ── Goal row inside a container ───────────────────────────────────────────────
-function GoalRow({ goal, paintCat, onPaint, legendColor, onGoalDrop, onOpen }) {
+function GoalRow({ goal, paintCat, onPaint, legendColor, onGoalDrop, onOpen, canDrag = true }) {
   const [expanded, setExpanded] = useState(false)
   const [dragging, setDragging] = useState(false)
 
@@ -219,8 +232,8 @@ function GoalRow({ goal, paintCat, onPaint, legendColor, onGoalDrop, onOpen }) {
     <div
       className={`${styles.goalRow} ${dragging ? styles.dragging : ''}`}
       style={legendColor ? { borderLeft: `3px solid ${legendColor}`, background: `${legendColor}28` } : undefined}
-      draggable={!paintCat}
-      onDragStart={paintCat ? undefined : e => {
+      draggable={!paintCat && canDrag}
+      onDragStart={paintCat || !canDrag ? undefined : e => {
         e.dataTransfer.setData('goalId', goal.id)
         e.dataTransfer.effectAllowed = 'move'
         setDragging(true)
@@ -236,11 +249,11 @@ function GoalRow({ goal, paintCat, onPaint, legendColor, onGoalDrop, onOpen }) {
         e.dataTransfer.setDragImage(ghost, e.nativeEvent.offsetX ?? 0, e.nativeEvent.offsetY ?? 0)
         setTimeout(() => ghost.remove(), 0)
       }}
-      onDragOver={paintCat ? undefined : e => {
+      onDragOver={paintCat || !canDrag ? undefined : e => {
         if (!e.dataTransfer.types.includes('goalid')) return
         e.preventDefault()
       }}
-      onDrop={paintCat ? undefined : e => {
+      onDrop={paintCat || !canDrag ? undefined : e => {
         e.preventDefault()
         e.stopPropagation()
         const dragGoalId = e.dataTransfer.getData('goalId')
@@ -269,7 +282,7 @@ function GoalRow({ goal, paintCat, onPaint, legendColor, onGoalDrop, onOpen }) {
 
 // ── Category container box ────────────────────────────────────────────────────
 function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onEdit, onCollapse,
-  onCatDragStart, onCatDragEnd, onCatDragOver, onCatDrop, onReorderGoal, insertSide, isDraggingCat, onGoalOpen }) {
+  onCatDragStart, onCatDragEnd, onCatDragOver, onCatDrop, onReorderGoal, insertSide, isDraggingCat, onGoalOpen, dynamic = false }) {
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounter = useRef(0)
   const boxRef = useRef()
@@ -289,6 +302,7 @@ function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onE
   }, [])
 
   const handleDragEnter = e => {
+    if (dynamic) return
     e.preventDefault()
     if (e.dataTransfer.types.includes('catdrag')) return
     dragCounter.current++
@@ -300,6 +314,7 @@ function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onE
     if (dragCounter.current === 0) setIsDragOver(false)
   }
   const handleDragOver = e => {
+    if (dynamic) return
     e.preventDefault()
     if (e.dataTransfer.types.includes('catdrag')) {
       const rect = boxRef.current?.getBoundingClientRect()
@@ -311,6 +326,7 @@ function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onE
     e.dataTransfer.dropEffect = 'move'
   }
   const handleDrop = e => {
+    if (dynamic) return
     e.preventDefault()
     e.stopPropagation()
     clearDragOver()
@@ -330,6 +346,7 @@ function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onE
 
   const cls = [
     styles.catBox,
+    dynamic         ? styles.dynamicCatBox : '',
     isDragOver      ? styles.dragOver    : '',
     insertSide === 'before' ? styles.insertBefore : '',
     insertSide === 'after'  ? styles.insertAfter  : '',
@@ -344,7 +361,7 @@ function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onE
       onDrop={handleDrop}
     >
       <div className={styles.catBoxHeader} style={{ borderTopColor: cat?.color ?? '#e0e0e0' }}>
-        {cat && (
+        {cat && !dynamic && (
           <div className={styles.dragHandle}
             draggable
             onDragStart={e => {
@@ -375,6 +392,7 @@ function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onE
         )}
         <span className={styles.catBoxName}>
           {cat?.name ?? 'Unassigned'}
+          {dynamic && <span className={styles.dynamicBadge}>Filter</span>}
           <span className={styles.catBoxCount}> {goals.length}</span>
         </span>
         {cat && onEdit && (
@@ -394,9 +412,10 @@ function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onE
       </div>
       <div className={styles.catBoxBody}>
         {goals.length === 0
-          ? <div className={styles.catBoxEmpty}>Drop goals here</div>
+          ? <div className={styles.catBoxEmpty}>{dynamic ? 'No matching goals' : 'Drop goals here'}</div>
           : goals.map(g => <GoalRow key={g.id} goal={g} paintCat={paintCat} onPaint={onPaint} legendColor={getGoalColor?.(g.id)}
               onGoalDrop={handleGoalDrop}
+              canDrag={!dynamic}
               onOpen={onGoalOpen} />)
         }
       </div>
@@ -502,6 +521,7 @@ function LegendDropUp({ dimensions, legendDimId, onLegend }) {
 function FilterEditorModal({ filter, dimensions, categories, onSave, onDelete, onClose }) {
   const [name, setName] = useState(filter?.name ?? 'New filter')
   const [gate, setGate] = useState(filter?.gate ?? 'AND')
+  const [color, setColor] = useState(filter?.color ?? '#64748b')
   const [selections, setSelections] = useState(filter?.selections ?? {})
   const isEdit = Boolean(filter?.id)
 
@@ -523,6 +543,7 @@ function FilterEditorModal({ filter, dimensions, categories, onSave, onDelete, o
       ...filter,
       name: name.trim() || 'Untitled filter',
       gate,
+      color,
       selections,
     }))
   }
@@ -548,6 +569,20 @@ function FilterEditorModal({ filter, dimensions, categories, onSave, onDelete, o
               onClick={() => setGate('OR')}>
               OR
             </button>
+          </div>
+        </div>
+
+        <div className={styles.colorSection}>
+          <span className={styles.sectionLabel}>Color</span>
+          <div className={styles.colorSwatches}>
+            {PRESET_COLORS.map(c => (
+              <button key={c} type="button" className={styles.colorSwatch}
+                style={{ background: c, boxShadow: color === c ? `0 0 0 2px #fff, 0 0 0 3.5px ${c}` : 'none' }}
+                onClick={() => setColor(c)} />
+            ))}
+            <input type="color" className={styles.colorFullPicker}
+              value={color} title="Custom color"
+              onChange={e => setColor(e.target.value)} />
           </div>
         </div>
 
@@ -593,69 +628,11 @@ function FilterEditorModal({ filter, dimensions, categories, onSave, onDelete, o
   )
 }
 
-function FilterDropDown({
-  namedFilters, activeFilterIds, onToggleFilter, onCreateFilter, onEditFilter, onClearFilters,
-}) {
-  const [open, setOpen] = useState(false)
-  const wrapRef = useRef()
-
-  useEffect(() => {
-    if (!open) return
-    const close = e => { if (!wrapRef.current?.contains(e.target)) setOpen(false) }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
-  }, [open])
-
-  return (
-    <div ref={wrapRef} className={styles.filterDropWrap}>
-      <button className={`${styles.filterDropBtn} ${open ? styles.filterDropBtnOpen : ''}`} onClick={() => setOpen(v => !v)}>
-        Filters
-        {activeFilterIds.length > 0 && <span className={styles.filterCount}>{activeFilterIds.length}</span>}
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"
-          style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', flexShrink: 0 }}>
-          <path d="M7 10l5 5 5-5z"/>
-        </svg>
-      </button>
-      {open && (
-        <div className={styles.filterDropMenu}>
-          <button className={styles.filterCreateBtn} onClick={() => { onCreateFilter(); setOpen(false) }}>
-            + Create filter
-          </button>
-          {activeFilterIds.length > 0 && (
-            <button className={styles.filterClearBtn} onClick={onClearFilters}>
-              Clear active filters
-            </button>
-          )}
-          {namedFilters.length === 0 ? (
-            <div className={styles.filterEmpty}>No filters</div>
-          ) : namedFilters.map(filter => (
-            <div key={filter.id} className={styles.filterDropItem}>
-              <label className={styles.filterCheckLabel}>
-                <input
-                  type="checkbox"
-                  checked={activeFilterIds.includes(filter.id)}
-                  onChange={() => onToggleFilter(filter.id)}
-                />
-                <span>{filter.name}</span>
-              </label>
-              <button
-                className={styles.filterEditBtn}
-                onClick={() => { onEditFilter(filter); setOpen(false) }}>
-                Edit
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ── Legend widget (floating, collapsible) ─────────────────────────────────────
 function LegendWidget({
   dimensions, categories, legendDimId, onLegend,
-  namedFilters, activeFilterIds, onToggleFilter, onToggleCategoryFilter, onCreateFilter,
-  onEditFilter, onClearFilters, paintCat, onPaintActivate, onEditCat, onCreateCat,
+  namedFilters, activeFilterIds, onToggleFilter, onCreateFilter,
+  onEditFilter, quickFilters, onToggleQuickFilter, paintCat, onPaintActivate, onEditCat, onCreateCat,
 }) {
   const [expanded, setExpanded] = useState(false)
   const [addingCat, setAddingCat] = useState(false)
@@ -666,7 +643,7 @@ function LegendWidget({
 
   const handleAddCat = e => {
     e.preventDefault()
-    if (!catName.trim() || !legendDimId) return
+    if (!catName.trim() || !legendDimId || legendDimId === FILTER_DIMENSION_ID) return
     onCreateCat(legendDimId, catName.trim(), catColor)
     setCatName('')
     setAddingCat(false)
@@ -676,18 +653,14 @@ function LegendWidget({
   return (
     <div className={styles.legendWidget}>
       {expanded && (
-        <div className={styles.legendPanel}>
-          <FilterDropDown
-            namedFilters={namedFilters}
-            activeFilterIds={activeFilterIds}
-            onToggleFilter={onToggleFilter}
-            onCreateFilter={onCreateFilter}
-            onEditFilter={onEditFilter}
-            onClearFilters={onClearFilters}
-          />
-
+        <div className={styles.legendPanel} onClick={e => e.stopPropagation()}>
           {/* Add category form */}
-          {legendDimId && (
+          {legendDimId === FILTER_DIMENSION_ID && (
+            <button className={styles.addLegendCatBtn} onClick={onCreateFilter}>
+              + Create filter
+            </button>
+          )}
+          {legendDimId && legendDimId !== FILTER_DIMENSION_ID && (
             addingCat ? (
               <form className={styles.legendCatForm} onSubmit={handleAddCat}>
                 <div className={styles.colorPicker}>
@@ -716,26 +689,47 @@ function LegendWidget({
           {/* Legend items */}
           {legendCats.map(cat => (
             <div key={cat.id}
-              className={`${styles.legendItem} ${paintCat?.id === cat.id ? styles.legendItemActive : ''}`}
+              className={[
+                styles.legendItem,
+                cat.dynamic && styles.dynamicLegendItem,
+                (cat.dynamic ? activeFilterIds.includes(cat.filterId) : paintCat?.id === cat.id) && styles.legendItemActive,
+              ].filter(Boolean).join(' ')}
               onClick={e => {
                 e.stopPropagation()
-                onPaintActivate(cat.id, cat.color)
+                if (cat.dynamic) onToggleFilter(cat.filterId)
+                else onPaintActivate(cat.id, cat.color)
               }}
-              onDoubleClick={() => onEditCat(cat)}>
+              onDoubleClick={() => cat.dynamic ? onEditFilter(namedFilters.find(f => f.id === cat.filterId)) : onEditCat(cat)}>
               <span className={styles.legendDot} style={{ background: cat.color }} />
               <span className={styles.legendName}>{cat.name}</span>
-              <button
-                className={`${styles.legendPaintBtn} ${activeFilterIds.some(id => namedFilters.find(f => f.id === id)?.selections?.[legendDimId]?.includes(cat.id)) ? styles.legendPaintBtnActive : ''}`}
-                title="Filter goals by this category"
-                onClick={e => {
-                  e.stopPropagation()
-                  onToggleCategoryFilter(legendDimId, cat)
-                }}
-                onDoubleClick={e => e.stopPropagation()}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/>
-                </svg>
-              </button>
+              {cat.dynamic && <span className={styles.dynamicBadge}>Filter</span>}
+              {cat.dynamic ? (
+                <button
+                  className={`${styles.legendPaintBtn} ${activeFilterIds.includes(cat.filterId) ? styles.legendPaintBtnActive : ''}`}
+                  title="Edit filter"
+                  onClick={e => {
+                    e.stopPropagation()
+                    onEditFilter(namedFilters.find(f => f.id === cat.filterId))
+                  }}
+                  onDoubleClick={e => e.stopPropagation()}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                  </svg>
+                </button>
+              ) : (
+                <button
+                  className={`${styles.legendPaintBtn} ${quickFilters.some(f => f.dimId === legendDimId && f.catId === cat.id) ? styles.legendPaintBtnActive : ''}`}
+                  title="Quick filter goals by this category"
+                  onClick={e => {
+                    e.stopPropagation()
+                    onToggleQuickFilter(legendDimId, cat.id)
+                  }}
+                  onDoubleClick={e => e.stopPropagation()}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/>
+                  </svg>
+                </button>
+              )}
             </div>
           ))}
 
@@ -766,6 +760,7 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
   const [legendDimId, setLegendDimId]       = useState('')
   const [namedFilters, setNamedFilters] = useState([])
   const [activeFilterIds, setActiveFilterIds] = useState([])
+  const [quickFilters, setQuickFilters] = useState([])
   const [editingFilter, setEditingFilter] = useState(null)
   const [paintCat, setPaintCat]             = useState(null)
   const [editCat, setEditCat]               = useState(null)
@@ -776,10 +771,11 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
   const [unassignedCollapsed, setUnassignedCollapsed] = useState(false)
 
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments()])
-      .then(([dims, cats, assigns]) => {
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getFilters()])
+      .then(([dims, cats, assigns, filters]) => {
         setDimensions(dims)
         setCategories(cats)
+        setNamedFilters(filters.map(normalizeFilter))
         const map = {}
         const orderMap = {}
         assigns.forEach(a => {
@@ -799,20 +795,9 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
   }, [])
 
   useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(FILTER_STORAGE_KEY) || '[]')
-      if (Array.isArray(saved)) setNamedFilters(saved.map(normalizeFilter))
-    } catch (e) {
-      console.error(e)
-    }
-  }, [])
-
-  useEffect(() => {
-    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(namedFilters))
-  }, [namedFilters])
-
-  useEffect(() => {
     setPaintCat(null)
+    setQuickFilters([])
+    if (legendDimId !== FILTER_DIMENSION_ID) setActiveFilterIds([])
   }, [legendDimId])
 
   useEffect(() => { setCollapsedCatIds(new Set()); setUnassignedCollapsed(false) }, [containerDimId])
@@ -861,6 +846,7 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
         return next
       })
       if (paintCat?.id === id) setPaintCat(null)
+      setQuickFilters(prev => prev.filter(f => f.catId !== id))
       setNamedFilters(prev => prev.map(filter => normalizeFilter({
         ...filter,
         selections: Object.fromEntries(
@@ -874,42 +860,43 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
     setPaintCat(prev => prev?.id === catId ? null : { id: catId, color })
   }
 
-  const saveNamedFilter = filter => {
+  const saveNamedFilter = async filter => {
     const normalized = normalizeFilter(filter)
-    setNamedFilters(prev => {
-      const exists = prev.some(f => f.id === normalized.id)
-      return exists ? prev.map(f => f.id === normalized.id ? normalized : f) : [...prev, normalized]
-    })
-    setActiveFilterIds(prev => prev.includes(normalized.id) ? prev : [...prev, normalized.id])
-    setEditingFilter(null)
+    try {
+      const exists = namedFilters.some(f => f.id === normalized.id)
+      const saved = exists
+        ? await api.updateFilter(normalized.id, normalized)
+        : await api.createFilter(normalized)
+      const savedFilter = normalizeFilter(saved)
+      setNamedFilters(prev => exists
+        ? prev.map(f => f.id === savedFilter.id ? savedFilter : f)
+        : [...prev, savedFilter])
+      setActiveFilterIds(prev => prev.includes(savedFilter.id) ? prev : [...prev, savedFilter.id])
+      setEditingFilter(null)
+    } catch (e) { console.error(e) }
   }
 
-  const deleteNamedFilter = id => {
-    setNamedFilters(prev => prev.filter(f => f.id !== id))
-    setActiveFilterIds(prev => prev.filter(filterId => filterId !== id))
-    setEditingFilter(null)
+  const deleteNamedFilter = async id => {
+    try {
+      await api.deleteFilter(id)
+      setNamedFilters(prev => prev.filter(f => f.id !== id))
+      setActiveFilterIds(prev => prev.filter(filterId => filterId !== id))
+      setEditingFilter(null)
+    } catch (e) { console.error(e) }
   }
 
   const toggleNamedFilter = id => {
     setActiveFilterIds(prev => prev.includes(id) ? prev.filter(filterId => filterId !== id) : [...prev, id])
   }
 
-  const toggleCategoryFilter = (dimId, cat) => {
-    if (!dimId || !cat) return
-    const quickKey = `${dimId}:${cat.id}`
-    const existing = namedFilters.find(f => f.quickKey === quickKey)
-    if (existing) {
-      toggleNamedFilter(existing.id)
-      return
-    }
-    const filter = normalizeFilter({
-      name: cat.name,
-      gate: 'AND',
-      selections: { [dimId]: [cat.id] },
-      quickKey,
+  const toggleQuickFilter = (dimId, catId) => {
+    if (!dimId || !catId || dimId === FILTER_DIMENSION_ID) return
+    setQuickFilters(prev => {
+      const exists = prev.some(f => f.dimId === dimId && f.catId === catId)
+      return exists
+        ? prev.filter(f => !(f.dimId === dimId && f.catId === catId))
+        : [...prev, { dimId, catId }]
     })
-    setNamedFilters(prev => [...prev, filter])
-    setActiveFilterIds(prev => [...prev, filter.id])
   }
 
   const assignGoal = async (goalId, catId) => {
@@ -936,7 +923,7 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
   }
 
   const paintGoal = async goalId => {
-    if (!paintCat || !legendDimId) return
+    if (!paintCat || !legendDimId || legendDimId === FILTER_DIMENSION_ID) return
     try {
       await api.assign(goalId, legendDimId, paintCat.id)
       setAssignments(prev => ({ ...prev, [goalId]: { ...(prev[goalId] ?? {}), [legendDimId]: paintCat.id } }))
@@ -944,16 +931,29 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
   }
 
   // ── Derived (needed by reorder handlers below) ───────────────────────────────
-  const containerCats = categories.filter(c => c.dimensionId === containerDimId)
+  const filterCategories = namedFilters.map((filter, idx) => ({
+    id: filterCategoryId(filter.id),
+    dimensionId: FILTER_DIMENSION_ID,
+    name: filter.name,
+    color: filter.color || PRESET_COLORS[idx % PRESET_COLORS.length],
+    dynamic: true,
+    filterId: filter.id,
+  }))
+  const dynamicDimensions = [...dimensions, { id: FILTER_DIMENSION_ID, name: 'Filters', dynamic: true }]
+  const dynamicCategories = [...categories, ...filterCategories]
+  const isFilterDimension = containerDimId === FILTER_DIMENSION_ID
+  const containerCats = dynamicCategories.filter(c => c.dimensionId === containerDimId)
 
   // ── Category reorder ────────────────────────────────────────────────────────
   const handleCatDragOver = (overCatId, side) => {
+    if (isFilterDimension) return
     const overIdx = containerCats.findIndex(c => c.id === overCatId)
     if (overIdx === -1) return
     setCatInsertIdx(side === 'before' ? overIdx : overIdx + 1)
   }
 
   const reorderCatsDrop = async () => {
+    if (isFilterDimension) return
     if (!catDragId || catInsertIdx === null) return
     const oldIdx = containerCats.findIndex(c => c.id === catDragId)
     if (oldIdx === -1) return
@@ -979,6 +979,10 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
   // ── Derived ─────────────────────────────────────────────────────────────────
   const getGoalLegendColor = goalId => {
     if (!legendDimId) return null
+    if (legendDimId === FILTER_DIMENSION_ID) {
+      const match = filterCategories.find(cat => filterMatchesGoal(namedFilters.find(f => f.id === cat.filterId), goalId, assignments))
+      return match?.color ?? null
+    }
     const catId = assignments[goalId]?.[legendDimId]
     if (!catId) return null
     return categories.find(c => c.id === catId)?.color ?? null
@@ -988,14 +992,26 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
     .map(id => namedFilters.find(filter => filter.id === id))
     .filter(Boolean)
 
-  const visibleGoals = activeFilters.length
-    ? goals.filter(g => activeFilters.some(filter => filterMatchesGoal(filter, g.id, assignments)))
+  const hasActiveFiltering = activeFilters.length > 0 || quickFilters.length > 0
+  const matchesQuickFilter = goal => quickFilters.some(f => assignments[goal.id]?.[f.dimId] === f.catId)
+
+  const visibleGoals = hasActiveFiltering
+    ? goals.filter(g => activeFilters.some(filter => filterMatchesGoal(filter, g.id, assignments)) || matchesQuickFilter(g))
     : goals
 
-  const goalsForCat = catId => visibleGoals.filter(g => assignments[g.id]?.[containerDimId] === catId)
-    .sort((a, b) => (assignmentOrders[a.id]?.[containerDimId] ?? Number.MAX_SAFE_INTEGER) - (assignmentOrders[b.id]?.[containerDimId] ?? Number.MAX_SAFE_INTEGER))
+  const goalsForCat = catId => {
+    if (containerDimId === FILTER_DIMENSION_ID) {
+      const filterId = filterIdFromCategoryId(catId)
+      const filter = namedFilters.find(f => f.id === filterId)
+      return filter ? visibleGoals.filter(g => filterMatchesGoal(filter, g.id, assignments)) : []
+    }
+    return visibleGoals.filter(g => assignments[g.id]?.[containerDimId] === catId)
+      .sort((a, b) => (assignmentOrders[a.id]?.[containerDimId] ?? Number.MAX_SAFE_INTEGER) - (assignmentOrders[b.id]?.[containerDimId] ?? Number.MAX_SAFE_INTEGER))
+  }
   const unassignedGoals = containerDimId
-    ? visibleGoals.filter(g => !assignments[g.id]?.[containerDimId])
+    ? (containerDimId === FILTER_DIMENSION_ID
+      ? visibleGoals.filter(g => !namedFilters.some(filter => filterMatchesGoal(filter, g.id, assignments)))
+      : visibleGoals.filter(g => !assignments[g.id]?.[containerDimId]))
     : visibleGoals
 
   const reorderGoalInCategory = async (catId, dragGoalId, targetGoalId) => {
@@ -1038,7 +1054,7 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
       onClick={paintCat ? () => setPaintCat(null) : undefined}
     >
       <ClassificationToolbar
-        dimensions={dimensions}
+        dimensions={dynamicDimensions}
         containerDimId={containerDimId}
         onContainerDimChange={setContainerDimId}
         onCreateDim={createDimension}
@@ -1051,10 +1067,11 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
           <div className={styles.collapsedStrip}>
             {containerCats.filter(c => collapsedCatIds.has(c.id)).map(cat => (
               <button key={cat.id} className={styles.collapsedChip}
-                style={{ borderColor: cat.color }}
+                style={{ borderColor: cat.color, borderStyle: cat.dynamic ? 'dashed' : undefined }}
                 onClick={() => setCollapsedCatIds(prev => { const n = new Set(prev); n.delete(cat.id); return n })}>
                 <span className={styles.collapsedDot} style={{ background: cat.color }} />
                 <span style={{ color: '#444' }}>{cat.name}</span>
+                {cat.dynamic && <span style={{ color: '#888', fontWeight: 700 }}> Filter</span>}
                 <span style={{ color: '#aaa', fontWeight: 400 }}> {goalsForCat(cat.id).length}</span>
               </button>
             ))}
@@ -1076,8 +1093,8 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
         >
           {containerCats.filter(c => !collapsedCatIds.has(c.id)).map(cat => (
             <ContainerBox key={cat.id} cat={cat} goals={goalsForCat(cat.id)}
-              onDrop={goalId => assignGoal(goalId, cat.id)}
-              onEdit={() => setEditCat(cat)}
+              onDrop={cat.dynamic ? undefined : goalId => assignGoal(goalId, cat.id)}
+              onEdit={() => cat.dynamic ? setEditingFilter(namedFilters.find(f => f.id === cat.filterId)) : setEditCat(cat)}
               onCollapse={() => setCollapsedCatIds(prev => new Set([...prev, cat.id]))}
               paintCat={paintCat} onPaint={paintGoal} getGoalColor={getGoalLegendColor}
               onCatDragStart={setCatDragId}
@@ -1087,6 +1104,7 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
               onReorderGoal={reorderGoalInCategory}
               insertSide={getCatInsertSide(cat.id)}
               isDraggingCat={catDragId === cat.id}
+              dynamic={cat.dynamic}
               onGoalOpen={onGoalOpen}
             />
           ))}
@@ -1098,21 +1116,21 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
               paintCat={paintCat} onPaint={paintGoal} getGoalColor={getGoalLegendColor}
               onGoalOpen={onGoalOpen} />
           )}
-          {containerDimId && <AddCatBox onAdd={name => createCategory(containerDimId, name, PRESET_COLORS[containerCats.length % PRESET_COLORS.length])} />}
+          {containerDimId && containerDimId !== FILTER_DIMENSION_ID && <AddCatBox onAdd={name => createCategory(containerDimId, name, PRESET_COLORS[containerCats.length % PRESET_COLORS.length])} />}
         </div>
 
         <LegendWidget
-          dimensions={dimensions}
-          categories={categories}
+          dimensions={dynamicDimensions}
+          categories={dynamicCategories}
           legendDimId={legendDimId}
           onLegend={setLegendDimId}
           namedFilters={namedFilters}
           activeFilterIds={activeFilterIds}
           onToggleFilter={toggleNamedFilter}
-          onToggleCategoryFilter={toggleCategoryFilter}
           onCreateFilter={() => setEditingFilter({})}
           onEditFilter={setEditingFilter}
-          onClearFilters={() => setActiveFilterIds([])}
+          quickFilters={quickFilters}
+          onToggleQuickFilter={toggleQuickFilter}
           paintCat={paintCat}
           onPaintActivate={activatePaint}
           onEditCat={setEditCat}

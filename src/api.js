@@ -37,6 +37,12 @@ export const api = {
   unassign:       (goalId, dimId)         => req('DELETE', `/goals/${goalId}/assign/${dimId}`),
   reorderAssignments: (dimId, catId, goalIds) => req('PUT', '/assignments/order', { dimensionId: dimId, categoryId: catId, goalIds }),
 
+  // Saved filters
+  getFilters:    ()           => req('GET',    '/filters'),
+  createFilter:  (filter)     => req('POST',   '/filters', filter),
+  updateFilter:  (id, patch)  => req('PATCH',  `/filters/${id}`, patch),
+  deleteFilter:  (id)         => req('DELETE', `/filters/${id}`),
+
   // Milestones
   getMilestones:         ()        => req('GET',    '/milestones'),
   createMilestone:       (data)    => req('POST',   '/milestones', data),
@@ -45,9 +51,10 @@ export const api = {
   batchUpdateMilestones: (updates) => req('PUT',    '/milestones/batch', { updates }),
 
   // Dependencies
-  getDependencies:  ()             => req('GET',    '/dependencies'),
-  createDependency: (data)         => req('POST',   '/dependencies', data),
-  deleteDependency: (id)           => req('DELETE', `/dependencies/${id}`),
+  getDependencies:       ()         => req('GET',    '/dependencies'),
+  createDependency:      (data)     => req('POST',   '/dependencies', data),
+  updateDependencyReason:(id, reason) => req('PATCH', `/dependencies/${id}`, { reason }),
+  deleteDependency:      (id)       => req('DELETE', `/dependencies/${id}`),
 
   // Deadlines
   getDeadlines:   ()               => req('GET',    '/deadlines'),

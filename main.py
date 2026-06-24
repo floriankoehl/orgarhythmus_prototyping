@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -80,6 +81,7 @@ def _init_db():
                 id      TEXT PRIMARY KEY,
                 from_id TEXT NOT NULL,
                 to_id   TEXT NOT NULL,
+                reason  TEXT NOT NULL DEFAULT '',
                 UNIQUE (from_id, to_id)
             )
         """)
@@ -88,6 +90,16 @@ def _init_db():
                 id      TEXT PRIMARY KEY,
                 goal_id TEXT NOT NULL UNIQUE,
                 col     INTEGER NOT NULL
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS saved_filters (
+                id              TEXT PRIMARY KEY,
+                name            TEXT NOT NULL,
+                gate            TEXT NOT NULL DEFAULT 'AND',
+                color           TEXT NOT NULL DEFAULT '#64748b',
+                selections_json TEXT NOT NULL DEFAULT '{}',
+                quick_key       TEXT
             )
         """)
 
@@ -117,6 +129,12 @@ def _migrate():
                     "UPDATE assignments SET order_idx = ? WHERE goal_id = ? AND dimension_id = ?",
                     (idx, row["goal_id"], row["dimension_id"]),
                 )
+        filter_cols = [r[1] for r in con.execute("PRAGMA table_info(saved_filters)").fetchall()]
+        if 'color' not in filter_cols:
+            con.execute("ALTER TABLE saved_filters ADD COLUMN color TEXT NOT NULL DEFAULT '#64748b'")
+        dep_cols = [r[1] for r in con.execute("PRAGMA table_info(dependencies)").fetchall()]
+        if 'reason' not in dep_cols:
+            con.execute("ALTER TABLE dependencies ADD COLUMN reason TEXT NOT NULL DEFAULT ''")
 
 _migrate()
 
@@ -192,9 +210,28 @@ class MilestoneBatch(BaseModel):
 class DependencyIn(BaseModel):
     from_id: str
     to_id: str
+    reason: Optional[str] = ''
+
+class DependencyPatchIn(BaseModel):
+    reason: str
 
 class DeadlineColIn(BaseModel):
     col: int
+
+class SavedFilterIn(BaseModel):
+    id: Optional[str] = None
+    name: str
+    gate: str = "AND"
+    color: str = "#64748b"
+    selections: dict[str, list[str]] = {}
+    quickKey: Optional[str] = None
+
+class SavedFilterPatch(BaseModel):
+    name: Optional[str] = None
+    gate: Optional[str] = None
+    color: Optional[str] = None
+    selections: Optional[dict[str, list[str]]] = None
+    quickKey: Optional[str] = None
 
 
 # ── Helper converters ─────────────────────────────────────────────────────────
@@ -218,11 +255,38 @@ def _ms(row) -> dict:
 
 def _dep(row) -> dict:
     d = dict(row)
-    return {"id": d["id"], "fromId": d["from_id"], "toId": d["to_id"]}
+    return {"id": d["id"], "fromId": d["from_id"], "toId": d["to_id"], "reason": d.get("reason", "")}
 
 def _dl(row) -> dict:
     d = dict(row)
     return {"id": d["id"], "goalId": d["goal_id"], "col": d["col"]}
+
+def _filter(row) -> dict:
+    d = dict(row)
+    try:
+        selections = json.loads(d["selections_json"] or "{}")
+    except json.JSONDecodeError:
+        selections = {}
+    return {
+        "id": d["id"],
+        "name": d["name"],
+        "gate": d["gate"],
+        "color": d["color"],
+        "selections": selections,
+        "quickKey": d["quick_key"],
+    }
+
+def _normalize_filter_payload(data) -> tuple[str, str, str | None]:
+    gate = data.gate if data.gate in ("AND", "OR") else "AND"
+    selections = {}
+    for dim_id, cat_ids in (data.selections or {}).items():
+        ids = []
+        for cat_id in cat_ids:
+            if cat_id and cat_id not in ids:
+                ids.append(cat_id)
+        if ids:
+            selections[dim_id] = ids
+    return gate, json.dumps(selections), data.quickKey
 
 
 # ── Pages (goals) ─────────────────────────────────────────────────────────────
@@ -416,6 +480,70 @@ def unassign_category(goal_id: str, dim_id: str):
         )
 
 
+# ── Saved filters ─────────────────────────────────────────────────────────────
+@app.get("/filters")
+def list_filters():
+    with _db() as con:
+        rows = con.execute("SELECT * FROM saved_filters ORDER BY name COLLATE NOCASE").fetchall()
+    return [_filter(r) for r in rows]
+
+@app.post("/filters", status_code=201)
+def create_filter(data: SavedFilterIn):
+    fid = data.id or str(uuid.uuid4())
+    name = data.name.strip() or "Untitled filter"
+    gate, selections_json, quick_key = _normalize_filter_payload(data)
+    color = data.color or "#64748b"
+    with _db() as con:
+        if con.execute("SELECT id FROM saved_filters WHERE id = ?", (fid,)).fetchone():
+            raise HTTPException(409, "Filter already exists")
+        con.execute(
+            """
+            INSERT INTO saved_filters (id, name, gate, color, selections_json, quick_key)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (fid, name, gate, color, selections_json, quick_key),
+        )
+        row = con.execute("SELECT * FROM saved_filters WHERE id = ?", (fid,)).fetchone()
+    return _filter(row)
+
+@app.patch("/filters/{filter_id}")
+def update_filter(filter_id: str, data: SavedFilterPatch):
+    with _db() as con:
+        if not con.execute("SELECT id FROM saved_filters WHERE id = ?", (filter_id,)).fetchone():
+            raise HTTPException(404, "Filter not found")
+        fields, values = [], []
+        if data.name is not None:
+            fields.append("name = ?")
+            values.append(data.name.strip() or "Untitled filter")
+        if data.gate is not None:
+            fields.append("gate = ?")
+            values.append(data.gate if data.gate in ("AND", "OR") else "AND")
+        if data.color is not None:
+            fields.append("color = ?")
+            values.append(data.color or "#64748b")
+        if data.selections is not None:
+            fields.append("selections_json = ?")
+            values.append(json.dumps({
+                dim_id: list(dict.fromkeys(cat_ids))
+                for dim_id, cat_ids in data.selections.items()
+                if cat_ids
+            }))
+        if data.quickKey is not None:
+            fields.append("quick_key = ?")
+            values.append(data.quickKey)
+        if fields:
+            con.execute(f"UPDATE saved_filters SET {', '.join(fields)} WHERE id = ?", (*values, filter_id))
+        row = con.execute("SELECT * FROM saved_filters WHERE id = ?", (filter_id,)).fetchone()
+    return _filter(row)
+
+@app.delete("/filters/{filter_id}", status_code=204)
+def delete_filter(filter_id: str):
+    with _db() as con:
+        if not con.execute("SELECT id FROM saved_filters WHERE id = ?", (filter_id,)).fetchone():
+            raise HTTPException(404, "Filter not found")
+        con.execute("DELETE FROM saved_filters WHERE id = ?", (filter_id,))
+
+
 # ── Milestones ────────────────────────────────────────────────────────────────
 @app.get("/milestones")
 def list_milestones():
@@ -482,13 +610,23 @@ def list_dependencies():
 @app.post("/dependencies", status_code=201)
 def create_dependency(data: DependencyIn):
     did = str(uuid.uuid4())
+    reason = data.reason or ''
     with _db() as con:
         try:
-            con.execute("INSERT INTO dependencies (id, from_id, to_id) VALUES (?, ?, ?)",
-                        (did, data.from_id, data.to_id))
+            con.execute("INSERT INTO dependencies (id, from_id, to_id, reason) VALUES (?, ?, ?, ?)",
+                        (did, data.from_id, data.to_id, reason))
         except sqlite3.IntegrityError:
             raise HTTPException(409, "Dependency already exists")
-    return _dep({"id": did, "from_id": data.from_id, "to_id": data.to_id})
+    return _dep({"id": did, "from_id": data.from_id, "to_id": data.to_id, "reason": reason})
+
+@app.patch("/dependencies/{dep_id}")
+def update_dependency(dep_id: str, data: DependencyPatchIn):
+    with _db() as con:
+        con.execute("UPDATE dependencies SET reason = ? WHERE id = ?", (data.reason, dep_id))
+        row = con.execute("SELECT * FROM dependencies WHERE id = ?", (dep_id,)).fetchone()
+    if not row:
+        raise HTTPException(404)
+    return _dep(row)
 
 @app.delete("/dependencies/{dep_id}", status_code=204)
 def delete_dependency(dep_id: str):
