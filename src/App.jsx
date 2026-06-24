@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import Header from './components/Header'
 import Toolbar from './components/Toolbar'
@@ -9,6 +9,8 @@ import BrainstormV2 from './components/BrainstormV2'
 import GoalPopup from './components/GoalPopup'
 import { api } from './api'
 import styles from './App.module.css'
+
+const PAGE_COUNT = 3
 
 // ── Success toast ─────────────────────────────────────────────────────────────
 function Toast({ toast, onOpen, onDismiss }) {
@@ -44,10 +46,15 @@ function Toast({ toast, onOpen, onDismiss }) {
 // ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
   const [view, setView] = useState(0)
+  const [navDragOffset, setNavDragOffset] = useState(0)
+  const [navDragging, setNavDragging] = useState(false)
   const [goals, setGoals] = useState([])
   const [refreshKey, setRefreshKey] = useState(0)
   const [popupGoalId, setPopupGoalId] = useState(null)
   const [toast, setToast] = useState(null) // { goalId, title }
+  const navGestureRef = useRef({ active: false, startX: 0, startView: 0, offset: 0, suppressContextUntil: 0 })
+  const viewRef = useRef(view)
+  viewRef.current = view
 
   const handleQuickAdd = async (text, customTitle = null) => {
     // Title: use explicit override if given, otherwise auto-derive from first 7 words
@@ -92,6 +99,93 @@ export default function App() {
     api.getPages().then(data => { if (data.length > 0) setGoals(data) }).catch(console.error)
   }, [refreshKey])
 
+  useEffect(() => {
+    const swallowGestureEvent = e => {
+      e.preventDefault()
+      e.stopPropagation()
+      e.stopImmediatePropagation?.()
+    }
+
+    const beginGesture = e => {
+      const alreadyActive = navGestureRef.current.active
+      navGestureRef.current = {
+        active: true,
+        startX: alreadyActive ? navGestureRef.current.startX : e.clientX,
+        startView: alreadyActive ? navGestureRef.current.startView : viewRef.current,
+        offset: alreadyActive ? navGestureRef.current.offset : 0,
+        suppressContextUntil: Date.now() + 600,
+      }
+      if (!alreadyActive) {
+        setNavDragging(true)
+        setNavDragOffset(0)
+      }
+      document.body.style.userSelect = 'none'
+    }
+
+    const updateGesture = e => {
+      const gesture = navGestureRef.current
+      let dx = e.clientX - gesture.startX
+      if (gesture.startView === 0) dx = Math.min(0, dx)
+      if (gesture.startView === PAGE_COUNT - 1) dx = Math.max(0, dx)
+      gesture.offset = dx
+      gesture.suppressContextUntil = Date.now() + 600
+      setNavDragOffset(dx)
+    }
+
+    const finishGesture = () => {
+      const gesture = navGestureRef.current
+      if (!gesture.active) return
+      const threshold = window.innerWidth / 2
+      let nextView = gesture.startView
+      if (gesture.offset <= -threshold) nextView = Math.min(PAGE_COUNT - 1, gesture.startView + 1)
+      if (gesture.offset >= threshold) nextView = Math.max(0, gesture.startView - 1)
+      navGestureRef.current = { ...gesture, active: false, offset: 0, suppressContextUntil: Date.now() + 600 }
+      setView(nextView)
+      setNavDragging(false)
+      setNavDragOffset(0)
+      document.body.style.userSelect = ''
+    }
+
+    const onMouseDown = e => {
+      if ((e.buttons & 3) !== 3) return
+      beginGesture(e)
+      swallowGestureEvent(e)
+    }
+
+    const onMouseMove = e => {
+      if ((e.buttons & 3) === 3) {
+        if (!navGestureRef.current.active) beginGesture(e)
+        updateGesture(e)
+        swallowGestureEvent(e)
+      } else if (navGestureRef.current.active) {
+        swallowGestureEvent(e)
+        finishGesture()
+      }
+    }
+
+    const onMouseUp = e => {
+      if (navGestureRef.current.active) swallowGestureEvent(e)
+      finishGesture()
+    }
+    const onContextMenu = e => {
+      if (navGestureRef.current.active || Date.now() < navGestureRef.current.suppressContextUntil) {
+        swallowGestureEvent(e)
+      }
+    }
+
+    document.addEventListener('mousedown', onMouseDown, true)
+    document.addEventListener('mousemove', onMouseMove, true)
+    document.addEventListener('mouseup', onMouseUp, true)
+    document.addEventListener('contextmenu', onContextMenu, true)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown, true)
+      document.removeEventListener('mousemove', onMouseMove, true)
+      document.removeEventListener('mouseup', onMouseUp, true)
+      document.removeEventListener('contextmenu', onContextMenu, true)
+      document.body.style.userSelect = ''
+    }
+  }, [])
+
   const handleGoalCreated = (newGoal) => {
     const orderedIds = [newGoal.id, ...goals.map(g => g.id)]
     api.reorderPages(orderedIds).catch(console.error)
@@ -105,7 +199,9 @@ export default function App() {
   return (
     <div className={styles.app}>
       <Header view={view} onNavigate={setView} onQuickAdd={handleQuickAdd} />
-      <div className={styles.slider} style={{ transform: `translateX(${-view * 100}vw)` }}>
+      <div
+        className={`${styles.slider} ${navDragging ? styles.sliderDragging : ''}`}
+        style={{ transform: `translateX(calc(${-view * 100}vw + ${navDragOffset}px))` }}>
 
         {/* View 0 — Brainstorming */}
         {/* <div className={styles.view}>
@@ -119,7 +215,7 @@ export default function App() {
 
         {/* View 1 — Classification */}
         <div className={styles.view}>
-          <ClassificationPage goals={goals} onGoalOpen={openGoalPopup} />
+          <ClassificationPage goals={goals} isActive={view === 1} onGoalOpen={openGoalPopup} />
         </div>
 
         {/* View 2 — Schedule */}

@@ -50,6 +50,12 @@ export const api = {
   updateSchedulePerspective:  (id, patch)     => req('PATCH',  `/schedule-perspectives/${id}`, patch),
   deleteSchedulePerspective:  (id)            => req('DELETE', `/schedule-perspectives/${id}`),
 
+  // Classification perspectives
+  getClassificationPerspectives:    ()              => req('GET',    '/classification-perspectives'),
+  createClassificationPerspective:  (perspective)   => req('POST',   '/classification-perspectives', perspective),
+  updateClassificationPerspective:  (id, patch)     => req('PATCH',  `/classification-perspectives/${id}`, patch),
+  deleteClassificationPerspective:  (id)            => req('DELETE', `/classification-perspectives/${id}`),
+
   // Milestones
   getMilestones:         ()        => req('GET',    '/milestones'),
   createMilestone:       (data)    => req('POST',   '/milestones', data),

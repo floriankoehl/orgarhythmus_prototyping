@@ -6,6 +6,8 @@ import { api } from '../api'
 const PRESET_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#94a3b8']
 const FILTER_DIMENSION_ID = '__filters__'
 const FILTER_CATEGORY_PREFIX = 'filter:'
+const NONE_PERSPECTIVE_ID = '__none__'
+const CLASSIFICATION_DEFAULT_PERSPECTIVE_KEY = 'classification.defaultPerspectiveId'
 
 function makeColorCursor(color) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="10" fill="${color}" stroke="white" stroke-width="2"/></svg>`
@@ -48,7 +50,160 @@ function filterIdFromCategoryId(catId) {
   return catId?.startsWith(FILTER_CATEGORY_PREFIX) ? catId.slice(FILTER_CATEGORY_PREFIX.length) : null
 }
 
-function ClassificationVisualSettings({ maxGridCols, onMaxGridColsChange, onClose, anchorRef }) {
+function normalizePerspective(perspective) {
+  return {
+    ...perspective,
+    name: (perspective?.name || 'Untitled perspective').trim(),
+    state: perspective?.state ?? {},
+  }
+}
+
+function SaveIcon({ size = 12 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M5 3h12l2 2v16H5V3zm2 2v5h9V5H7zm1 10v4h8v-4H8zm10-8.17V19h-1v-6H7v6H6V5h10.17L18 6.83z"/>
+    </svg>
+  )
+}
+
+function PerspectiveMenu({ perspectives, activePerspectiveId, defaultPerspectiveId, open, onOpenChange, onApply, onCreate, onUpdate, onRename, onDelete, onSetDefault }) {
+  const [name, setName] = useState('')
+  const [editingId, setEditingId] = useState('')
+  const [editingName, setEditingName] = useState('')
+  const wrapRef = useRef()
+  const wheelAtRef = useRef(0)
+  const applyTimerRef = useRef(null)
+  const active = perspectives.find(p => p.id === activePerspectiveId)
+  const canSaveActive = Boolean(active && !active.readOnly)
+
+  useEffect(() => {
+    if (!open) return
+    const close = e => { if (!wrapRef.current?.contains(e.target)) onOpenChange(false) }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [onOpenChange, open])
+
+  useEffect(() => () => {
+    if (applyTimerRef.current) window.clearTimeout(applyTimerRef.current)
+  }, [])
+
+  const create = () => {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    onCreate(trimmed)
+    setName('')
+  }
+
+  const cycle = deltaY => {
+    if (perspectives.length === 0) return
+    const now = Date.now()
+    if (now - wheelAtRef.current < 180) return
+    wheelAtRef.current = now
+    const activeIdx = Math.max(0, perspectives.findIndex(p => p.id === activePerspectiveId))
+    const dir = deltaY > 0 ? 1 : -1
+    onApply(perspectives[(activeIdx + dir + perspectives.length) % perspectives.length])
+  }
+
+  const startRename = perspective => {
+    if (applyTimerRef.current) {
+      window.clearTimeout(applyTimerRef.current)
+      applyTimerRef.current = null
+    }
+    setEditingId(perspective.id)
+    setEditingName(perspective.name)
+  }
+
+  const commitRename = () => {
+    const trimmed = editingName.trim()
+    if (editingId && trimmed) onRename(editingId, trimmed)
+    setEditingId('')
+    setEditingName('')
+  }
+
+  const applyFromMenu = perspective => {
+    if (applyTimerRef.current) window.clearTimeout(applyTimerRef.current)
+    applyTimerRef.current = window.setTimeout(() => {
+      onApply(perspective)
+      onOpenChange(false)
+      applyTimerRef.current = null
+    }, 180)
+  }
+
+  return (
+    <div ref={wrapRef} className={styles.perspectiveWrap}>
+      <button
+        className={styles.perspectiveToolbarSaveBtn}
+        title={canSaveActive ? 'Update current perspective snapshot' : 'None cannot be saved'}
+        disabled={!canSaveActive}
+        onClick={() => canSaveActive && onUpdate(active.id)}>
+        <SaveIcon />
+      </button>
+      <button
+        className={`${styles.perspectiveBtn} ${open ? styles.perspectiveBtnOpen : ''}`}
+        onWheel={e => { e.preventDefault(); cycle(e.deltaY) }}
+        onClick={() => onOpenChange(!open)}>
+        <span>{active?.name ?? 'None'}</span>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M7 10l5 5 5-5z" />
+        </svg>
+      </button>
+      {!open && (
+        <span className={styles.floatingHint}>
+          <strong>Perspective</strong>
+          <small>Switch saved canvas views</small>
+        </span>
+      )}
+      {open && (
+        <div className={styles.perspectiveMenu}>
+          <div className={styles.perspectiveCreateRow}>
+            <input value={name} onChange={e => setName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') create() }}
+              placeholder="Perspective name" />
+            <button onClick={create}>Save</button>
+          </div>
+          <div className={styles.perspectiveList}>
+            {perspectives.map(p => (
+              <div key={p.id} className={`${styles.perspectiveItem} ${p.id === activePerspectiveId ? styles.perspectiveItemActive : ''}`}>
+                {editingId === p.id ? (
+                  <input className={styles.perspectiveRenameInput} value={editingName} autoFocus
+                    onChange={e => setEditingName(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') commitRename()
+                      if (e.key === 'Escape') { setEditingId(''); setEditingName('') }
+                    }} />
+                ) : (
+                  <button className={styles.perspectiveApplyBtn}
+                    onClick={() => applyFromMenu(p)}
+                    onDoubleClick={e => { e.preventDefault(); e.stopPropagation(); if (!p.readOnly) startRename(p) }}>
+                    <span>{p.name}</span>
+                  </button>
+                )}
+                <button className={`${styles.perspectiveIconBtn} ${defaultPerspectiveId === p.id ? styles.perspectiveIconBtnActive : ''}`}
+                  title="Use as classification default"
+                  onClick={() => onSetDefault(p.id)}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27z"/>
+                  </svg>
+                </button>
+                <button className={styles.perspectiveIconBtn} title={p.readOnly ? 'None cannot be saved' : 'Update snapshot'} disabled={p.readOnly} onClick={() => !p.readOnly && onUpdate(p.id)}>
+                  <SaveIcon />
+                </button>
+                <button className={styles.perspectiveIconBtn} title={p.readOnly ? 'None cannot be deleted' : 'Delete'} disabled={p.readOnly} onClick={() => !p.readOnly && onDelete(p.id)}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 4l1-1h6l1 1h4v2H4V4h4z"/>
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ClassificationVisualSettings({ maxGridCols, onMaxGridColsChange, singleColumnWidth, onSingleColumnWidthChange, onClose, anchorRef }) {
   const panelRef = useRef()
 
   useEffect(() => {
@@ -62,6 +217,7 @@ function ClassificationVisualSettings({ maxGridCols, onMaxGridColsChange, onClos
   }, [anchorRef, onClose])
 
   const setCols = value => onMaxGridColsChange(Math.max(1, Math.min(12, Number(value) || 1)))
+  const setSingleWidth = value => onSingleColumnWidthChange(Math.max(320, Math.min(900, Number(value) || 480)))
 
   return (
     <div ref={panelRef} className={styles.visualPanel}>
@@ -89,6 +245,27 @@ function ClassificationVisualSettings({ maxGridCols, onMaxGridColsChange, onClos
           onChange={e => setCols(e.target.value)}
         />
       </label>
+      <label className={styles.visualRow}>
+        <span className={styles.visualLabel}>Single width</span>
+        <input
+          type="range"
+          min="320"
+          max="900"
+          step="20"
+          value={singleColumnWidth}
+          className={styles.visualSlider}
+          onChange={e => setSingleWidth(e.target.value)}
+        />
+        <input
+          type="number"
+          min="320"
+          max="900"
+          step="20"
+          value={singleColumnWidth}
+          className={styles.visualNumber}
+          onChange={e => setSingleWidth(e.target.value)}
+        />
+      </label>
     </div>
   )
 }
@@ -96,7 +273,7 @@ function ClassificationVisualSettings({ maxGridCols, onMaxGridColsChange, onClos
 // ── Classification toolbar ────────────────────────────────────────────────────
 function ClassificationToolbar({
   dimensions, containerDimId, onContainerDimChange, onCreateDim, onRenameDim, onRequestDeleteDim,
-  maxGridCols, onMaxGridColsChange,
+  maxGridCols, onMaxGridColsChange, singleColumnWidth, onSingleColumnWidthChange,
 }) {
   const [dimMenuOpen, setDimMenuOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -167,6 +344,25 @@ function ClassificationToolbar({
 
       <div style={{ flex: 1 }} />
 
+      <div className={styles.tbSettingsWrap}>
+        <button
+          ref={settingsBtnRef}
+          className={`${styles.tbSelectorBtn} ${settingsOpen ? styles.tbSelectorBtnOpen : ''}`}
+          onClick={() => setSettingsOpen(v => !v)}>
+          Visual settings<Chevron open={settingsOpen} />
+        </button>
+        {settingsOpen && (
+          <ClassificationVisualSettings
+            maxGridCols={maxGridCols}
+            onMaxGridColsChange={onMaxGridColsChange}
+            singleColumnWidth={singleColumnWidth}
+            onSingleColumnWidthChange={onSingleColumnWidthChange}
+            onClose={() => setSettingsOpen(false)}
+            anchorRef={settingsBtnRef}
+          />
+        )}
+      </div>
+
       {/* Dimensions dropdown */}
       <div ref={dimMenuRef} className={styles.tbSelector}>
         <button
@@ -215,23 +411,6 @@ function ClassificationToolbar({
                 ))
             }
           </div>
-        )}
-      </div>
-
-      <div className={styles.tbSettingsWrap}>
-        <button
-          ref={settingsBtnRef}
-          className={`${styles.tbSelectorBtn} ${settingsOpen ? styles.tbSelectorBtnOpen : ''}`}
-          onClick={() => setSettingsOpen(v => !v)}>
-          Visual settings<Chevron open={settingsOpen} />
-        </button>
-        {settingsOpen && (
-          <ClassificationVisualSettings
-            maxGridCols={maxGridCols}
-            onMaxGridColsChange={onMaxGridColsChange}
-            onClose={() => setSettingsOpen(false)}
-            anchorRef={settingsBtnRef}
-          />
         )}
       </div>
 
@@ -576,6 +755,7 @@ function LegendDropUp({ dimensions, legendDimId, onLegend }) {
   const btnRef = useRef()
   const menuRef = useRef()
   const [pos, setPos] = useState(null)
+  const wheelAtRef = useRef(0)
 
   const toggle = () => {
     if (!open) {
@@ -597,10 +777,23 @@ function LegendDropUp({ dimensions, legendDimId, onLegend }) {
   }, [open])
 
   const current = dimensions.find(d => d.id === legendDimId)
+  const cycleDimension = deltaY => {
+    const options = ['', ...dimensions.map(d => d.id)]
+    const now = Date.now()
+    if (now - wheelAtRef.current < 180) return
+    wheelAtRef.current = now
+    const activeIdx = Math.max(0, options.indexOf(legendDimId))
+    const dir = deltaY > 0 ? 1 : -1
+    onLegend(options[(activeIdx + dir + options.length) % options.length])
+  }
 
   return (
     <div className={styles.dropUpWrap}>
-      <button ref={btnRef} className={styles.dropUpBtn} onClick={toggle}>
+      <button
+        ref={btnRef}
+        className={styles.dropUpBtn}
+        onWheel={e => { e.preventDefault(); cycleDimension(e.deltaY) }}
+        onClick={toggle}>
         <span className={styles.dropUpLabel}>{current?.name ?? 'Color legend'}</span>
         <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"
           style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s', flexShrink: 0 }}>
@@ -741,8 +934,8 @@ function LegendWidget({
   dimensions, categories, legendDimId, onLegend,
   namedFilters, activeFilterIds, onToggleFilter, onCreateFilter,
   onEditFilter, quickFilters, onToggleQuickFilter, paintCat, onPaintActivate, onEditCat, onCreateCat,
+  expanded, onExpandedChange,
 }) {
-  const [expanded, setExpanded] = useState(false)
   const [addingCat, setAddingCat] = useState(false)
   const [catName, setCatName] = useState('')
   const [catColor, setCatColor] = useState(PRESET_COLORS[0])
@@ -848,22 +1041,36 @@ function LegendWidget({
 
       <button
         className={`${styles.legendToggleBtn} ${expanded ? styles.legendToggleActive : ''}`}
-        onClick={() => setExpanded(v => !v)}
+        onClick={() => onExpandedChange(!expanded)}
         title={expanded ? 'Collapse legend' : 'Color legend'}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/>
         </svg>
       </button>
+      {!expanded && (
+        <span className={styles.floatingHint}>
+          <strong>Color dimension</strong>
+          <small>Color and quick-filter goals</small>
+        </span>
+      )}
     </div>
   )
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ClassificationPage({ goals = [], onGoalOpen }) {
+export default function ClassificationPage({ goals = [], isActive = false, onGoalOpen }) {
   const [dimensions, setDimensions]         = useState([])
   const [categories, setCategories]         = useState([])
   const [assignments, setAssignments]       = useState({})
   const [assignmentOrders, setAssignmentOrders] = useState({})
+  const [perspectives, setPerspectives] = useState([])
+  const [activePerspectiveId, setActivePerspectiveId] = useState(NONE_PERSPECTIVE_ID)
+  const [defaultPerspectiveId, setDefaultPerspectiveId] = useState(() => {
+    try { return window.localStorage.getItem(CLASSIFICATION_DEFAULT_PERSPECTIVE_KEY) || NONE_PERSPECTIVE_ID }
+    catch { return NONE_PERSPECTIVE_ID }
+  })
+  const appliedDefaultRef = useRef(false)
+  const restoringPerspectiveRef = useRef(false)
   const [containerDimId, setContainerDimId] = useState('')
   const [legendDimId, setLegendDimId]       = useState('')
   const [namedFilters, setNamedFilters] = useState([])
@@ -871,6 +1078,7 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
   const [quickFilters, setQuickFilters] = useState([])
   const [editingFilter, setEditingFilter] = useState(null)
   const [maxGridCols, setMaxGridCols] = useState(6)
+  const [singleColumnWidth, setSingleColumnWidth] = useState(480)
   const [paintCat, setPaintCat]             = useState(null)
   const [editCat, setEditCat]               = useState(null)
   const [confirmDeleteDimId, setConfirmDeleteDimId] = useState(null)
@@ -878,13 +1086,15 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
   const [catInsertIdx, setCatInsertIdx]   = useState(null)
   const [collapsedCatIds, setCollapsedCatIds]     = useState(new Set())
   const [unassignedCollapsed, setUnassignedCollapsed] = useState(false)
+  const [floatingPanel, setFloatingPanel] = useState(null)
 
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getFilters()])
-      .then(([dims, cats, assigns, filters]) => {
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getFilters(), api.getClassificationPerspectives()])
+      .then(([dims, cats, assigns, filters, loadedPerspectives]) => {
         setDimensions(dims)
         setCategories(cats)
         setNamedFilters(filters.map(normalizeFilter))
+        setPerspectives(loadedPerspectives.map(normalizePerspective))
         const map = {}
         const orderMap = {}
         assigns.forEach(a => {
@@ -909,7 +1119,74 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
     if (legendDimId !== FILTER_DIMENSION_ID) setActiveFilterIds([])
   }, [legendDimId])
 
-  useEffect(() => { setCollapsedCatIds(new Set()); setUnassignedCollapsed(false) }, [containerDimId])
+  useEffect(() => {
+    if (restoringPerspectiveRef.current) {
+      restoringPerspectiveRef.current = false
+      return
+    }
+    setCollapsedCatIds(new Set())
+    setUnassignedCollapsed(false)
+  }, [containerDimId])
+
+  const makeNonePerspective = () => {
+    const groupDim = dimensions.find(d => d.name === 'Group')
+    const priorityDim = dimensions.find(d => d.name === 'Priority')
+    return normalizePerspective({
+      id: NONE_PERSPECTIVE_ID,
+      name: 'None',
+      readOnly: true,
+      state: {
+        maxGridCols: 6,
+        singleColumnWidth: 480,
+        containerDimId: groupDim?.id ?? '',
+        legendDimId: priorityDim?.id ?? '',
+        collapsedCatIds: [],
+        unassignedCollapsed: false,
+        activeFilterIds: [],
+        quickFilters: [],
+      },
+    })
+  }
+
+  const nonePerspective = makeNonePerspective()
+  const perspectiveOptions = [nonePerspective, ...perspectives]
+
+  const capturePerspectiveState = () => ({
+    maxGridCols,
+    singleColumnWidth,
+    containerDimId,
+    legendDimId,
+    collapsedCatIds: [...collapsedCatIds],
+    unassignedCollapsed,
+    activeFilterIds,
+    quickFilters,
+  })
+
+  const applyPerspective = perspective => {
+    const state = perspective?.state ?? {}
+    restoringPerspectiveRef.current = (state.containerDimId || '') !== containerDimId
+    setMaxGridCols(Math.max(1, Math.min(12, Number(state.maxGridCols) || 6)))
+    setSingleColumnWidth(Math.max(320, Math.min(900, Number(state.singleColumnWidth) || 480)))
+    setContainerDimId(state.containerDimId || '')
+    setLegendDimId(state.legendDimId || '')
+    setCollapsedCatIds(new Set(Array.isArray(state.collapsedCatIds) ? state.collapsedCatIds : []))
+    setUnassignedCollapsed(Boolean(state.unassignedCollapsed))
+    setActiveFilterIds(Array.isArray(state.activeFilterIds) ? state.activeFilterIds : [])
+    setQuickFilters(Array.isArray(state.quickFilters) ? state.quickFilters : [])
+    setPaintCat(null)
+    setActivePerspectiveId(perspective?.id ?? NONE_PERSPECTIVE_ID)
+  }
+
+  useEffect(() => {
+    if (!isActive) {
+      appliedDefaultRef.current = false
+      return
+    }
+    if (appliedDefaultRef.current || dimensions.length === 0) return
+    const defaultPerspective = perspectiveOptions.find(p => p.id === defaultPerspectiveId) ?? nonePerspective
+    appliedDefaultRef.current = true
+    applyPerspective(defaultPerspective)
+  }, [defaultPerspectiveId, dimensions.length, isActive, perspectives])
 
   const createDimension = async name => {
     try { const d = await api.createDimension({ name }); setDimensions(p => [...p, d]) }
@@ -921,6 +1198,47 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
       const d = await api.updateDimension(id, { name })
       setDimensions(prev => prev.map(dim => dim.id === id ? d : dim))
     } catch (e) { console.error(e) }
+  }
+
+  const createPerspective = async name => {
+    try {
+      const created = normalizePerspective(await api.createClassificationPerspective({ name, state: capturePerspectiveState() }))
+      setPerspectives(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
+      setActivePerspectiveId(created.id)
+    } catch (e) { console.error(e) }
+  }
+
+  const updatePerspectiveSnapshot = async perspectiveId => {
+    if (perspectiveId === NONE_PERSPECTIVE_ID) return
+    try {
+      const saved = normalizePerspective(await api.updateClassificationPerspective(perspectiveId, { state: capturePerspectiveState() }))
+      setPerspectives(prev => prev.map(p => p.id === saved.id ? saved : p))
+      setActivePerspectiveId(saved.id)
+    } catch (e) { console.error(e) }
+  }
+
+  const renamePerspective = async (perspectiveId, name) => {
+    if (perspectiveId === NONE_PERSPECTIVE_ID) return
+    try {
+      const saved = normalizePerspective(await api.updateClassificationPerspective(perspectiveId, { name }))
+      setPerspectives(prev => prev.map(p => p.id === saved.id ? saved : p).sort((a, b) => a.name.localeCompare(b.name)))
+    } catch (e) { console.error(e) }
+  }
+
+  const deletePerspective = async perspectiveId => {
+    if (perspectiveId === NONE_PERSPECTIVE_ID) return
+    try {
+      await api.deleteClassificationPerspective(perspectiveId)
+      setPerspectives(prev => prev.filter(p => p.id !== perspectiveId))
+      if (activePerspectiveId === perspectiveId) applyPerspective(nonePerspective)
+      if (defaultPerspectiveId === perspectiveId) setClassificationDefaultPerspective(NONE_PERSPECTIVE_ID)
+    } catch (e) { console.error(e) }
+  }
+
+  const setClassificationDefaultPerspective = perspectiveId => {
+    const nextId = perspectiveId || NONE_PERSPECTIVE_ID
+    setDefaultPerspectiveId(nextId)
+    try { window.localStorage.setItem(CLASSIFICATION_DEFAULT_PERSPECTIVE_KEY, nextId) } catch {}
   }
 
   const deleteDimension = async id => {
@@ -1155,7 +1473,7 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
   const visibleContainerCats = containerCats.filter(c => !collapsedCatIds.has(c.id))
   const numBoxes = visibleContainerCats.length + 1
   const gridCols = Math.min(numBoxes, maxGridCols)
-  const colTemplate = gridCols === 1 ? 'min(100%, 480px)' : '1fr'
+  const colTemplate = gridCols === 1 ? `min(100%, ${singleColumnWidth}px)` : '1fr'
   const gridStyle = {
     gridTemplateColumns: `repeat(${gridCols}, ${colTemplate})`,
     justifyContent: gridCols === 1 ? 'center' : undefined,
@@ -1178,6 +1496,8 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
         onRequestDeleteDim={setConfirmDeleteDimId}
         maxGridCols={maxGridCols}
         onMaxGridColsChange={setMaxGridCols}
+        singleColumnWidth={singleColumnWidth}
+        onSingleColumnWidthChange={setSingleColumnWidth}
       />
 
       <div className={styles.body}>
@@ -1238,23 +1558,40 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
           {containerDimId && containerDimId !== FILTER_DIMENSION_ID && <AddCatBox onAdd={name => createCategory(containerDimId, name, PRESET_COLORS[containerCats.length % PRESET_COLORS.length])} />}
         </div>
 
-        <LegendWidget
-          dimensions={dynamicDimensions}
-          categories={dynamicCategories}
-          legendDimId={legendDimId}
-          onLegend={setLegendDimId}
-          namedFilters={namedFilters}
-          activeFilterIds={activeFilterIds}
-          onToggleFilter={toggleNamedFilter}
-          onCreateFilter={() => setEditingFilter({})}
-          onEditFilter={setEditingFilter}
-          quickFilters={quickFilters}
-          onToggleQuickFilter={toggleQuickFilter}
-          paintCat={paintCat}
-          onPaintActivate={activatePaint}
-          onEditCat={setEditCat}
-          onCreateCat={createCategory}
-        />
+        <div className={styles.floatingViewTools}>
+          <PerspectiveMenu
+            perspectives={perspectiveOptions}
+            activePerspectiveId={activePerspectiveId}
+            defaultPerspectiveId={defaultPerspectiveId}
+            open={floatingPanel === 'perspective'}
+            onOpenChange={open => setFloatingPanel(open ? 'perspective' : null)}
+            onApply={applyPerspective}
+            onCreate={createPerspective}
+            onUpdate={updatePerspectiveSnapshot}
+            onRename={renamePerspective}
+            onDelete={deletePerspective}
+            onSetDefault={setClassificationDefaultPerspective}
+          />
+          <LegendWidget
+            dimensions={dynamicDimensions}
+            categories={dynamicCategories}
+            legendDimId={legendDimId}
+            onLegend={setLegendDimId}
+            namedFilters={namedFilters}
+            activeFilterIds={activeFilterIds}
+            onToggleFilter={toggleNamedFilter}
+            onCreateFilter={() => setEditingFilter({})}
+            onEditFilter={setEditingFilter}
+            quickFilters={quickFilters}
+            onToggleQuickFilter={toggleQuickFilter}
+            paintCat={paintCat}
+            onPaintActivate={activatePaint}
+            onEditCat={setEditCat}
+            onCreateCat={createCategory}
+            expanded={floatingPanel === 'color'}
+            onExpandedChange={open => setFloatingPanel(open ? 'color' : null)}
+          />
+        </div>
 
       </div>
 

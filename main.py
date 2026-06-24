@@ -109,6 +109,13 @@ def _init_db():
                 state_json TEXT NOT NULL DEFAULT '{}'
             )
         """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS classification_perspectives (
+                id         TEXT PRIMARY KEY,
+                name       TEXT NOT NULL,
+                state_json TEXT NOT NULL DEFAULT '{}'
+            )
+        """)
 
 _init_db()
 
@@ -252,6 +259,15 @@ class SchedulePerspectivePatch(BaseModel):
     name: Optional[str] = None
     state: Optional[dict] = None
 
+class ClassificationPerspectiveIn(BaseModel):
+    id: Optional[str] = None
+    name: str
+    state: dict = {}
+
+class ClassificationPerspectivePatch(BaseModel):
+    name: Optional[str] = None
+    state: Optional[dict] = None
+
 
 # ── Helper converters ─────────────────────────────────────────────────────────
 def _page(row) -> dict:
@@ -296,6 +312,14 @@ def _filter(row) -> dict:
     }
 
 def _schedule_perspective(row) -> dict:
+    d = dict(row)
+    try:
+        state = json.loads(d["state_json"] or "{}")
+    except json.JSONDecodeError:
+        state = {}
+    return {"id": d["id"], "name": d["name"], "state": state}
+
+def _classification_perspective(row) -> dict:
     d = dict(row)
     try:
         state = json.loads(d["state_json"] or "{}")
@@ -629,6 +653,52 @@ def delete_schedule_perspective(perspective_id: str):
         if not con.execute("SELECT id FROM schedule_perspectives WHERE id = ?", (perspective_id,)).fetchone():
             raise HTTPException(404, "Perspective not found")
         con.execute("DELETE FROM schedule_perspectives WHERE id = ?", (perspective_id,))
+
+
+# ── Classification perspectives ──────────────────────────────────────────────
+@app.get("/classification-perspectives")
+def list_classification_perspectives():
+    with _db() as con:
+        rows = con.execute("SELECT * FROM classification_perspectives ORDER BY name COLLATE NOCASE").fetchall()
+    return [_classification_perspective(r) for r in rows]
+
+@app.post("/classification-perspectives", status_code=201)
+def create_classification_perspective(data: ClassificationPerspectiveIn):
+    pid = data.id or str(uuid.uuid4())
+    name = data.name.strip() or "Untitled perspective"
+    with _db() as con:
+        if con.execute("SELECT id FROM classification_perspectives WHERE id = ?", (pid,)).fetchone():
+            raise HTTPException(409, "Perspective already exists")
+        con.execute(
+            "INSERT INTO classification_perspectives (id, name, state_json) VALUES (?, ?, ?)",
+            (pid, name, json.dumps(data.state or {})),
+        )
+        row = con.execute("SELECT * FROM classification_perspectives WHERE id = ?", (pid,)).fetchone()
+    return _classification_perspective(row)
+
+@app.patch("/classification-perspectives/{perspective_id}")
+def update_classification_perspective(perspective_id: str, data: ClassificationPerspectivePatch):
+    with _db() as con:
+        if not con.execute("SELECT id FROM classification_perspectives WHERE id = ?", (perspective_id,)).fetchone():
+            raise HTTPException(404, "Perspective not found")
+        fields, values = [], []
+        if data.name is not None:
+            fields.append("name = ?")
+            values.append(data.name.strip() or "Untitled perspective")
+        if data.state is not None:
+            fields.append("state_json = ?")
+            values.append(json.dumps(data.state or {}))
+        if fields:
+            con.execute(f"UPDATE classification_perspectives SET {', '.join(fields)} WHERE id = ?", (*values, perspective_id))
+        row = con.execute("SELECT * FROM classification_perspectives WHERE id = ?", (perspective_id,)).fetchone()
+    return _classification_perspective(row)
+
+@app.delete("/classification-perspectives/{perspective_id}", status_code=204)
+def delete_classification_perspective(perspective_id: str):
+    with _db() as con:
+        if not con.execute("SELECT id FROM classification_perspectives WHERE id = ?", (perspective_id,)).fetchone():
+            raise HTTPException(404, "Perspective not found")
+        con.execute("DELETE FROM classification_perspectives WHERE id = ?", (perspective_id,))
 
 
 # ── Milestones ────────────────────────────────────────────────────────────────
