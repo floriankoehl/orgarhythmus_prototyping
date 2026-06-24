@@ -115,6 +115,49 @@ function computeViolations(msList, deps) {
   return violations
 }
 
+function getDependencyViolations(msList, deps) {
+  const msMap = Object.fromEntries(msList.map(m => [m.id, m]))
+  return deps
+    .map(dep => {
+      const from = msMap[dep.fromId]
+      const to = msMap[dep.toId]
+      if (!from || !to || from.startCol + from.duration <= to.startCol) return null
+      return { dep, from, to }
+    })
+    .filter(Boolean)
+}
+
+function getOverlapViolation(msList, movedIds = new Set()) {
+  const byGoal = new Map()
+  msList.forEach(m => {
+    if (!byGoal.has(m.goalId)) byGoal.set(m.goalId, [])
+    byGoal.get(m.goalId).push(m)
+  })
+  for (const laneMilestones of byGoal.values()) {
+    for (let i = 0; i < laneMilestones.length; i += 1) {
+      for (let j = i + 1; j < laneMilestones.length; j += 1) {
+        const a = laneMilestones[i]
+        const b = laneMilestones[j]
+        const overlaps = a.startCol < b.startCol + b.duration && b.startCol < a.startCol + a.duration
+        if (overlaps && (movedIds.has(a.id) || movedIds.has(b.id))) return [a.id, b.id]
+      }
+    }
+  }
+  return null
+}
+
+function newClientId(prefix) {
+  const random = window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  return `${prefix}-${random}`
+}
+
+function normalizeTransactionState(state = {}) {
+  return {
+    milestones: state.milestones ?? [],
+    dependencies: state.dependencies ?? [],
+  }
+}
+
 // ── Row model ─────────────────────────────────────────────────────────────────
 const UNASSIGNED_LANE = '__unassigned__'
 
@@ -191,7 +234,7 @@ function buildRowItems(goals, categories, assignments, assignmentOrders, activeD
 }
 
 // ── Visual settings panel ─────────────────────────────────────────────────────
-function SpacingPanel({ spacing, onChange, onClose, anchorRef, axisMode, onAxisModeChange, showDepLabels, onShowDepLabelsChange, showDeps, onShowDepsChange, hideCrossCatDeps, onHideCrossCatDepsChange }) {
+function SpacingPanel({ spacing, onChange, onClose, anchorRef, axisMode, onAxisModeChange, showDepLabels, onShowDepLabelsChange, showDeps, onShowDepsChange, hideCrossCatDeps, onHideCrossCatDepsChange, autoSelectConflicts, onAutoSelectConflictsChange }) {
   const panelRef = useRef()
   const closeRef = useRef(onClose)
   useEffect(() => { closeRef.current = onClose })
@@ -252,6 +295,15 @@ function SpacingPanel({ spacing, onChange, onClose, anchorRef, axisMode, onAxisM
           <label className={styles.depToggle} title="Show dependency labels">
             <input type="checkbox" checked={showDepLabels} onChange={e => onShowDepLabelsChange(e.target.checked)} />
             <span>Labels</span>
+          </label>
+        </div>
+      </div>
+      <div className={styles.axisModeRow}>
+        <span className={styles.spacingLabel}>Warnings</span>
+        <div className={styles.depToggles}>
+          <label className={styles.depToggle} title="Auto-select blocking milestones">
+            <input type="checkbox" checked={autoSelectConflicts} onChange={e => onAutoSelectConflictsChange(e.target.checked)} />
+            <span>Auto-select conflicts</span>
           </label>
         </div>
       </div>
@@ -457,21 +509,13 @@ function GanttToolbar({
   axisMode, onAxisModeChange,
   showDepLabels, onShowDepLabelsChange,
   showDeps, onShowDepsChange, hideCrossCatDeps, onHideCrossCatDepsChange,
-  warningPopupsEnabled, onWarningPopupsEnabledChange,
+  autoSelectConflicts, onAutoSelectConflictsChange,
   canDeleteSelection, onDeleteSelection,
+  canUndo, canRedo, onUndo, onRedo,
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [warningsOpen, setWarningsOpen] = useState(false)
   const settingsBtnRef = useRef()
-  const warningsRef = useRef()
   const closeSettings  = useCallback(() => setSettingsOpen(false), [])
-
-  useEffect(() => {
-    if (!warningsOpen) return
-    const close = e => { if (!warningsRef.current?.contains(e.target)) setWarningsOpen(false) }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
-  }, [warningsOpen])
 
   return (
     <div className={styles.toolbar}>
@@ -481,6 +525,14 @@ function GanttToolbar({
         onClick={onDeleteSelection}>
         Delete
       </button>
+      <div className={styles.historyButtons}>
+        <button className={styles.historyBtn} disabled={!canUndo} onClick={onUndo} title="Undo last Gantt transaction">
+          Undo
+        </button>
+        <button className={styles.historyBtn} disabled={!canRedo} onClick={onRedo} title="Redo last undone Gantt transaction">
+          Redo
+        </button>
+      </div>
       <div className={styles.modePills}>
         <button className={`${styles.modePill} ${mode === 'milestone' ? styles.modePillActive : ''}`}
           onClick={() => onModeChange('milestone')}>Milestone</button>
@@ -524,25 +576,6 @@ function GanttToolbar({
         />
       )}
       <div style={{ flex: 1 }} />
-      <div ref={warningsRef} className={styles.warningWrap}>
-        <button
-          className={`${styles.warningBtn} ${warningsOpen ? styles.warningBtnOpen : ''}`}
-          onClick={() => setWarningsOpen(v => !v)}>
-          Warning system
-        </button>
-        {warningsOpen && (
-          <div className={styles.warningMenu}>
-            <label className={styles.warningMenuItem}>
-              <input
-                type="checkbox"
-                checked={warningPopupsEnabled}
-                onChange={e => onWarningPopupsEnabledChange(e.target.checked)}
-              />
-              <span>Show dependency warnings</span>
-            </label>
-          </div>
-        )}
-      </div>
       <div className={styles.spacingWrap}>
         <button ref={settingsBtnRef}
           className={`${styles.spacingBtn} ${settingsOpen ? styles.spacingBtnOpen : ''}`}
@@ -558,7 +591,8 @@ function GanttToolbar({
             axisMode={axisMode} onAxisModeChange={onAxisModeChange}
             showDepLabels={showDepLabels} onShowDepLabelsChange={onShowDepLabelsChange}
             showDeps={showDeps} onShowDepsChange={onShowDepsChange}
-            hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={onHideCrossCatDepsChange} />
+            hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={onHideCrossCatDepsChange}
+            autoSelectConflicts={autoSelectConflicts} onAutoSelectConflictsChange={onAutoSelectConflictsChange} />
         )}
       </div>
     </div>
@@ -989,6 +1023,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const [milestones,   setMilestones]   = useState([])
   const [dependencies, setDependencies] = useState([])
   const [deadlines,    setDeadlines]    = useState([])
+  const [transactionHistory, setTransactionHistory] = useState({ undo: [], redo: [] })
   const [savedFilters, setSavedFilters] = useState([])
   const [perspectives, setPerspectives] = useState([])
   const [activePerspectiveId, setActivePerspectiveId] = useState(NONE_PERSPECTIVE_ID)
@@ -1005,7 +1040,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     Promise.all([
       api.getDimensions(), api.getAllCategories(), api.getAssignments(),
       api.getMilestones(), api.getDependencies(), api.getDeadlines(), api.getFilters(), api.getSchedulePerspectives(),
-    ]).then(([dims, cats, assigns, mss, deps, dls, filters, loadedPerspectives]) => {
+      api.getTransactionHistory(),
+    ]).then(([dims, cats, assigns, mss, deps, dls, filters, loadedPerspectives, history]) => {
       setDimensions(dims); setCategories(cats)
       setSavedFilters(filters)
       setPerspectives(loadedPerspectives.map(normalizePerspective))
@@ -1022,6 +1058,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       setMilestones(mss)
       setDependencies(deps)
       setDeadlines(dls)
+      setTransactionHistory(history)
       const priorityDim = dims.find(d => d.name === 'Priority')
       if (priorityDim) setColorDimId(priorityDim.id)
     }).catch(console.error)
@@ -1046,13 +1083,22 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const [spacing,     setSpacing]     = useState(DEFAULT_SPACING)
   const [hiddenCatIds, setHiddenCatIds] = useState(new Set())
   const [hiddenGoalsByLane, setHiddenGoalsByLane] = useState({})
-  const [warningPopupsEnabled, setWarningPopupsEnabled] = useState(true)
   const [warningPrompt, setWarningPrompt] = useState(null)
+  const [blinkingDepIds, setBlinkingDepIds] = useState(new Set())
+  const [blinkingMilestoneIds, setBlinkingMilestoneIds] = useState(new Set())
+  const [autoSelectConflicts, setAutoSelectConflicts] = useState(true)
   const [deleteDraft, setDeleteDraft] = useState(null)
+  const capturePerspectiveStateRef = useRef(null)
+  const applyPerspectiveRef = useRef(null)
+  const conflictRestoreTimerRef = useRef(null)
   const [dragOverGoalId, setDragOverGoalId] = useState(null)
   const [dragOverLaneCatId, setDragOverLaneCatId] = useState(null)
   const [draggingCatId, setDraggingCatId] = useState(null)
   const [dragOverCatReorderId, setDragOverCatReorderId] = useState(null)
+
+  useEffect(() => () => {
+    if (conflictRestoreTimerRef.current) window.clearTimeout(conflictRestoreTimerRef.current)
+  }, [])
 
   const activeCategories = useMemo(
     () => categories.filter(c => c.dimensionId === activeDimId),
@@ -1152,6 +1198,56 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   const showAllCategories = useCallback(() => setHiddenCatIds(new Set()), [])
 
+  const getConflictLaneKey = useCallback(goalId => {
+    if (activeLaneFilter) {
+      return filterMatchesGoal(activeLaneFilter, goalId, assignments) ? activeLaneFilter.id : UNASSIGNED_LANE
+    }
+    if (activeDimId) return assignments[goalId]?.[activeDimId] ?? UNASSIGNED_LANE
+    return null
+  }, [activeDimId, activeLaneFilter, assignments])
+
+  const presentConflictMilestones = useCallback(ids => {
+    const idSet = new Set(ids)
+    const goalIds = milestonesRef.current.filter(m => idSet.has(m.id)).map(m => m.goalId)
+    if (goalIds.length === 0) return
+    const snapshot = capturePerspectiveStateRef.current?.()
+    if (conflictRestoreTimerRef.current) window.clearTimeout(conflictRestoreTimerRef.current)
+    setHiddenCatIds(prev => {
+      const next = new Set(prev)
+      goalIds.forEach(goalId => {
+        const laneKey = getConflictLaneKey(goalId)
+        if (laneKey) next.delete(laneKey)
+      })
+      return next
+    })
+    setHiddenGoalsByLane(prev => {
+      const next = { ...prev }
+      goalIds.forEach(goalId => {
+        Object.entries(next).forEach(([laneKey, hiddenIds]) => {
+          if (!hiddenIds?.has?.(goalId)) return
+          const laneHidden = new Set(hiddenIds)
+          laneHidden.delete(goalId)
+          next[laneKey] = laneHidden
+        })
+      })
+      return next
+    })
+    setBlinkingMilestoneIds(idSet)
+    window.setTimeout(() => setBlinkingMilestoneIds(new Set()), 3000)
+    if (autoSelectConflicts) {
+      setSelectedDepIds(new Set())
+      setSelectedIds(idSet)
+      return
+    }
+    setSelectedIds(new Set())
+    setSelectedDepIds(new Set())
+    if (snapshot) {
+      conflictRestoreTimerRef.current = window.setTimeout(() => {
+        applyPerspectiveRef.current?.({ id: activePerspectiveId, name: 'Temporary conflict snapshot', state: snapshot })
+      }, 3000)
+    }
+  }, [activePerspectiveId, autoSelectConflicts, getConflictLaneKey])
+
   const toggleSavedFilter = useCallback(filterId => {
     setActiveFilterIds(prev => prev.includes(filterId) ? prev.filter(id => id !== filterId) : [...prev, filterId])
   }, [])
@@ -1244,6 +1340,106 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   selectedIdsRef.current = selectedIds
   const selectedDepIdsRef = useRef(new Set())
   selectedDepIdsRef.current = selectedDepIds
+
+  const applyTransactionState = useCallback((nextState, previousState = {}) => {
+    const next = normalizeTransactionState(nextState)
+    const previous = normalizeTransactionState(previousState)
+    const touchedMsIds = new Set([...previous.milestones, ...next.milestones].map(m => m.id))
+    const touchedDepIds = new Set([...previous.dependencies, ...next.dependencies].map(d => d.id))
+    const nextMsById = new Map(next.milestones.map(m => [m.id, m]))
+    const nextDepById = new Map(next.dependencies.map(d => [d.id, d]))
+    setMilestones(prev => {
+      const existingIds = new Set(prev.map(m => m.id))
+      return [
+        ...prev.flatMap(m => {
+          if (!touchedMsIds.has(m.id)) return [m]
+          return nextMsById.has(m.id) ? [nextMsById.get(m.id)] : []
+        }),
+        ...next.milestones.filter(m => !existingIds.has(m.id)),
+      ]
+    })
+    setDependencies(prev => {
+      const existingIds = new Set(prev.map(d => d.id))
+      return [
+        ...prev.flatMap(d => {
+          if (!touchedDepIds.has(d.id)) return [d]
+          return nextDepById.has(d.id) ? [nextDepById.get(d.id)] : []
+        }),
+        ...next.dependencies.filter(d => !existingIds.has(d.id)),
+      ]
+    })
+  }, [])
+
+  const refreshGanttTransactions = useCallback(async () => {
+    const [mss, deps, history] = await Promise.all([
+      api.getMilestones(),
+      api.getDependencies(),
+      api.getTransactionHistory(),
+    ])
+    setMilestones(mss)
+    setDependencies(deps)
+    setTransactionHistory(history)
+  }, [])
+
+  const showTransactionFailure = useCallback(err => {
+    const detail = err?.message || 'The backend rejected this transaction.'
+    setWarningPrompt({ title: 'Transaction rejected', message: detail })
+  }, [])
+
+  const commitTransaction = useCallback(async transaction => {
+    const before = normalizeTransactionState(transaction.before)
+    const after = normalizeTransactionState(transaction.after)
+    applyTransactionState(after, before)
+    try {
+      const result = await api.applyTransaction({ ...transaction, before, after })
+      setTransactionHistory(result.history)
+      return true
+    } catch (err) {
+      console.error(err)
+      applyTransactionState(before, after)
+      const detail = err?.detail
+      if (detail?.type === 'overlap' && Array.isArray(detail.milestoneIds)) {
+        presentConflictMilestones(detail.milestoneIds)
+        setWarningPrompt({ title: 'Milestone overlap', message: detail.message, actions: 'close' })
+      } else if (detail?.type === 'deadline') {
+        setWarningPrompt({ title: 'Hard deadline', message: detail.message, actions: 'close' })
+      } else if (detail?.type === 'dependency') {
+        const depIds = detail.dependencyIds ?? []
+        const milestoneIds = new Set(detail.milestoneIds ?? [])
+        depIds.forEach(depId => {
+          const dep = dependenciesRef.current.find(d => d.id === depId)
+          if (dep) { milestoneIds.add(dep.fromId); milestoneIds.add(dep.toId) }
+        })
+        presentConflictMilestones(milestoneIds)
+        setBlinkingDepIds(new Set(depIds))
+        window.setTimeout(() => setBlinkingDepIds(new Set()), 3000)
+        setWarningPrompt({ title: 'Dependency violation', message: detail.message, actions: 'dependency', dependencyIds: depIds })
+      } else {
+        showTransactionFailure(err)
+      }
+      return false
+    }
+  }, [applyTransactionState, presentConflictMilestones, showTransactionFailure])
+
+  const undoGanttTransaction = useCallback(async () => {
+    try {
+      await api.undoTransaction()
+      await refreshGanttTransactions()
+    } catch (err) {
+      console.error(err)
+      showTransactionFailure(err)
+    }
+  }, [refreshGanttTransactions, showTransactionFailure])
+
+  const redoGanttTransaction = useCallback(async () => {
+    try {
+      await api.redoTransaction()
+      await refreshGanttTransactions()
+    } catch (err) {
+      console.error(err)
+      showTransactionFailure(err)
+    }
+  }, [refreshGanttTransactions, showTransactionFailure])
 
   // ── Virtual-render state ───────────────────────────────────────────────────
   const [vpSize,      setVpSize]      = useState({ w: 0, h: 0 })
@@ -1471,13 +1667,49 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   // Violations: recomputed whenever milestones or dependencies change
   const violationIds = useMemo(() => computeViolations(milestones, dependencies), [milestones, dependencies])
 
-  const maybeBlockDependencyWarning = useCallback((nextMilestones, nextDependencies, apply) => {
-    const viol = computeViolations(nextMilestones, nextDependencies)
-    if (viol.size > 0) setSelectedIds(prev => new Set([...prev, ...viol]))
-    if (!warningPopupsEnabled || viol.size === 0) return false
-    setWarningPrompt({ count: viol.size, apply })
+  const reportOverlapViolation = useCallback(ids => {
+    presentConflictMilestones(ids)
+    setWarningPrompt({
+      title: 'Milestone overlap',
+      message: 'Two milestones in the same goal row cannot occupy the same day.',
+      actions: 'close',
+    })
+  }, [presentConflictMilestones])
+
+  const reportDeadlineViolation = useCallback(() => {
+    setWarningPrompt({
+      title: 'Hard deadline',
+      message: "Milestones cannot move before today or past their goal's hard deadline.",
+      actions: 'close',
+    })
+  }, [])
+
+  const reportDependencyViolations = useCallback(violations => {
+    const depIds = violations.map(v => v.dep.id).filter(Boolean)
+    const milestoneIds = new Set()
+    violations.forEach(v => {
+      milestoneIds.add(v.from.id)
+      milestoneIds.add(v.to.id)
+    })
+    presentConflictMilestones(milestoneIds)
+    setBlinkingDepIds(new Set(depIds))
+    window.setTimeout(() => setBlinkingDepIds(new Set()), 3000)
+    setWarningPrompt({
+      title: 'Dependency violation',
+      message: violations.length === 1
+        ? 'A predecessor milestone must finish before its successor starts.'
+        : `${violations.length} dependency constraints were violated.`,
+      actions: 'dependency',
+      dependencyIds: depIds,
+    })
+  }, [presentConflictMilestones])
+
+  const maybeBlockDependencyWarning = useCallback((nextMilestones, nextDependencies) => {
+    const violations = getDependencyViolations(nextMilestones, nextDependencies)
+    if (violations.length === 0) return false
+    reportDependencyViolations(violations)
     return true
-  }, [warningPopupsEnabled])
+  }, [reportDependencyViolations])
 
   // ── Measure + ensure grid covers viewport ─────────────────────────────────
   useEffect(() => {
@@ -1632,12 +1864,25 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   // ── Milestone CRUD ─────────────────────────────────────────────────────────
   const handleCreateMilestone = useCallback(async (goalId, startCol, color) => {
-    const data = { goal_id: goalId, start_col: startCol, duration: 1, title: '', color: color || '#1a73e8' }
-    try {
-      const ms = await api.createMilestone(data)
-      setMilestones(prev => [...prev, ms])
-    } catch (err) { console.error(err) }
-  }, [])
+    const ms = { id: newClientId('ms'), goalId, startCol, duration: 1, title: '', color: color || '#1a73e8' }
+    const dl = deadlinesRef.current.find(d => d.goalId === goalId)
+    if (startCol < 0 || (dl && startCol + 1 > dl.col)) {
+      reportDeadlineViolation()
+      return
+    }
+    const overlap = getOverlapViolation([...milestonesRef.current, ms], new Set([ms.id]))
+    if (overlap) {
+      reportOverlapViolation(overlap)
+      return
+    }
+    await commitTransaction({
+      id: newClientId('tx'),
+      type: 'milestone.create',
+      label: 'Create milestone',
+      before: { milestones: [], dependencies: [] },
+      after: { milestones: [ms], dependencies: [] },
+    })
+  }, [commitTransaction, reportDeadlineViolation, reportOverlapViolation])
 
   const handleGridDoubleClick = useCallback(e => {
     if (modeRef.current !== 'milestone') return
@@ -1651,13 +1896,26 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   // ── Column insert / delete ─────────────────────────────────────────────────
   const handleInsertDay = useCallback(async col => {
     const updates = []
-    const updated = milestonesRef.current.map(m => {
-      if (m.startCol >= col) { updates.push({ id: m.id, startCol: m.startCol + 1 }); return { ...m, startCol: m.startCol + 1 } }
-      return m
+    milestonesRef.current.forEach(m => {
+      if (m.startCol >= col) updates.push({ id: m.id, startCol: m.startCol + 1 })
     })
-    setMilestones(updated)
-    if (updates.length) { try { await api.batchUpdateMilestones(updates) } catch (e) { console.error(e) } }
-  }, [])
+    if (updates.length) {
+      const before = updates.map(u => milestonesRef.current.find(m => m.id === u.id)).filter(Boolean)
+      const after = before.map(m => ({ ...m, startCol: m.startCol + 1 }))
+      const tx = {
+        id: newClientId('tx'),
+        type: 'milestone.move-many',
+        label: 'Insert day',
+        before: { milestones: before, dependencies: [] },
+        after: { milestones: after, dependencies: [] },
+      }
+      const nextMilestones = milestonesRef.current.map(m => after.find(candidate => candidate.id === m.id) ?? m)
+      const overlap = getOverlapViolation(nextMilestones, new Set(before.map(m => m.id)))
+      if (overlap) { reportOverlapViolation(overlap); return }
+      if (maybeBlockDependencyWarning(nextMilestones, dependenciesRef.current)) return
+      await commitTransaction(tx)
+    }
+  }, [commitTransaction, maybeBlockDependencyWarning, reportOverlapViolation])
 
   const handleDeleteDay = useCallback(async col => {
     const updates = []
@@ -1673,40 +1931,82 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       }
       return m
     })
-    setMilestones(updated)
-    if (updates.length) { try { await api.batchUpdateMilestones(updates) } catch (e) { console.error(e) } }
-  }, [])
+    if (updates.length) {
+      const before = updates.map(u => milestonesRef.current.find(m => m.id === u.id)).filter(Boolean)
+      const after = before.map(m => updated.find(next => next.id === m.id)).filter(Boolean)
+      const tx = {
+        id: newClientId('tx'),
+        type: 'milestone.move-many',
+        label: 'Delete day',
+        before: { milestones: before, dependencies: [] },
+        after: { milestones: after, dependencies: [] },
+      }
+      const overlap = getOverlapViolation(updated, new Set(before.map(m => m.id)))
+      if (overlap) { reportOverlapViolation(overlap); return }
+      if (maybeBlockDependencyWarning(updated, dependenciesRef.current)) return
+      await commitTransaction(tx)
+    }
+  }, [commitTransaction, maybeBlockDependencyWarning, reportOverlapViolation])
 
   // ── Drag helpers ───────────────────────────────────────────────────────────
   function startMoveDrag(startMouseX, originals) {
     const sp = spacingRef.current
-    dragRef.current = { type: 'move', hasMoved: false, originals }
+    dragRef.current = { type: 'move', hasMoved: false, originals, lastValidColDelta: 0, blockedOverlap: null, hitBoundary: false }
     document.body.style.cursor = 'grabbing'
+
+    const getBounds = () => {
+      let minDelta = -Infinity
+      let maxDelta = Infinity
+      Object.entries(originals).forEach(([id, orig]) => {
+        minDelta = Math.max(minDelta, -orig.startCol)
+        const ms = milestonesRef.current.find(m => m.id === id)
+        const dl = deadlinesRef.current.find(d => d.goalId === ms?.goalId)
+        if (dl) maxDelta = Math.min(maxDelta, dl.col - orig.duration - orig.startCol)
+      })
+      return { minDelta, maxDelta }
+    }
 
     const getSnappedColDelta = clientX => {
       const rawDx = clientX - startMouseX
       const firstOrig = Object.values(originals)[0]
       if (!firstOrig) return 0
       let colDelta = snapPxToCol(firstOrig.startCol * sp.colW + rawDx, sp.colW) - firstOrig.startCol
-      Object.entries(originals).forEach(([id, orig]) => {
-        colDelta = Math.max(colDelta, -orig.startCol)
-        const ms = milestonesRef.current.find(m => m.id === id)
-        const dl = deadlinesRef.current.find(d => d.goalId === ms?.goalId)
-        if (dl) colDelta = Math.min(colDelta, dl.col - orig.duration - orig.startCol)
-      })
-      return colDelta
+      const { minDelta, maxDelta } = getBounds()
+      const clamped = Math.max(minDelta, Math.min(maxDelta, colDelta))
+      if (dragRef.current && clamped !== colDelta) dragRef.current.hitBoundary = true
+      return clamped
+    }
+
+    const buildMovedMilestones = colDelta => milestonesRef.current.map(m => {
+      if (!originals[m.id]) return m
+      return { ...m, startCol: originals[m.id].startCol + colDelta }
+    })
+
+    const getOverlapForDelta = colDelta => getOverlapViolation(
+      buildMovedMilestones(colDelta),
+      new Set(Object.keys(originals))
+    )
+
+    const getSafeColDelta = clientX => {
+      const colDelta = getSnappedColDelta(clientX)
+      const overlap = getOverlapForDelta(colDelta)
+      if (!overlap) {
+        if (dragRef.current) {
+          dragRef.current.lastValidColDelta = colDelta
+          dragRef.current.blockedOverlap = null
+        }
+        return colDelta
+      }
+      if (dragRef.current) dragRef.current.blockedOverlap = overlap
+      return dragRef.current?.lastValidColDelta ?? 0
     }
 
     const getLiveDx = clientX => {
       const rawDx = clientX - startMouseX
-      let dx = rawDx
-      Object.entries(originals).forEach(([id, orig]) => {
-        dx = Math.max(dx, -orig.startCol * sp.colW)
-        const ms = milestonesRef.current.find(m => m.id === id)
-        const dl = deadlinesRef.current.find(d => d.goalId === ms?.goalId)
-        if (dl) dx = Math.min(dx, (dl.col - orig.duration - orig.startCol) * sp.colW)
-      })
-      return dx
+      const firstOrig = Object.values(originals)[0]
+      if (!firstOrig) return rawDx
+      const colDelta = getSafeColDelta(clientX)
+      return colDelta * sp.colW
     }
 
     const onMove = e => {
@@ -1727,11 +2027,22 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
       document.body.style.cursor = ''
-      const { hasMoved } = dragRef.current || {}
+      const { hasMoved, blockedOverlap, hitBoundary } = dragRef.current || {}
       dragRef.current = null
       if (!hasMoved) return
 
       const colDelta = getSnappedColDelta(e.clientX)
+      const finalOverlap = blockedOverlap || getOverlapForDelta(colDelta)
+      if (finalOverlap) {
+        Object.entries(originals).forEach(([id, orig]) => {
+          const el = milestoneElsRef.current.get(id)
+          if (el) el.style.left = `${orig.startCol * sp.colW}px`
+        })
+        updateDependencyPaths()
+        reportOverlapViolation(finalOverlap)
+        return
+      }
+      if (hitBoundary) reportDeadlineViolation()
       const updates = []
       const next = milestonesRef.current.map(m => {
         if (!originals[m.id]) return m
@@ -1743,10 +2054,19 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       })
       if (updates.length) {
         const applyMove = async () => {
-          setMilestones(next)
-          await api.batchUpdateMilestones(updates)
+          const before = Object.entries(originals)
+            .map(([id]) => milestonesRef.current.find(m => m.id === id))
+            .filter(Boolean)
+          const after = before.map(m => next.find(candidate => candidate.id === m.id)).filter(Boolean)
+          await commitTransaction({
+            id: newClientId('tx'),
+            type: before.length > 1 ? 'milestone.move-many' : 'milestone.move',
+            label: before.length > 1 ? 'Move milestones' : 'Move milestone',
+            before: { milestones: before, dependencies: [] },
+            after: { milestones: after, dependencies: [] },
+          })
         }
-        const blocked = maybeBlockDependencyWarning(next, dependenciesRef.current, applyMove)
+        const blocked = maybeBlockDependencyWarning(next, dependenciesRef.current)
         if (blocked) {
           Object.entries(originals).forEach(([id, orig]) => {
             const el = milestoneElsRef.current.get(id)
@@ -1775,29 +2095,46 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     if (!ms) return
     const origStart = ms.startCol; const origDur = ms.duration
     const origRight = origStart + origDur
-    dragRef.current = { type: `resize-${side}` }
+    dragRef.current = { type: `resize-${side}`, blockedOverlap: null, hitBoundary: false, lastValid: { startCol: origStart, duration: origDur } }
     document.body.style.cursor = 'col-resize'
 
     const getSnappedResize = clientX => {
       const dx = clientX - startMouseX
+      const dl = deadlinesRef.current.find(d => d.goalId === ms.goalId)
+      const maxRight = dl?.col ?? Infinity
       if (side === 'left') {
-        const leftCol = Math.min(origRight - 1, Math.max(0, snapPxToCol(origStart * sp.colW + dx, sp.colW)))
+        const requested = snapPxToCol(origStart * sp.colW + dx, sp.colW)
+        const leftCol = Math.min(origRight - 1, Math.max(0, requested))
+        if (dragRef.current && leftCol !== requested) dragRef.current.hitBoundary = true
         return { startCol: leftCol, duration: origRight - leftCol }
       }
-      const rightCol = Math.max(origStart + 1, snapPxToCol(origRight * sp.colW + dx, sp.colW))
+      const requested = snapPxToCol(origRight * sp.colW + dx, sp.colW)
+      const rightCol = Math.min(maxRight, Math.max(origStart + 1, requested))
+      if (dragRef.current && rightCol !== requested) dragRef.current.hitBoundary = true
       return { startCol: origStart, duration: rightCol - origStart }
     }
 
-    const getLiveResize = clientX => {
-      const dx = clientX - startMouseX
-      const origLeftPx = origStart * sp.colW
-      const origRightPx = origRight * sp.colW
-      if (side === 'left') {
-        const leftPx = Math.min(origRightPx - sp.colW, Math.max(0, origLeftPx + dx))
-        return { leftPx, widthPx: origRightPx - leftPx }
+    const buildResizedMilestones = next => milestonesRef.current.map(m =>
+      m.id === milestoneId ? { ...m, startCol: next.startCol, duration: next.duration } : m
+    )
+
+    const getSafeResize = clientX => {
+      const next = getSnappedResize(clientX)
+      const overlap = getOverlapViolation(buildResizedMilestones(next), new Set([milestoneId]))
+      if (!overlap) {
+        if (dragRef.current) {
+          dragRef.current.lastValid = next
+          dragRef.current.blockedOverlap = null
+        }
+        return next
       }
-      const rightPx = Math.max(origLeftPx + sp.colW, origRightPx + dx)
-      return { leftPx: origLeftPx, widthPx: rightPx - origLeftPx }
+      if (dragRef.current) dragRef.current.blockedOverlap = overlap
+      return dragRef.current?.lastValid ?? { startCol: origStart, duration: origDur }
+    }
+
+    const getLiveResize = clientX => {
+      const next = getSafeResize(clientX)
+      return { leftPx: next.startCol * sp.colW, widthPx: next.duration * sp.colW }
     }
 
     const onMove = e => {
@@ -1817,17 +2154,40 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
       document.body.style.cursor = ''
-      dragRef.current = null
 
+      const dragState = dragRef.current || {}
+      dragRef.current = null
       const { startCol: newStart, duration: newDur } = getSnappedResize(e.clientX)
+      const finalOverlap = dragState.blockedOverlap || getOverlapViolation(
+        buildResizedMilestones({ startCol: newStart, duration: newDur }),
+        new Set([milestoneId])
+      )
+      if (finalOverlap) {
+        const el = milestoneElsRef.current.get(milestoneId)
+        if (el) {
+          el.style.left = `${origStart * sp.colW}px`
+          el.style.width = `${origDur * sp.colW}px`
+        }
+        updateDependencyPaths()
+        reportOverlapViolation(finalOverlap)
+        return
+      }
+      if (dragState.hitBoundary) reportDeadlineViolation()
       const changed = newStart !== origStart || newDur !== origDur
       const nextAll = milestonesRef.current.map(m => m.id === milestoneId ? { ...m, startCol: newStart, duration: newDur } : m)
       if (changed) {
         const applyResize = async () => {
-          setMilestones(nextAll)
-          await api.updateMilestone(milestoneId, { startCol: newStart, duration: newDur })
+          const current = milestonesRef.current.find(m => m.id === milestoneId)
+          const next = nextAll.find(m => m.id === milestoneId)
+          await commitTransaction({
+            id: newClientId('tx'),
+            type: 'milestone.resize',
+            label: 'Resize milestone',
+            before: { milestones: current ? [current] : [], dependencies: [] },
+            after: { milestones: next ? [next] : [], dependencies: [] },
+          })
         }
-        const blocked = maybeBlockDependencyWarning(nextAll, dependenciesRef.current, applyResize)
+        const blocked = maybeBlockDependencyWarning(nextAll, dependenciesRef.current)
         if (blocked) {
           const el = milestoneElsRef.current.get(milestoneId)
           if (el) {
@@ -1906,16 +2266,21 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     if (!fromId || !toId || fromId === toId) return
     if (hasCycle(fromId, toId, dependenciesRef.current)) return
     if (dependenciesRef.current.some(d => d.fromId === fromId && d.toId === toId)) return
-    const pendingDep = { id: `pending-${fromId}-${toId}`, fromId, toId }
+    const pendingDep = { id: newClientId('dep'), fromId, toId, reason: '' }
     const nextDependencies = [...dependenciesRef.current, pendingDep]
     const applyDependency = async () => {
-      const dep = await api.createDependency({ from_id: fromId, to_id: toId })
-      setDependencies(prev => [...prev, dep])
+      await commitTransaction({
+        id: newClientId('tx'),
+        type: 'dependency.create',
+        label: 'Create dependency',
+        before: { milestones: [], dependencies: [] },
+        after: { milestones: [], dependencies: [pendingDep] },
+      })
     }
-    const blocked = maybeBlockDependencyWarning(milestonesRef.current, nextDependencies, applyDependency)
+    const blocked = maybeBlockDependencyWarning(milestonesRef.current, nextDependencies)
     if (blocked) return
     try { await applyDependency() } catch (err) { console.error(err) }
-  }, [maybeBlockDependencyWarning])
+  }, [commitTransaction, maybeBlockDependencyWarning])
 
   const updatePreviewArrow = useCallback((sourceId, clientX, clientY) => {
     const rect = gridBodyRef.current?.getBoundingClientRect()
@@ -2015,6 +2380,20 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     setDeleteDraft({ items: [{ key: `dependency:${depId}`, type: 'dependency', id: depId, label, checked: true }] })
   }, [])
 
+  const handleDeleteWarningConstraint = useCallback(async () => {
+    const dependencyIds = warningPrompt?.dependencyIds ?? []
+    const depsToDelete = dependenciesRef.current.filter(d => dependencyIds.includes(d.id))
+    setWarningPrompt(null)
+    if (depsToDelete.length === 0) return
+    await commitTransaction({
+      id: newClientId('tx'),
+      type: depsToDelete.length > 1 ? 'dependency.delete-many' : 'dependency.delete',
+      label: 'Delete constraint',
+      before: { milestones: [], dependencies: depsToDelete },
+      after: { milestones: [], dependencies: [] },
+    })
+  }, [commitTransaction, warningPrompt])
+
   const handleEditDepReason = useCallback((depId, currentReason) => {
     setReasonDraft(currentReason || '')
     setReasonModal({ depId })
@@ -2023,12 +2402,20 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const handleSaveDepReason = useCallback(async () => {
     if (!reasonModal) return
     const reason = reasonDraft.trim()
+    const current = dependenciesRef.current.find(d => d.id === reasonModal.depId)
+    if (!current) { setReasonModal(null); return }
+    const next = { ...current, reason }
     try {
-      await api.updateDependencyReason(reasonModal.depId, reason)
-      setDependencies(prev => prev.map(d => d.id === reasonModal.depId ? { ...d, reason } : d))
+      await commitTransaction({
+        id: newClientId('tx'),
+        type: 'dependency.update',
+        label: 'Update dependency',
+        before: { milestones: [], dependencies: [current] },
+        after: { milestones: [], dependencies: [next] },
+      })
     } catch (err) { console.error(err) }
     setReasonModal(null)
-  }, [reasonModal, reasonDraft])
+  }, [commitTransaction, reasonModal, reasonDraft])
 
   const buildDeleteItems = useCallback(() => {
     const milestoneIds = [...selectedIdsRef.current]
@@ -2084,22 +2471,23 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     const dependencySet = new Set(dependencyIds)
     const depsToDelete = dependenciesRef.current
       .filter(d => dependencySet.has(d.id) || milestoneSet.has(d.fromId) || milestoneSet.has(d.toId))
-      .map(d => d.id)
-
-    setMilestones(prev => prev.filter(m => !milestoneSet.has(m.id)))
-    setDependencies(prev => prev.filter(d => !depsToDelete.includes(d.id)))
-    setDeadlines(prev => prev.filter(d => !milestoneSet.has(d.goalId)))
-    setSelectedIds(new Set())
-    setSelectedDepIds(new Set())
-    setDeleteDraft(null)
+    const milestonesToDelete = milestonesRef.current.filter(m => milestoneSet.has(m.id))
 
     try {
-      await Promise.all([
-        ...depsToDelete.map(id => api.deleteDependency(id)),
-        ...milestoneIds.map(id => api.deleteMilestone(id)),
-      ])
+      const ok = await commitTransaction({
+        id: newClientId('tx'),
+        type: milestonesToDelete.length > 1 || depsToDelete.length > 1 ? 'delete-many' : milestonesToDelete.length ? 'milestone.delete' : 'dependency.delete',
+        label: checked.length > 1 ? 'Delete selected items' : `Delete ${checked[0].type}`,
+        before: { milestones: milestonesToDelete, dependencies: depsToDelete },
+        after: { milestones: [], dependencies: [] },
+      })
+      if (ok) {
+        setSelectedIds(new Set())
+        setSelectedDepIds(new Set())
+        setDeleteDraft(null)
+      }
     } catch (err) { console.error(err) }
-  }, [deleteDraft])
+  }, [commitTransaction, deleteDraft])
 
   useEffect(() => {
     if (!isActive) return
@@ -2159,6 +2547,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     hiddenCatIds, hiddenGoalsByLane, hideCrossCatDeps, leftPanelWidth,
     quickFilters, showDepLabels, showDeps, spacing,
   ])
+  capturePerspectiveStateRef.current = capturePerspectiveState
 
   const applyPerspective = useCallback(perspective => {
     const state = perspective?.state ?? {}
@@ -2195,6 +2584,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       setScrollLeft(scrollLeftRef.current)
     })
   }, [activeDimId, activeLaneFilterId, colorDimId])
+  applyPerspectiveRef.current = applyPerspective
 
   const createPerspective = useCallback(async name => {
     try {
@@ -2411,16 +2801,20 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         savedFilters={savedFilters}
         activeLaneFilterId={activeLaneFilterId}
         onLaneGroupChange={handleLaneGroupChange}
-        warningPopupsEnabled={warningPopupsEnabled}
-        onWarningPopupsEnabledChange={setWarningPopupsEnabled}
         canDeleteSelection={selectedIds.size > 0 || selectedDepIds.size > 0}
         onDeleteSelection={handleRequestDeleteSelection}
+        canUndo={transactionHistory.undo.length > 0}
+        canRedo={transactionHistory.redo.length > 0}
+        onUndo={undoGanttTransaction}
+        onRedo={redoGanttTransaction}
         spacing={spacing} onSpacingChange={handleSpacingChange}
         mode={mode} onModeChange={setMode}
         axisMode={axisMode} onAxisModeChange={setAxisMode}
         showDepLabels={showDepLabels} onShowDepLabelsChange={setShowDepLabels}
         showDeps={showDeps} onShowDepsChange={setShowDeps}
         hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={setHideCrossCatDeps}
+        autoSelectConflicts={autoSelectConflicts}
+        onAutoSelectConflictsChange={setAutoSelectConflicts}
       />
 
       <div className={styles.canvasRow}>
@@ -2732,6 +3126,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
               const row = goalRowMap[m.goalId]; if (!row) return null
               const isSelected  = selectedIds.has(m.id)
               const isViolating = violationIds.has(m.id)
+              const isBlinking  = blinkingMilestoneIds.has(m.id)
               const isDepMode   = mode === 'dependency'
               const isSource    = drawingState?.fromId === m.id
               return (
@@ -2742,6 +3137,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
                     styles.milestone,
                     isSelected  && styles.milestoneSelected,
                     isViolating && styles.milestoneViolation,
+                    isBlinking  && styles.milestoneBlink,
                     isDepMode   && styles.milestoneDepMode,
                   ].filter(Boolean).join(' ')}
                   style={{
@@ -2823,6 +3219,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
                 const cp = Math.max(40, Math.abs(x2 - x1) * 0.45)
                 const isViol = violationIds.has(dep.toId)
                 const isSelected = selectedDepIds.has(dep.id)
+                const isBlinking = blinkingDepIds.has(dep.id)
                 const midX = (x1 + x2) / 2
                 const midY = (y1 + y2) / 2
                 const depColor = isViol ? '#ef4444' : '#555'
@@ -2864,7 +3261,11 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
                     {/* Visual path — pointer-events none, purely decorative */}
                     <path
                       ref={el => { el ? depPathElsRef.current.set(dep.id, el) : depPathElsRef.current.delete(dep.id) }}
-                      className={`${styles.depPath} ${isSelected ? styles.depPathSelected : ''}`}
+                      className={[
+                        styles.depPath,
+                        isSelected && styles.depPathSelected,
+                        isBlinking && styles.depPathBlink,
+                      ].filter(Boolean).join(' ')}
                       d={pathD}
                       stroke={depColor} strokeWidth="1.5" fill="none"
                       strokeOpacity="0.8"
@@ -2939,23 +3340,24 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
       {warningPrompt && (
         <div className={styles.warningPrompt} role="alertdialog" aria-modal="true">
-          <div className={styles.warningPromptTitle}>Dependency warning</div>
+          <div className={styles.warningPromptTitle}>{warningPrompt.title ?? 'Dependency warning'}</div>
           <div className={styles.warningPromptText}>
-            This change would make {warningPrompt.count} milestone{warningPrompt.count === 1 ? '' : 's'} violate dependency timing.
+            {warningPrompt.message ??
+              `This change would make ${warningPrompt.count} milestone${warningPrompt.count === 1 ? '' : 's'} violate dependency timing.`}
           </div>
           <div className={styles.warningPromptActions}>
-            <button className={styles.warningIgnoreBtn} onClick={async () => {
-              const apply = warningPrompt.apply
-              setWarningPrompt(null)
-              await apply?.()
-            }}>
-              Ignore warning
-            </button>
             <button className={styles.warningUndoBtn} onClick={() => {
               setWarningPrompt(null)
             }}>
-              Undo
+              {warningPrompt.actions === 'dependency' ? 'Undo' : 'Close'}
             </button>
+            {warningPrompt.actions === 'dependency' && (
+              <button
+                className={styles.warningIgnoreBtn}
+                onClick={handleDeleteWarningConstraint}>
+                Delete constraint
+              </button>
+            )}
           </div>
         </div>
       )}

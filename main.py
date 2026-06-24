@@ -6,7 +6,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 DB_PATH = "goals.db"
 
@@ -116,6 +116,18 @@ def _init_db():
                 state_json TEXT NOT NULL DEFAULT '{}'
             )
         """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS transaction_history (
+                id               TEXT PRIMARY KEY,
+                project_id       TEXT NOT NULL DEFAULT 'default',
+                stack            TEXT NOT NULL CHECK (stack IN ('undo', 'redo')),
+                seq              INTEGER NOT NULL,
+                transaction_json TEXT NOT NULL,
+                before_json      TEXT NOT NULL,
+                after_json       TEXT NOT NULL,
+                created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
 _init_db()
 
@@ -149,6 +161,18 @@ def _migrate():
         dep_cols = [r[1] for r in con.execute("PRAGMA table_info(dependencies)").fetchall()]
         if 'reason' not in dep_cols:
             con.execute("ALTER TABLE dependencies ADD COLUMN reason TEXT NOT NULL DEFAULT ''")
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS transaction_history (
+                id               TEXT PRIMARY KEY,
+                project_id       TEXT NOT NULL DEFAULT 'default',
+                stack            TEXT NOT NULL CHECK (stack IN ('undo', 'redo')),
+                seq              INTEGER NOT NULL,
+                transaction_json TEXT NOT NULL,
+                before_json      TEXT NOT NULL,
+                after_json       TEXT NOT NULL,
+                created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
 _migrate()
 
@@ -225,6 +249,7 @@ class MilestoneBatch(BaseModel):
     updates: list[dict]
 
 class DependencyIn(BaseModel):
+    id: Optional[str] = None
     from_id: str
     to_id: str
     reason: Optional[str] = ''
@@ -267,6 +292,16 @@ class ClassificationPerspectiveIn(BaseModel):
 class ClassificationPerspectivePatch(BaseModel):
     name: Optional[str] = None
     state: Optional[dict] = None
+
+class TransactionPayload(BaseModel):
+    id: Optional[str] = None
+    type: str
+    label: Optional[str] = None
+    before: dict = Field(default_factory=dict)
+    after: dict = Field(default_factory=dict)
+
+class TransactionApplyIn(BaseModel):
+    transaction: TransactionPayload
 
 
 # ── Helper converters ─────────────────────────────────────────────────────────
@@ -338,6 +373,261 @@ def _normalize_filter_payload(data) -> tuple[str, str, str | None]:
         if ids:
             selections[dim_id] = ids
     return gate, json.dumps(selections), data.quickKey
+
+HISTORY_LIMIT = 20
+DEFAULT_PROJECT_ID = "default"
+
+def _milestone_from_api(data: dict) -> dict:
+    return {
+        "id": data["id"],
+        "goalId": data["goalId"],
+        "startCol": int(data.get("startCol", 0)),
+        "duration": max(1, int(data.get("duration", 1))),
+        "title": data.get("title", ""),
+        "color": data.get("color", "#1a73e8"),
+    }
+
+def _dependency_from_api(data: dict) -> dict:
+    return {
+        "id": data["id"],
+        "fromId": data["fromId"],
+        "toId": data["toId"],
+        "reason": data.get("reason", "") or "",
+    }
+
+def _normalize_tx_state(state: dict) -> dict:
+    return {
+        "milestones": [_milestone_from_api(m) for m in state.get("milestones", [])],
+        "dependencies": [_dependency_from_api(d) for d in state.get("dependencies", [])],
+    }
+
+def _ms_by_id(con, ids: set[str]) -> dict[str, dict]:
+    if not ids:
+        return {}
+    rows = con.execute(
+        f"SELECT * FROM milestones WHERE id IN ({','.join('?' for _ in ids)})",
+        tuple(ids),
+    ).fetchall()
+    return {row["id"]: _ms(row) for row in rows}
+
+def _deps_by_id(con, ids: set[str]) -> dict[str, dict]:
+    if not ids:
+        return {}
+    rows = con.execute(
+        f"SELECT * FROM dependencies WHERE id IN ({','.join('?' for _ in ids)})",
+        tuple(ids),
+    ).fetchall()
+    return {row["id"]: _dep(row) for row in rows}
+
+def _state_ids(state: dict, key: str) -> set[str]:
+    return {item["id"] for item in state.get(key, []) if item.get("id")}
+
+def _json_equal(left, right) -> bool:
+    return json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True)
+
+def _assert_before_matches(con, before: dict, after: dict):
+    ms_ids = _state_ids(before, "milestones") | _state_ids(after, "milestones")
+    dep_ids = _state_ids(before, "dependencies") | _state_ids(after, "dependencies")
+    current_ms = _ms_by_id(con, ms_ids)
+    current_deps = _deps_by_id(con, dep_ids)
+
+    for item in before["milestones"]:
+        if not _json_equal(current_ms.get(item["id"]), item):
+            raise HTTPException(409, {"message": "Milestone changed before transaction applied", "id": item["id"]})
+    for item in before["dependencies"]:
+        if not _json_equal(current_deps.get(item["id"]), item):
+            raise HTTPException(409, {"message": "Dependency changed before transaction applied", "id": item["id"]})
+
+    before_ms_ids = _state_ids(before, "milestones")
+    before_dep_ids = _state_ids(before, "dependencies")
+    for item in after["milestones"]:
+        if item["id"] not in before_ms_ids and item["id"] in current_ms:
+            raise HTTPException(409, {"message": "Milestone already exists", "id": item["id"]})
+    for item in after["dependencies"]:
+        if item["id"] not in before_dep_ids and item["id"] in current_deps:
+            raise HTTPException(409, {"message": "Dependency already exists", "id": item["id"]})
+
+def _assert_final_state_valid(con, before: dict, after: dict):
+    touched_ms = _state_ids(before, "milestones") | _state_ids(after, "milestones")
+    touched_deps = _state_ids(before, "dependencies") | _state_ids(after, "dependencies")
+    final_ms = {
+        row["id"]: _ms(row)
+        for row in con.execute("SELECT * FROM milestones").fetchall()
+        if row["id"] not in touched_ms
+    }
+    final_deps = {
+        row["id"]: _dep(row)
+        for row in con.execute("SELECT * FROM dependencies").fetchall()
+        if row["id"] not in touched_deps
+    }
+    final_ms.update({m["id"]: m for m in after["milestones"]})
+    final_deps.update({d["id"]: d for d in after["dependencies"]})
+
+    for milestone in final_ms.values():
+        if milestone["startCol"] < 0 or milestone["duration"] < 1:
+            raise HTTPException(422, {"message": "Milestones must have a non-negative start and positive duration", "id": milestone["id"]})
+
+    by_goal = {}
+    for milestone in final_ms.values():
+        by_goal.setdefault(milestone["goalId"], []).append(milestone)
+    for lane_milestones in by_goal.values():
+        for i, first in enumerate(lane_milestones):
+            for second in lane_milestones[i + 1:]:
+                if first["startCol"] < second["startCol"] + second["duration"] and second["startCol"] < first["startCol"] + first["duration"]:
+                    raise HTTPException(422, {
+                        "message": "Milestones in the same goal row cannot overlap",
+                        "type": "overlap",
+                        "milestoneIds": [first["id"], second["id"]],
+                    })
+
+    deadlines = {row["goal_id"]: row["col"] for row in con.execute("SELECT goal_id, col FROM deadlines").fetchall()}
+    for milestone in final_ms.values():
+        deadline = deadlines.get(milestone["goalId"])
+        if deadline is not None and milestone["startCol"] + milestone["duration"] > deadline:
+            raise HTTPException(422, {"message": "Milestone exceeds hard deadline", "type": "deadline", "id": milestone["id"]})
+
+    pairs = set()
+    adjacency = {}
+    for dep in final_deps.values():
+        if dep["fromId"] == dep["toId"]:
+            raise HTTPException(422, {"message": "Dependency cannot point to itself", "id": dep["id"]})
+        if dep["fromId"] not in final_ms or dep["toId"] not in final_ms:
+            raise HTTPException(422, {"message": "Dependency endpoint is missing", "id": dep["id"]})
+        pair = (dep["fromId"], dep["toId"])
+        if pair in pairs:
+            raise HTTPException(409, {"message": "Dependency already exists", "id": dep["id"]})
+        if final_ms[dep["fromId"]]["startCol"] + final_ms[dep["fromId"]]["duration"] > final_ms[dep["toId"]]["startCol"]:
+            raise HTTPException(422, {
+                "message": "A predecessor milestone must finish before its successor starts",
+                "type": "dependency",
+                "dependencyIds": [dep["id"]],
+                "milestoneIds": [dep["fromId"], dep["toId"]],
+            })
+        pairs.add(pair)
+        adjacency.setdefault(dep["fromId"], []).append(dep["toId"])
+
+    visiting, visited = set(), set()
+    def visit(node):
+        if node in visiting:
+            return True
+        if node in visited:
+            return False
+        visiting.add(node)
+        for child in adjacency.get(node, []):
+            if visit(child):
+                return True
+        visiting.remove(node)
+        visited.add(node)
+        return False
+
+    for node in list(adjacency):
+        if visit(node):
+            raise HTTPException(422, {"message": "Dependency cycle detected"})
+
+def _apply_transaction_rows(con, before: dict, after: dict):
+    before_ms = {m["id"]: m for m in before["milestones"]}
+    after_ms = {m["id"]: m for m in after["milestones"]}
+    before_deps = {d["id"]: d for d in before["dependencies"]}
+    after_deps = {d["id"]: d for d in after["dependencies"]}
+
+    for dep_id in before_deps.keys() - after_deps.keys():
+        con.execute("DELETE FROM dependencies WHERE id = ?", (dep_id,))
+    for ms_id in before_ms.keys() - after_ms.keys():
+        con.execute("DELETE FROM dependencies WHERE from_id = ? OR to_id = ?", (ms_id, ms_id))
+        con.execute("DELETE FROM milestones WHERE id = ?", (ms_id,))
+    for m in after_ms.values():
+        if m["id"] in before_ms:
+            con.execute(
+                "UPDATE milestones SET goal_id = ?, start_col = ?, duration = ?, title = ?, color = ? WHERE id = ?",
+                (m["goalId"], m["startCol"], m["duration"], m["title"], m["color"], m["id"]),
+            )
+        else:
+            con.execute(
+                "INSERT INTO milestones (id, goal_id, start_col, duration, title, color) VALUES (?,?,?,?,?,?)",
+                (m["id"], m["goalId"], m["startCol"], m["duration"], m["title"], m["color"]),
+            )
+    for d in after_deps.values():
+        if d["id"] in before_deps:
+            con.execute(
+                "UPDATE dependencies SET from_id = ?, to_id = ?, reason = ? WHERE id = ?",
+                (d["fromId"], d["toId"], d["reason"], d["id"]),
+            )
+        else:
+            con.execute(
+                "INSERT INTO dependencies (id, from_id, to_id, reason) VALUES (?, ?, ?, ?)",
+                (d["id"], d["fromId"], d["toId"], d["reason"]),
+            )
+
+def _push_history(con, transaction: dict, before: dict, after: dict):
+    con.execute(
+        "DELETE FROM transaction_history WHERE project_id = ? AND stack = 'redo'",
+        (DEFAULT_PROJECT_ID,),
+    )
+    seq = con.execute(
+        "SELECT COALESCE(MAX(seq), 0) + 1 FROM transaction_history WHERE project_id = ? AND stack = 'undo'",
+        (DEFAULT_PROJECT_ID,),
+    ).fetchone()[0]
+    con.execute(
+        """
+        INSERT INTO transaction_history (id, project_id, stack, seq, transaction_json, before_json, after_json)
+        VALUES (?, ?, 'undo', ?, ?, ?, ?)
+        """,
+        (transaction["id"], DEFAULT_PROJECT_ID, seq, json.dumps(transaction), json.dumps(before), json.dumps(after)),
+    )
+    overflow = con.execute(
+        """
+        SELECT id FROM transaction_history
+        WHERE project_id = ? AND stack = 'undo'
+        ORDER BY seq DESC LIMIT -1 OFFSET ?
+        """,
+        (DEFAULT_PROJECT_ID, HISTORY_LIMIT),
+    ).fetchall()
+    if overflow:
+        con.execute(
+            f"DELETE FROM transaction_history WHERE id IN ({','.join('?' for _ in overflow)})",
+            tuple(row["id"] for row in overflow),
+        )
+
+def _move_history_entry(con, row, target_stack: str):
+    seq = con.execute(
+        "SELECT COALESCE(MAX(seq), 0) + 1 FROM transaction_history WHERE project_id = ? AND stack = ?",
+        (DEFAULT_PROJECT_ID, target_stack),
+    ).fetchone()[0]
+    con.execute(
+        "UPDATE transaction_history SET stack = ?, seq = ? WHERE id = ?",
+        (target_stack, seq, row["id"]),
+    )
+
+def _history_summary(con) -> dict:
+    rows = con.execute(
+        "SELECT id, stack, seq, transaction_json FROM transaction_history WHERE project_id = ? ORDER BY stack, seq",
+        (DEFAULT_PROJECT_ID,),
+    ).fetchall()
+    undo, redo = [], []
+    for row in rows:
+        tx = json.loads(row["transaction_json"])
+        item = {"id": row["id"], "type": tx.get("type"), "label": tx.get("label"), "seq": row["seq"]}
+        if row["stack"] == "undo":
+            undo.append(item)
+        else:
+            redo.append(item)
+    undo.sort(key=lambda item: item["seq"])
+    redo.sort(key=lambda item: item["seq"])
+    return {"undo": undo, "redo": redo}
+
+def _apply_transaction(con, transaction: TransactionPayload, record_history: bool = True):
+    tx = transaction.dict()
+    tx["id"] = tx.get("id") or str(uuid.uuid4())
+    before = _normalize_tx_state(tx.get("before") or {})
+    after = _normalize_tx_state(tx.get("after") or {})
+    _assert_before_matches(con, before, after)
+    _assert_final_state_valid(con, before, after)
+    _apply_transaction_rows(con, before, after)
+    if record_history:
+        tx["before"] = before
+        tx["after"] = after
+        _push_history(con, tx, before, after)
+    return {"ok": True, "transaction": tx, "history": _history_summary(con)}
 
 
 # ── Pages (goals) ─────────────────────────────────────────────────────────────
@@ -701,6 +991,68 @@ def delete_classification_perspective(perspective_id: str):
         con.execute("DELETE FROM classification_perspectives WHERE id = ?", (perspective_id,))
 
 
+# ── Transactions ──────────────────────────────────────────────────────────────
+@app.get("/transactions/history")
+def get_transaction_history():
+    with _db() as con:
+        return _history_summary(con)
+
+@app.post("/transactions")
+def apply_transaction(data: TransactionApplyIn):
+    with _db() as con:
+        return _apply_transaction(con, data.transaction)
+
+@app.post("/transactions/undo")
+def undo_transaction():
+    with _db() as con:
+        row = con.execute(
+            """
+            SELECT * FROM transaction_history
+            WHERE project_id = ? AND stack = 'undo'
+            ORDER BY seq DESC LIMIT 1
+            """,
+            (DEFAULT_PROJECT_ID,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(409, "Nothing to undo")
+        transaction = json.loads(row["transaction_json"])
+        reverse = TransactionPayload(
+            id=str(uuid.uuid4()),
+            type=f"undo:{transaction.get('type', 'transaction')}",
+            label=f"Undo {transaction.get('label') or transaction.get('type') or 'transaction'}",
+            before=json.loads(row["after_json"]),
+            after=json.loads(row["before_json"]),
+        )
+        _apply_transaction(con, reverse, record_history=False)
+        _move_history_entry(con, row, "redo")
+        return {"ok": True, "transaction": transaction, "history": _history_summary(con)}
+
+@app.post("/transactions/redo")
+def redo_transaction():
+    with _db() as con:
+        row = con.execute(
+            """
+            SELECT * FROM transaction_history
+            WHERE project_id = ? AND stack = 'redo'
+            ORDER BY seq DESC LIMIT 1
+            """,
+            (DEFAULT_PROJECT_ID,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(409, "Nothing to redo")
+        transaction = json.loads(row["transaction_json"])
+        forward = TransactionPayload(
+            id=str(uuid.uuid4()),
+            type=f"redo:{transaction.get('type', 'transaction')}",
+            label=f"Redo {transaction.get('label') or transaction.get('type') or 'transaction'}",
+            before=json.loads(row["before_json"]),
+            after=json.loads(row["after_json"]),
+        )
+        _apply_transaction(con, forward, record_history=False)
+        _move_history_entry(con, row, "undo")
+        return {"ok": True, "transaction": transaction, "history": _history_summary(con)}
+
+
 # ── Milestones ────────────────────────────────────────────────────────────────
 @app.get("/milestones")
 def list_milestones():
@@ -766,7 +1118,7 @@ def list_dependencies():
 
 @app.post("/dependencies", status_code=201)
 def create_dependency(data: DependencyIn):
-    did = str(uuid.uuid4())
+    did = data.id or str(uuid.uuid4())
     reason = data.reason or ''
     with _db() as con:
         try:

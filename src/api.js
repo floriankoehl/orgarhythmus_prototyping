@@ -6,7 +6,20 @@ async function req(method, path, body) {
     headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
-  if (!res.ok) throw new Error(`${method} ${path} → ${res.status}`)
+  if (!res.ok) {
+    let detail = ''
+    let rawDetail = null
+    try {
+      const data = await res.json()
+      rawDetail = data.detail
+      detail = typeof data.detail === 'string'
+        ? data.detail
+        : data.detail?.message || JSON.stringify(data.detail)
+    } catch {}
+    const err = new Error(detail || `${method} ${path} → ${res.status}`)
+    err.detail = rawDetail
+    throw err
+  }
   if (res.status === 204) return null
   return res.json()
 }
@@ -62,6 +75,12 @@ export const api = {
   updateMilestone:       (id, patch) => req('PATCH', `/milestones/${id}`, patch),
   deleteMilestone:       (id)      => req('DELETE', `/milestones/${id}`),
   batchUpdateMilestones: (updates) => req('PUT',    '/milestones/batch', { updates }),
+
+  // Gantt transactions
+  getTransactionHistory: ()            => req('GET',  '/transactions/history'),
+  applyTransaction:     (transaction)  => req('POST', '/transactions', { transaction }),
+  undoTransaction:      ()             => req('POST', '/transactions/undo'),
+  redoTransaction:      ()             => req('POST', '/transactions/redo'),
 
   // Dependencies
   getDependencies:       ()         => req('GET',    '/dependencies'),
