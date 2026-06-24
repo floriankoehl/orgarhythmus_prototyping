@@ -146,14 +146,16 @@ export default function App() {
       document.body.style.userSelect = ''
     }
 
+    const isPageGesture = e => (e.buttons & 3) === 3
+
     const onMouseDown = e => {
-      if ((e.buttons & 3) !== 3) return
+      if (!isPageGesture(e)) return
       beginGesture(e)
       swallowGestureEvent(e)
     }
 
     const onMouseMove = e => {
-      if ((e.buttons & 3) === 3) {
+      if (isPageGesture(e)) {
         if (!navGestureRef.current.active) beginGesture(e)
         updateGesture(e)
         swallowGestureEvent(e)
@@ -172,7 +174,6 @@ export default function App() {
         swallowGestureEvent(e)
       }
     }
-
     document.addEventListener('mousedown', onMouseDown, true)
     document.addEventListener('mousemove', onMouseMove, true)
     document.addEventListener('mouseup', onMouseUp, true)

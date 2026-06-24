@@ -2316,6 +2316,29 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   // ── Grid mouse-down (marquee / deselect) ──────────────────────────────────
   const handleGridMouseDown = useCallback(e => {
+    if (e.button === 1 && e.ctrlKey) {
+      e.preventDefault()
+      e.stopPropagation()
+      const el = gridBodyRef.current
+      if (!el) return
+      const startX = e.clientX
+      const startScrollLeft = el.scrollLeft
+      document.body.style.cursor = 'ew-resize'
+      document.body.style.userSelect = 'none'
+      const onMove = mv => {
+        el.scrollLeft = Math.max(0, startScrollLeft - (mv.clientX - startX))
+      }
+      const onUp = up => {
+        up.preventDefault()
+        document.removeEventListener('mousemove', onMove)
+        document.removeEventListener('mouseup', onUp)
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+      }
+      document.addEventListener('mousemove', onMove)
+      document.addEventListener('mouseup', onUp)
+      return
+    }
     if (e.button !== 0) return
     setContextMenu(null)
     // In dep mode: any background click cancels in-progress arrow drawing
@@ -2610,6 +2633,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
           onMouseLeave={handleMouseLeave}
           onMouseDown={handleGridMouseDown}
           onDoubleClick={handleGridDoubleClick}
+          onAuxClick={e => { if (e.button === 1 && e.ctrlKey) e.preventDefault() }}
           onContextMenu={handleContextMenu}>
 
           <div ref={gridInnerRef} className={styles.gridInner}
