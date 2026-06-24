@@ -83,6 +83,15 @@ export default function App() {
     setRefreshKey(k => k + 1)
   }
 
+  // Load goals on mount (and on refresh) — independent of DocumentCanvas
+  useEffect(() => {
+    api.getPages().then(data => { if (data.length > 0) setGoals(data) }).catch(console.error)
+  }, [])
+  useEffect(() => {
+    if (!refreshKey) return
+    api.getPages().then(data => { if (data.length > 0) setGoals(data) }).catch(console.error)
+  }, [refreshKey])
+
   const handleGoalCreated = (newGoal) => {
     const orderedIds = [newGoal.id, ...goals.map(g => g.id)]
     api.reorderPages(orderedIds).catch(console.error)
@@ -99,9 +108,13 @@ export default function App() {
       <div className={styles.slider} style={{ transform: `translateX(${-view * 100}vw)` }}>
 
         {/* View 0 — Brainstorming */}
-        <div className={styles.view}>
+        {/* <div className={styles.view}>
           <Toolbar />
           <DocumentCanvas onGoalsChange={setGoals} refreshKey={refreshKey} />
+        </div> */}
+        {/* View 3 — Flow (BrainstormV2) */}
+        <div className={styles.view}>
+          <BrainstormV2 goals={goals} onGoalCreated={handleGoalCreated} />
         </div>
 
         {/* View 1 — Classification */}
@@ -114,10 +127,7 @@ export default function App() {
           <SchedulePage goals={goals} isActive={view === 2} onGoalOpen={openGoalPopup} />
         </div>
 
-        {/* View 3 — Flow (BrainstormV2) */}
-        <div className={styles.view}>
-          <BrainstormV2 goals={goals} onGoalCreated={handleGoalCreated} />
-        </div>
+        
 
       </div>
 

@@ -3,7 +3,11 @@
   position: relative;
   width: 100%;
   height: 100%;
-  background: #0c0c0e;
+  background:
+    radial-gradient(ellipse 70% 60% at 50% 50%, rgba(26,115,232,0.04) 0%, transparent 100%),
+    radial-gradient(ellipse 100% 80% at 20% 80%, rgba(139,92,246,0.03) 0%, transparent 60%),
+    radial-gradient(ellipse 80% 70% at 80% 20%, rgba(34,197,94,0.03) 0%, transparent 60%),
+    #fff;
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -20,10 +24,10 @@
 
 .floatingGoal {
   position: absolute;
-  color: #ffffff;
+  color: #1a1a1a;
   font-family: Arial, sans-serif;
-  font-weight: 300;
-  letter-spacing: 0.03em;
+  font-weight: 400;
+  letter-spacing: 0.02em;
   white-space: nowrap;
   animation-iteration-count: infinite;
   animation-timing-function: ease-in-out;
@@ -84,26 +88,58 @@
   max-width: calc(100vw - 80px);
 }
 
-/* Subtle optional title field */
-.titleInput {
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  padding: 3px 0 5px;
-  font-size: 12px;
+/* Title row — sits above the editor card */
+.titleRow {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 2px;
+}
+
+.titleDisplay {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  flex: 1;
+}
+
+.titleText {
+  font-size: 15px;
+  font-family: Arial, sans-serif;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.titlePlaceholder {
+  font-size: 15px;
   font-family: Arial, sans-serif;
   font-weight: 400;
-  color: rgba(255, 255, 255, 0.35);
+  color: #ccc;
+  font-style: italic;
+}
+
+.editIcon {
+  opacity: 0;
+  color: #aaa;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+.titleDisplay:hover .editIcon { opacity: 1; }
+
+.titleEditInput {
+  flex: 1;
+  font-size: 15px;
+  font-family: Arial, sans-serif;
+  font-weight: 600;
+  color: #1a1a1a;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid #1a73e8;
   outline: none;
-  letter-spacing: 0.05em;
-  transition: border-color 0.2s, color 0.2s;
-  width: 100%;
+  padding: 2px 0;
 }
-.titleInput::placeholder { color: rgba(255, 255, 255, 0.13); }
-.titleInput:focus {
-  border-bottom-color: rgba(255, 255, 255, 0.25);
-  color: rgba(255, 255, 255, 0.55);
-}
+.titleEditInput::placeholder { color: #ccc; font-weight: 400; }
 
 /* Description editor */
 .editorWrap {
@@ -111,23 +147,56 @@
 }
 
 .editor {
-  min-height: 40px;
-  font-size: 28px;
+  min-height: 70px;
+  font-size: 16px;
   font-family: Arial, sans-serif;
-  font-weight: 200;
-  color: rgba(255, 255, 255, 0.82);
-  line-height: 1.45;
-  letter-spacing: 0.01em;
+  font-weight: 400;
+  color: #1a1a1a;
+  line-height: 1.55;
   outline: none;
-  caret-color: rgba(255, 255, 255, 0.5);
+  caret-color: #1a73e8;
   word-break: break-word;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  padding: 13px 15px;
+  box-sizing: border-box;
+  width: 100%;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.editor:focus {
+  border-color: #1a73e8;
+  box-shadow: 0 0 0 3px rgba(26,115,232,0.1);
 }
 .editor:empty::before {
   content: attr(data-placeholder);
-  color: rgba(255, 255, 255, 0.13);
+  color: #ccc;
   pointer-events: none;
   font-style: italic;
-  font-weight: 200;
+}
+
+/* ── Float-away ghost ────────────────────────────────────────────────────── */
+.floatGhost {
+  position: fixed;
+  pointer-events: none;
+  font-size: 16px;
+  font-family: Arial, sans-serif;
+  font-weight: 400;
+  color: #1a1a1a;
+  line-height: 1.55;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  padding: 13px 15px;
+  box-sizing: border-box;
+  z-index: 50;
+  animation: floatAway 0.65s cubic-bezier(0.2, 0.8, 0.4, 1) forwards;
+}
+
+@keyframes floatAway {
+  0%   { transform: translate(0,     0)    scale(1);    opacity: 1; }
+  30%  { transform: translate(10px, -30px) scale(0.97); opacity: 0.8; }
+  100% { transform: translate(25px, -120px) scale(0.88); opacity: 0; }
 }
 
 /* Headline word-click overlay */
@@ -139,14 +208,14 @@
 
 .wordBtn {
   position: absolute;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(26, 115, 232, 0.08);
+  border: 1px solid rgba(26, 115, 232, 0.3);
   border-radius: 3px;
   cursor: pointer;
   padding: 0;
   transition: background 0.1s;
 }
-.wordBtn:hover { background: rgba(255, 255, 255, 0.24); }
+.wordBtn:hover { background: rgba(26, 115, 232, 0.18); }
 
 /* Actions */
 .actions {
@@ -159,36 +228,37 @@
 .headlineBtn {
   font-size: 11px;
   font-family: Arial, sans-serif;
-  font-weight: 400;
-  color: rgba(255, 255, 255, 0.2);
+  font-weight: 500;
+  color: #bbb;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
+  border: 1px solid #e8e8e8;
+  border-radius: 5px;
   padding: 4px 10px;
   cursor: pointer;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
   transition: color 0.15s, border-color 0.15s;
 }
 .headlineBtn:hover {
-  color: rgba(255, 255, 255, 0.45);
-  border-color: rgba(255, 255, 255, 0.22);
+  color: #1a73e8;
+  border-color: #1a73e8;
 }
 .headlineBtnActive {
-  color: rgba(255, 255, 255, 0.6);
-  border-color: rgba(255, 255, 255, 0.35);
+  color: #1a73e8;
+  border-color: #1a73e8;
+  background: #e8f0fe;
 }
 
 .submitBtn {
   margin-left: auto;
   font-size: 11px;
   font-family: Arial, sans-serif;
-  font-weight: 400;
-  color: rgba(255, 255, 255, 0.18);
+  font-weight: 500;
+  color: #ccc;
   background: transparent;
   border: none;
   padding: 4px 0;
   cursor: pointer;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   transition: color 0.15s;
 }
-.submitBtn:hover { color: rgba(255, 255, 255, 0.5); }
+.submitBtn:hover { color: #1a73e8; }

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import styles from './Header.module.css'
 
-const PAGES = ['Brainstorming', 'Classification', 'Schedule', 'Flow']
+const PAGES = ['Flow', 'Classification', 'Schedule']
 
 export default function Header({ view, onNavigate, onQuickAdd }) {
   const [open, setOpen]         = useState(false)
