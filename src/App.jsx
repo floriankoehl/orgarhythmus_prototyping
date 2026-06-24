@@ -56,7 +56,13 @@ export default function App() {
   const viewRef = useRef(view)
   viewRef.current = view
 
-  const handleQuickAdd = async (text, customTitle = null) => {
+  const assignGoalCategories = async (goalId, selections = {}) => {
+    await Promise.all(Object.entries(selections)
+      .filter(([, catId]) => Boolean(catId))
+      .map(([dimId, catId]) => api.assign(goalId, dimId, catId)))
+  }
+
+  const handleQuickAdd = async (text, customTitle = null, categorySelections = {}) => {
     // Title: use explicit override if given, otherwise auto-derive from first 7 words
     const words = text.trim().split(/\s+/).filter(Boolean)
     const title = customTitle || words.slice(0, 7).join(' ') || 'Untitled'
@@ -64,6 +70,7 @@ export default function App() {
     const newGoal = { id: crypto.randomUUID(), html, title, collapsed: false }
     try {
       await api.createPage(newGoal)
+      await assignGoalCategories(newGoal.id, categorySelections)
       // Put it at the front by reordering on the backend
       const orderedIds = [newGoal.id, ...goals.map(g => g.id)]
       api.reorderPages(orderedIds).catch(console.error)

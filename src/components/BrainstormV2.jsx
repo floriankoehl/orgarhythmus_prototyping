@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import styles from './BrainstormV2.module.css'
 import { api } from '../api'
+import CategoryAssignmentPicker from './CategoryAssignmentPicker'
 
 const DRIFT_VARIANTS = 6
 
@@ -34,10 +35,21 @@ export default function BrainstormV2({ goals, onGoalCreated }) {
   const [headlineMode, setHeadlineMode] = useState(false)
   const [wordRects, setWordRects] = useState([])
   const [ghost, setGhost]         = useState(null)
+  const [dimensions, setDimensions] = useState([])
+  const [categories, setCategories] = useState([])
+  const [categorySelections, setCategorySelections] = useState({})
+  const [categoryPickerOpen, setCategoryPickerOpen] = useState(false)
 
   const editorRef     = useRef(null)
   const titleInputRef = useRef(null)
   const positionsRef  = useRef({})
+
+  const ensureCategoryData = () => {
+    if (dimensions.length || categories.length) return
+    Promise.all([api.getDimensions(), api.getAllCategories()])
+      .then(([dims, cats]) => { setDimensions(dims); setCategories(cats) })
+      .catch(console.error)
+  }
 
   // Focus + select-all when title edit activates
   useEffect(() => {
@@ -115,9 +127,16 @@ export default function BrainstormV2({ goals, onGoalCreated }) {
     setTitleManual(false)
     setEditingTitle(false)
     setHeadlineMode(false)
+    const selections = categorySelections
+    setCategorySelections({})
 
     const newGoal = { id: crypto.randomUUID(), html, title: finalTitle, collapsed: false }
-    api.createPage(newGoal).then(() => onGoalCreated?.(newGoal)).catch(console.error)
+    api.createPage(newGoal)
+      .then(() => Promise.all(Object.entries(selections)
+        .filter(([, catId]) => Boolean(catId))
+        .map(([dimId, catId]) => api.assign(newGoal.id, dimId, catId))))
+      .then(() => onGoalCreated?.(newGoal))
+      .catch(console.error)
   }
 
   return (
@@ -205,9 +224,23 @@ export default function BrainstormV2({ goals, onGoalCreated }) {
 
         {/* Actions */}
         <div className={styles.actions}>
+          <button
+            className={styles.categoryBtn}
+            onClick={() => { ensureCategoryData(); setCategoryPickerOpen(true) }}>
+            Categories
+          </button>
           <button className={styles.submitBtn} onClick={submit}>add ↵</button>
         </div>
       </div>
+
+      <CategoryAssignmentPicker
+        open={categoryPickerOpen}
+        dimensions={dimensions}
+        categories={categories}
+        selections={categorySelections}
+        onChange={setCategorySelections}
+        onClose={() => setCategoryPickerOpen(false)}
+      />
 
       {/* ── Float-away ghost ─────────────────────────────────────────── */}
       {ghost && (

@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import styles from './Header.module.css'
+import { api } from '../api'
+import CategoryAssignmentPicker from './CategoryAssignmentPicker'
 
 const PAGES = ['Goals', 'Classification', 'Schedule']
 
@@ -27,6 +29,10 @@ export default function Header({ view, onNavigate, onQuickAdd }) {
   const [titleManual, setTitleManual] = useState(false)
   const [headlineMode, setHeadlineMode] = useState(false)
   const [wordRects, setWordRects]     = useState([])
+  const [dimensions, setDimensions] = useState([])
+  const [categories, setCategories] = useState([])
+  const [categorySelections, setCategorySelections] = useState({})
+  const [categoryPickerOpen, setCategoryPickerOpen] = useState(false)
 
   const editorRef    = useRef(null)
   const titleInputRef = useRef(null)
@@ -39,15 +45,17 @@ export default function Header({ view, onNavigate, onQuickAdd }) {
   const closePopup = () => {
     setOpen(false); setTitleVal(''); setTitleManual(false)
     setHeadlineMode(false); setWordRects([])
+    setCategorySelections({})
+    setCategoryPickerOpen(false)
     if (editorRef.current) editorRef.current.innerHTML = ''
   }
 
-  useEffect(() => {
-    if (!open) return
-    const handler = e => { if (!wrapRef.current?.contains(e.target)) closePopup() }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open]) // eslint-disable-line
+  const ensureCategoryData = () => {
+    if (dimensions.length || categories.length) return
+    Promise.all([api.getDimensions(), api.getAllCategories()])
+      .then(([dims, cats]) => { setDimensions(dims); setCategories(cats) })
+      .catch(console.error)
+  }
 
   const handleDescInput = () => {
     if (!titleManual && editorRef.current) {
@@ -63,12 +71,29 @@ export default function Header({ view, onNavigate, onQuickAdd }) {
     titleInputRef.current?.focus()
   }
 
+  const hasDraft = () => {
+    const desc = editorRef.current?.innerText?.trim() || ''
+    return Boolean(desc || titleVal.trim())
+  }
+
   const submit = () => {
     const desc = editorRef.current?.innerText?.trim() || ''
     if (!desc && !titleVal.trim()) return
-    onQuickAdd?.(desc, titleVal.trim() || null)
+    onQuickAdd?.(desc, titleVal.trim() || null, categorySelections)
     closePopup()
   }
+
+  useEffect(() => {
+    if (!open) return
+    const handler = e => {
+      if (wrapRef.current?.contains(e.target)) return
+      if (categoryPickerOpen) return
+      if (hasDraft()) submit()
+      else closePopup()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open, categoryPickerOpen, titleVal, categorySelections]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleKey = e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
@@ -100,6 +125,11 @@ export default function Header({ view, onNavigate, onQuickAdd }) {
                 className={`${styles.quickAddHdrBtn} ${headlineMode ? styles.quickAddHdrBtnActive : ''}`}
                 onClick={toggleHeadline}>
                 Header mode
+              </button>
+              <button
+                className={styles.quickAddHdrBtn}
+                onClick={() => { ensureCategoryData(); setCategoryPickerOpen(true) }}>
+                Categories
               </button>
             </div>
 
@@ -136,9 +166,17 @@ export default function Header({ view, onNavigate, onQuickAdd }) {
             </div>
 
             <div className={styles.quickAddBottomRow}>
-              <p className={styles.quickAddHint}>Enter to add · Shift+Enter for line break · Esc to close</p>
+              <p className={styles.quickAddHint}>Enter to add · click away saves · Esc to close</p>
               <button className={styles.quickAddSubmit} onClick={submit}>Add</button>
             </div>
+            <CategoryAssignmentPicker
+              open={categoryPickerOpen}
+              dimensions={dimensions}
+              categories={categories}
+              selections={categorySelections}
+              onChange={setCategorySelections}
+              onClose={() => setCategoryPickerOpen(false)}
+            />
           </div>
         )}
       </div>

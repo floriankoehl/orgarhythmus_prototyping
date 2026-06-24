@@ -50,6 +50,7 @@ function ChevronIcon({ down }) {
 // ── Main popup ────────────────────────────────────────────────────────────────
 export default function GoalPopup({ goal, onClose, onGoalUpdated, onGoalDeleted }) {
   const [expanded, setExpanded]           = useState(false)
+  const [editingCategories, setEditingCategories] = useState(false)
   const [headlineMode, setHeadlineMode]   = useState(false)
   const [wordRects, setWordRects]         = useState([])
   const [headlineStarted, setHeadlineStarted] = useState(false)
@@ -69,6 +70,10 @@ export default function GoalPopup({ goal, onClose, onGoalUpdated, onGoalDeleted 
 
   // Keep goal title in sync if parent updates goal
   useEffect(() => { setTitleVal(goal.title) }, [goal.title])
+
+  useEffect(() => {
+    setEditingCategories(false)
+  }, [expanded, goal.id])
 
   // Focus title input when editing starts
   useEffect(() => {
@@ -157,6 +162,21 @@ export default function GoalPopup({ goal, onClose, onGoalUpdated, onGoalDeleted 
     const catId = assignments[dimId]
     if (!catId) return null
     return categories.find(c => c.id === catId)
+  }
+
+  const toggleAssignment = async (dimId, catId) => {
+    const currentCatId = assignments[dimId]
+    const next = { ...assignments }
+    if (currentCatId === catId) delete next[dimId]
+    else next[dimId] = catId
+    setAssignments(next)
+    try {
+      if (currentCatId === catId) await api.unassign(goal.id, dimId)
+      else await api.assign(goal.id, dimId, catId)
+    } catch (e) {
+      console.error(e)
+      setAssignments(assignments)
+    }
   }
 
   return createPortal(
@@ -259,17 +279,50 @@ export default function GoalPopup({ goal, onClose, onGoalUpdated, onGoalDeleted 
         {/* Expanded: category assignments */}
         {expanded && (
           <div className={styles.expandedSection}>
-            <span className={styles.sectionLabel}>Categories</span>
+            <div className={styles.expandedHeader}>
+              <span className={styles.sectionLabel}>Categories</span>
+              {dimensions.length > 0 && (
+                <button
+                  className={styles.editCategoriesBtn}
+                  onClick={() => setEditingCategories(editing => !editing)}
+                >
+                  {editingCategories ? 'Done' : 'Edit categorization'}
+                </button>
+              )}
+            </div>
             {dimensions.length === 0 && (
               <p className={styles.emptyNote}>No dimensions defined yet.</p>
             )}
             {dimensions.map(dim => {
               const cat = categoryName(dim.id)
+              const dimCats = categories.filter(c => c.dimensionId === dim.id)
               return (
                 <div key={dim.id} className={styles.dimRow}>
                   <span className={styles.dimName}>{dim.name}</span>
-                  {cat ? (
-                    <span className={styles.catBadge} style={{ background: cat.color + '28', borderColor: cat.color, color: cat.color }}>
+                  {editingCategories && dimCats.length > 0 ? (
+                    <div className={styles.catButtonGrid}>
+                      {dimCats.map(candidate => {
+                        const active = cat?.id === candidate.id
+                        return (
+                          <button
+                            key={candidate.id}
+                            className={`${styles.catChoiceBtn} ${active ? styles.catChoiceActive : ''}`}
+                            style={active ? { borderColor: candidate.color, background: `${candidate.color}22`, color: candidate.color } : undefined}
+                            onClick={() => toggleAssignment(dim.id, candidate.id)}>
+                            <span className={styles.catDot} style={{ background: candidate.color }} />
+                            {candidate.name}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  ) : editingCategories ? (
+                    <span className={styles.catUnassigned}>No categories</span>
+                  ) : cat ? (
+                    <span
+                      className={styles.catBadge}
+                      style={{ borderColor: cat.color, background: `${cat.color}18`, color: cat.color }}
+                    >
+                      <span className={styles.catDot} style={{ background: cat.color }} />
                       {cat.name}
                     </span>
                   ) : (

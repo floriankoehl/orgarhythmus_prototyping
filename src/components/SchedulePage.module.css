@@ -532,6 +532,7 @@
   top: calc(100% + 6px);
   right: 0;
   min-width: 248px;
+  max-width: min(420px, calc(100vw - 24px));
   width: max-content;
   background: #fff;
   border: 1px solid #e0e0e0;
@@ -608,6 +609,7 @@
 
 .depToggles {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   flex: 1;
 }
@@ -1679,8 +1681,8 @@
   top: 50%;
   bottom: auto;
   left: 0;
-  width: 14px;
-  height: 14px;
+  width: 11px;
+  height: 11px;
   border: 2px solid #fff;
   border-radius: 50%;
   transform: translate(-50%, -50%);
@@ -1698,7 +1700,7 @@
 
 .depHandle:hover {
   background: #5f6670 !important;
-  box-shadow: 0 0 0 3px rgba(80,85,92,0.2), 0 1px 4px rgba(0,0,0,0.24);
+  box-shadow: 0 0 0 2px rgba(80,85,92,0.2), 0 1px 4px rgba(0,0,0,0.24);
 }
 /* Source handle: pulsing gray when this milestone is the drawing source */
 .depHandleSource {
@@ -1759,8 +1761,9 @@
   stroke: rgba(255,255,255,0.9);
   stroke-width: 3;
   paint-order: stroke;
-  pointer-events: none;
+  pointer-events: auto;
   user-select: none;
+  cursor: help;
 }
 
 /* ── Reason modal ────────────────────────────────────────────────────────── */

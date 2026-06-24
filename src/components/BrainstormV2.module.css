@@ -248,6 +248,25 @@
   background: #e8f0fe;
 }
 
+.categoryBtn {
+  font-size: 11px;
+  font-family: Arial, sans-serif;
+  font-weight: 500;
+  color: #999;
+  background: transparent;
+  border: 1px solid #e8e8e8;
+  border-radius: 5px;
+  padding: 4px 10px;
+  cursor: pointer;
+  letter-spacing: 0.03em;
+}
+
+.categoryBtn:hover {
+  color: #1a73e8;
+  border-color: #1a73e8;
+  background: #f5f9ff;
+}
+
 .submitBtn {
   margin-left: auto;
   font-size: 11px;

@@ -127,6 +127,37 @@ function getDependencyViolations(msList, deps) {
     .filter(Boolean)
 }
 
+function hasAlternateDependencyPath(fromId, toId, deps, ignoredDepId) {
+  const queue = [fromId]
+  const visited = new Set()
+  while (queue.length) {
+    const curr = queue.shift()
+    if (curr === toId) return true
+    if (visited.has(curr)) continue
+    visited.add(curr)
+    deps.forEach(dep => {
+      if (dep.id === ignoredDepId || dep.fromId !== curr) return
+      queue.push(dep.toId)
+    })
+  }
+  return false
+}
+
+function getCrucialDependencyIds(deps) {
+  return new Set(
+    deps
+      .filter(dep => !hasAlternateDependencyPath(dep.fromId, dep.toId, deps, dep.id))
+      .map(dep => dep.id)
+  )
+}
+
+function dependencyLabelPreview(reason) {
+  const words = String(reason || '').trim().split(/\s+/).filter(Boolean)
+  const preview = words.slice(0, 4).join(' ')
+  if (words.length > 4) return `${preview}...`
+  return preview.length > 28 ? `${preview.slice(0, 25)}...` : preview
+}
+
 function getOverlapViolation(msList, movedIds = new Set()) {
   const byGoal = new Map()
   msList.forEach(m => {
@@ -262,7 +293,15 @@ function buildRowItems(goals, categories, assignments, assignmentOrders, activeD
 }
 
 // ── Visual settings panel ─────────────────────────────────────────────────────
-function SpacingPanel({ spacing, onChange, onClose, anchorRef, axisMode, onAxisModeChange, showDepLabels, onShowDepLabelsChange, showDeps, onShowDepsChange, hideCrossCatDeps, onHideCrossCatDepsChange, autoSelectConflicts, onAutoSelectConflictsChange }) {
+function SpacingPanel({
+  spacing, onChange, onClose, anchorRef, axisMode, onAxisModeChange,
+  showDepLabels, onShowDepLabelsChange,
+  showDeps, onShowDepsChange,
+  hideCrossCatDeps, onHideCrossCatDepsChange,
+  showCrucialDepsOnly, onShowCrucialDepsOnlyChange,
+  colorDependencyDirection, onColorDependencyDirectionChange,
+  autoSelectConflicts, onAutoSelectConflictsChange,
+}) {
   const panelRef = useRef()
   const closeRef = useRef(onClose)
   useEffect(() => { closeRef.current = onClose })
@@ -319,6 +358,14 @@ function SpacingPanel({ spacing, onChange, onClose, anchorRef, axisMode, onAxisM
           <label className={styles.depToggle} title="Same-category only" style={{ opacity: showDeps ? 1 : 0.4 }}>
             <input type="checkbox" checked={hideCrossCatDeps} disabled={!showDeps} onChange={e => onHideCrossCatDepsChange(e.target.checked)} />
             <span>Same cat</span>
+          </label>
+          <label className={styles.depToggle} title="Hide dependencies already implied by another dependency path" style={{ opacity: showDeps ? 1 : 0.4 }}>
+            <input type="checkbox" checked={showCrucialDepsOnly} disabled={!showDeps} onChange={e => onShowCrucialDepsOnlyChange(e.target.checked)} />
+            <span>Crucial only</span>
+          </label>
+          <label className={styles.depToggle} title="Color selected milestone incoming dependencies red and outgoing dependencies green" style={{ opacity: showDeps ? 1 : 0.4 }}>
+            <input type="checkbox" checked={colorDependencyDirection} disabled={!showDeps} onChange={e => onColorDependencyDirectionChange(e.target.checked)} />
+            <span>Direction colors</span>
           </label>
           <label className={styles.depToggle} title="Show dependency labels">
             <input type="checkbox" checked={showDepLabels} onChange={e => onShowDepLabelsChange(e.target.checked)} />
@@ -537,6 +584,8 @@ function GanttToolbar({
   axisMode, onAxisModeChange,
   showDepLabels, onShowDepLabelsChange,
   showDeps, onShowDepsChange, hideCrossCatDeps, onHideCrossCatDepsChange,
+  showCrucialDepsOnly, onShowCrucialDepsOnlyChange,
+  colorDependencyDirection, onColorDependencyDirectionChange,
   autoSelectConflicts, onAutoSelectConflictsChange,
   canDeleteSelection, onDeleteSelection,
   canUndo, canRedo, onUndo, onRedo,
@@ -620,6 +669,8 @@ function GanttToolbar({
             showDepLabels={showDepLabels} onShowDepLabelsChange={onShowDepLabelsChange}
             showDeps={showDeps} onShowDepsChange={onShowDepsChange}
             hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={onHideCrossCatDepsChange}
+            showCrucialDepsOnly={showCrucialDepsOnly} onShowCrucialDepsOnlyChange={onShowCrucialDepsOnlyChange}
+            colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={onColorDependencyDirectionChange}
             autoSelectConflicts={autoSelectConflicts} onAutoSelectConflictsChange={onAutoSelectConflictsChange} />
         )}
       </div>
@@ -1100,6 +1151,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const [showDepLabels, setShowDepLabels] = useState(true)
   const [showDeps, setShowDeps] = useState(true)
   const [hideCrossCatDeps, setHideCrossCatDeps] = useState(false)
+  const [showCrucialDepsOnly, setShowCrucialDepsOnly] = useState(false)
+  const [colorDependencyDirection, setColorDependencyDirection] = useState(false)
   const [reasonModal, setReasonModal] = useState(null)   // null | { depId }
   const [reasonDraft, setReasonDraft] = useState('')
   const reasonInputRef = useRef()
@@ -1120,6 +1173,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const capturePerspectiveStateRef = useRef(null)
   const restorePerspectiveStateRef = useRef(null)
   const conflictRestoreTimerRef = useRef(null)
+  const warningPromptTimerRef = useRef(null)
   const [dragOverGoalId, setDragOverGoalId] = useState(null)
   const [dragOverLaneCatId, setDragOverLaneCatId] = useState(null)
   const [draggingCatId, setDraggingCatId] = useState(null)
@@ -1127,6 +1181,24 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   useEffect(() => () => {
     if (conflictRestoreTimerRef.current) window.clearTimeout(conflictRestoreTimerRef.current)
+    if (warningPromptTimerRef.current) window.clearTimeout(warningPromptTimerRef.current)
+  }, [])
+
+  const clearWarningPrompt = useCallback(() => {
+    if (warningPromptTimerRef.current) {
+      window.clearTimeout(warningPromptTimerRef.current)
+      warningPromptTimerRef.current = null
+    }
+    setWarningPrompt(null)
+  }, [])
+
+  const showWarningPrompt = useCallback(prompt => {
+    if (warningPromptTimerRef.current) window.clearTimeout(warningPromptTimerRef.current)
+    setWarningPrompt(prompt)
+    warningPromptTimerRef.current = window.setTimeout(() => {
+      setWarningPrompt(null)
+      warningPromptTimerRef.current = null
+    }, 4500)
   }, [])
 
   const handleAutoSelectConflictsChange = useCallback(enabled => {
@@ -1156,6 +1228,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         showDepLabels: true,
         showDeps: true,
         hideCrossCatDeps: false,
+        showCrucialDepsOnly: false,
+        colorDependencyDirection: false,
         leftPanelWidth: 220,
         group: { activeDimId: '', activeLaneFilterId: '' },
         collapsedCategories: [],
@@ -1417,8 +1491,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   const showTransactionFailure = useCallback(err => {
     const detail = err?.message || 'The backend rejected this transaction.'
-    setWarningPrompt({ title: 'Transaction rejected', message: detail })
-  }, [])
+    showWarningPrompt({ title: 'Transaction rejected', message: detail })
+  }, [showWarningPrompt])
 
   const commitTransaction = useCallback(async transaction => {
     const before = normalizeTransactionState(transaction.before)
@@ -1434,9 +1508,9 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       const detail = err?.detail
       if (detail?.type === 'overlap' && Array.isArray(detail.milestoneIds)) {
         presentConflictMilestones(detail.milestoneIds)
-        setWarningPrompt({ title: 'Milestone overlap', message: detail.message, actions: 'close' })
+        showWarningPrompt({ title: 'Milestone overlap', message: detail.message, actions: 'close' })
       } else if (detail?.type === 'deadline') {
-        setWarningPrompt({ title: 'Hard deadline', message: detail.message, actions: 'close' })
+        showWarningPrompt({ title: 'Hard deadline', message: detail.message, actions: 'close' })
       } else if (detail?.type === 'dependency') {
         const depIds = detail.dependencyIds ?? []
         const milestoneIds = new Set(detail.milestoneIds ?? [])
@@ -1447,13 +1521,13 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         presentConflictMilestones(milestoneIds)
         setBlinkingDepIds(new Set(depIds))
         window.setTimeout(() => setBlinkingDepIds(new Set()), 3000)
-        setWarningPrompt({ title: 'Dependency violation', message: detail.message, actions: 'dependency', dependencyIds: depIds })
+        showWarningPrompt({ title: 'Dependency violation', message: detail.message, actions: 'dependency', dependencyIds: depIds })
       } else {
         showTransactionFailure(err)
       }
       return false
     }
-  }, [applyTransactionState, presentConflictMilestones, showTransactionFailure])
+  }, [applyTransactionState, presentConflictMilestones, showTransactionFailure, showWarningPrompt])
 
   const undoGanttTransaction = useCallback(async () => {
     try {
@@ -1700,23 +1774,24 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   // Violations: recomputed whenever milestones or dependencies change
   const violationIds = useMemo(() => computeViolations(milestones, dependencies), [milestones, dependencies])
+  const crucialDependencyIds = useMemo(() => getCrucialDependencyIds(dependencies), [dependencies])
 
   const reportOverlapViolation = useCallback(ids => {
     presentConflictMilestones(ids)
-    setWarningPrompt({
+    showWarningPrompt({
       title: 'Milestone overlap',
       message: 'Milestones in the same goal row cannot overlap or pass each other.',
       actions: 'close',
     })
-  }, [presentConflictMilestones])
+  }, [presentConflictMilestones, showWarningPrompt])
 
   const reportDeadlineViolation = useCallback(() => {
-    setWarningPrompt({
+    showWarningPrompt({
       title: 'Hard deadline',
       message: "Milestones cannot move before today or past their goal's hard deadline.",
       actions: 'close',
     })
-  }, [])
+  }, [showWarningPrompt])
 
   const reportDependencyViolations = useCallback(violations => {
     const depIds = violations.map(v => v.dep.id).filter(Boolean)
@@ -1728,7 +1803,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     presentConflictMilestones(milestoneIds)
     setBlinkingDepIds(new Set(depIds))
     window.setTimeout(() => setBlinkingDepIds(new Set()), 3000)
-    setWarningPrompt({
+    showWarningPrompt({
       title: 'Dependency violation',
       message: violations.length === 1
         ? 'A predecessor milestone must finish before its successor starts.'
@@ -1736,7 +1811,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       actions: 'dependency',
       dependencyIds: depIds,
     })
-  }, [presentConflictMilestones])
+  }, [presentConflictMilestones, showWarningPrompt])
 
   const maybeBlockDependencyWarning = useCallback((nextMilestones, nextDependencies) => {
     const violations = getDependencyViolations(nextMilestones, nextDependencies)
@@ -1898,6 +1973,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   // ── Milestone CRUD ─────────────────────────────────────────────────────────
   const handleCreateMilestone = useCallback(async (goalId, startCol, color) => {
+    clearWarningPrompt()
     const ms = { id: newClientId('ms'), goalId, startCol, duration: 1, title: '', color: color || '#1a73e8' }
     const dl = deadlinesRef.current.find(d => d.goalId === goalId)
     if (startCol < 0 || (dl && startCol + 1 > dl.col)) {
@@ -1916,7 +1992,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       before: { milestones: [], dependencies: [] },
       after: { milestones: [ms], dependencies: [] },
     })
-  }, [commitTransaction, reportDeadlineViolation, reportOverlapViolation])
+  }, [clearWarningPrompt, commitTransaction, reportDeadlineViolation, reportOverlapViolation])
 
   const handleGridDoubleClick = useCallback(e => {
     if (modeRef.current !== 'milestone') return
@@ -1988,6 +2064,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   // ── Drag helpers ───────────────────────────────────────────────────────────
   function startMoveDrag(startMouseX, originals) {
+    clearWarningPrompt()
     const sp = spacingRef.current
     dragRef.current = { type: 'move', hasMoved: false, originals, lastValidColDelta: 0, blockedOverlap: null, blockedBarrier: null, hitBoundary: false }
     document.body.style.cursor = 'grabbing'
@@ -1995,35 +2072,13 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     const getBounds = () => {
       let minDelta = -Infinity
       let maxDelta = Infinity
-      let minBlocker = null
-      let maxBlocker = null
-      const movedIds = new Set(Object.keys(originals))
       Object.entries(originals).forEach(([id, orig]) => {
         minDelta = Math.max(minDelta, -orig.startCol)
         const ms = milestonesRef.current.find(m => m.id === id)
         const dl = deadlinesRef.current.find(d => d.goalId === ms?.goalId)
         if (dl) maxDelta = Math.min(maxDelta, dl.col - orig.duration - orig.startCol)
-        if (!ms) return
-        milestonesRef.current.forEach(blocker => {
-          if (blocker.goalId !== ms.goalId || movedIds.has(blocker.id)) return
-          const blockerEnd = blocker.startCol + blocker.duration
-          const origEnd = orig.startCol + orig.duration
-          if (blockerEnd <= orig.startCol) {
-            const bound = blockerEnd - orig.startCol
-            if (bound > minDelta) {
-              minDelta = bound
-              minBlocker = blocker.id
-            }
-          } else if (blocker.startCol >= origEnd) {
-            const bound = blocker.startCol - origEnd
-            if (bound < maxDelta) {
-              maxDelta = bound
-              maxBlocker = blocker.id
-            }
-          }
-        })
       })
-      return { minDelta, maxDelta, minBlocker, maxBlocker }
+      return { minDelta, maxDelta }
     }
 
     const getSnappedColDelta = clientX => {
@@ -2031,13 +2086,9 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       const firstOrig = Object.values(originals)[0]
       if (!firstOrig) return 0
       let colDelta = snapPxToCol(firstOrig.startCol * sp.colW + rawDx, sp.colW) - firstOrig.startCol
-      const { minDelta, maxDelta, minBlocker, maxBlocker } = getBounds()
+      const { minDelta, maxDelta } = getBounds()
       const clamped = Math.max(minDelta, Math.min(maxDelta, colDelta))
-      if (dragRef.current && clamped !== colDelta) {
-        const blockerId = colDelta < minDelta ? minBlocker : colDelta > maxDelta ? maxBlocker : null
-        if (blockerId) dragRef.current.blockedBarrier = [blockerId, ...Object.keys(originals)]
-        else dragRef.current.hitBoundary = true
-      }
+      if (dragRef.current && clamped !== colDelta) dragRef.current.hitBoundary = true
       return clamped
     }
 
@@ -2046,31 +2097,16 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       return { ...m, startCol: originals[m.id].startCol + colDelta }
     })
 
-    const getOverlapForDelta = colDelta => getOverlapViolation(
-      buildMovedMilestones(colDelta),
-      new Set(Object.keys(originals))
-    )
-
-    const getSafeColDelta = clientX => {
-      const colDelta = getSnappedColDelta(clientX)
-      const overlap = getOverlapForDelta(colDelta)
-      if (!overlap) {
-        if (dragRef.current) {
-          dragRef.current.lastValidColDelta = colDelta
-          dragRef.current.blockedOverlap = null
-        }
-        return colDelta
-      }
-      if (dragRef.current) dragRef.current.blockedOverlap = overlap
-      return dragRef.current?.lastValidColDelta ?? 0
-    }
-
     const getLiveDx = clientX => {
       const rawDx = clientX - startMouseX
-      const firstOrig = Object.values(originals)[0]
-      if (!firstOrig) return rawDx
-      const colDelta = getSafeColDelta(clientX)
-      return colDelta * sp.colW
+      let dx = rawDx
+      Object.entries(originals).forEach(([id, orig]) => {
+        dx = Math.max(dx, -orig.startCol * sp.colW)
+        const ms = milestonesRef.current.find(m => m.id === id)
+        const dl = deadlinesRef.current.find(d => d.goalId === ms?.goalId)
+        if (dl) dx = Math.min(dx, (dl.col - orig.duration - orig.startCol) * sp.colW)
+      })
+      return dx
     }
 
     const onMove = e => {
@@ -2091,18 +2127,21 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
       document.body.style.cursor = ''
-      const { hasMoved, blockedOverlap, blockedBarrier, hitBoundary } = dragRef.current || {}
+      const { hasMoved, hitBoundary } = dragRef.current || {}
       dragRef.current = null
-      if (!hasMoved) return
-
-      const colDelta = getSnappedColDelta(e.clientX)
-      const finalOverlap = blockedOverlap || getOverlapForDelta(colDelta)
-      if (finalOverlap) {
+      const resetToOriginal = () => {
         Object.entries(originals).forEach(([id, orig]) => {
           const el = milestoneElsRef.current.get(id)
           if (el) el.style.left = `${orig.startCol * sp.colW}px`
         })
         updateDependencyPaths()
+      }
+      if (!hasMoved) { resetToOriginal(); return }
+
+      const colDelta = getSnappedColDelta(e.clientX)
+      const finalOverlap = getOverlapViolation(buildMovedMilestones(colDelta), new Set(Object.keys(originals)))
+      if (finalOverlap) {
+        resetToOriginal()
         reportOverlapViolation(finalOverlap)
         return
       }
@@ -2118,15 +2157,10 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       })
       const finalOrder = getMilestoneOrderViolation(milestonesRef.current, next, new Set(Object.keys(originals)))
       if (finalOrder) {
-        Object.entries(originals).forEach(([id, orig]) => {
-          const el = milestoneElsRef.current.get(id)
-          if (el) el.style.left = `${orig.startCol * sp.colW}px`
-        })
-        updateDependencyPaths()
+        resetToOriginal()
         reportOverlapViolation(finalOrder)
         return
       }
-      if (blockedBarrier) reportOverlapViolation(blockedBarrier)
       if (updates.length) {
         const applyMove = async () => {
           const before = Object.entries(originals)
@@ -2143,20 +2177,12 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         }
         const blocked = maybeBlockDependencyWarning(next, dependenciesRef.current)
         if (blocked) {
-          Object.entries(originals).forEach(([id, orig]) => {
-            const el = milestoneElsRef.current.get(id)
-            if (el) el.style.left = `${orig.startCol * sp.colW}px`
-          })
-          updateDependencyPaths()
+          resetToOriginal()
           return
         }
         try { await applyMove() } catch (e) { console.error(e) }
       } else {
-        Object.entries(originals).forEach(([id, orig]) => {
-          const el = milestoneElsRef.current.get(id)
-          if (el) el.style.left = `${orig.startCol * sp.colW}px`
-        })
-        updateDependencyPaths()
+        resetToOriginal()
       }
     }
 
@@ -2165,6 +2191,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   }
 
   function startResizeDrag(startMouseX, milestoneId, side) {
+    clearWarningPrompt()
     const sp  = spacingRef.current
     const ms  = milestonesRef.current.find(m => m.id === milestoneId)
     if (!ms) return
@@ -2338,6 +2365,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   // ── Dependency drawing ─────────────────────────────────────────────────────
   const createDependencyFromDrag = useCallback(async (fromId, toId) => {
+    clearWarningPrompt()
     if (!fromId || !toId || fromId === toId) return
     if (hasCycle(fromId, toId, dependenciesRef.current)) return
     if (dependenciesRef.current.some(d => d.fromId === fromId && d.toId === toId)) return
@@ -2355,7 +2383,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     const blocked = maybeBlockDependencyWarning(milestonesRef.current, nextDependencies)
     if (blocked) return
     try { await applyDependency() } catch (err) { console.error(err) }
-  }, [commitTransaction, maybeBlockDependencyWarning])
+  }, [clearWarningPrompt, commitTransaction, maybeBlockDependencyWarning])
 
   const updatePreviewArrow = useCallback((sourceId, clientX, clientY) => {
     const rect = gridBodyRef.current?.getBoundingClientRect()
@@ -2455,19 +2483,27 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     setDeleteDraft({ items: [{ key: `dependency:${depId}`, type: 'dependency', id: depId, label, checked: true }] })
   }, [])
 
-  const handleDeleteWarningConstraint = useCallback(async () => {
+  const handleDeleteWarningConstraint = useCallback(() => {
     const dependencyIds = warningPrompt?.dependencyIds ?? []
     const depsToDelete = dependenciesRef.current.filter(d => dependencyIds.includes(d.id))
-    setWarningPrompt(null)
+    clearWarningPrompt()
     if (depsToDelete.length === 0) return
-    await commitTransaction({
-      id: newClientId('tx'),
-      type: depsToDelete.length > 1 ? 'dependency.delete-many' : 'dependency.delete',
-      label: 'Delete constraint',
-      before: { milestones: [], dependencies: depsToDelete },
-      after: { milestones: [], dependencies: [] },
+    setDeleteDraft({
+      items: depsToDelete.map(dep => {
+        const from = milestonesRef.current.find(m => m.id === dep.fromId)
+        const to = milestonesRef.current.find(m => m.id === dep.toId)
+        const fromGoal = goals.find(g => g.id === from?.goalId)
+        const toGoal = goals.find(g => g.id === to?.goalId)
+        return {
+          key: `dependency:${dep.id}`,
+          type: 'dependency',
+          id: dep.id,
+          label: `${fromGoal?.title ?? 'Milestone'} -> ${toGoal?.title ?? 'Milestone'}`,
+          checked: true,
+        }
+      }),
     })
-  }, [commitTransaction, warningPrompt])
+  }, [clearWarningPrompt, goals, warningPrompt])
 
   const handleEditDepReason = useCallback((depId, currentReason) => {
     setReasonDraft(currentReason || '')
@@ -2567,9 +2603,22 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   useEffect(() => {
     if (!isActive) return
     const onKeyDown = e => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return
       const tag = e.target?.tagName
       const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable
+      const key = e.key.toLowerCase()
+      if (!isTyping && (e.ctrlKey || e.metaKey) && !e.altKey) {
+        if (key === 'z') {
+          e.preventDefault()
+          undoGanttTransaction()
+          return
+        }
+        if (key === 'y') {
+          e.preventDefault()
+          redoGanttTransaction()
+          return
+        }
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return
       if (deleteDraft) {
         if (e.key === 'Enter') {
           e.preventDefault()
@@ -2579,13 +2628,13 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         return
       }
       if (isTyping) return
-      if (e.key.toLowerCase() === 'd') setMode('dependency')
-      if (e.key.toLowerCase() === 'e') setMode('milestone')
+      if (key === 'd') setMode('dependency')
+      if (key === 'e') setMode('milestone')
       if (e.key === 'Delete' || e.key === 'Del') handleRequestDeleteSelection()
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [deleteDraft, handleConfirmDeleteDraft, handleRequestDeleteSelection, isActive])
+  }, [deleteDraft, handleConfirmDeleteDraft, handleRequestDeleteSelection, isActive, redoGanttTransaction, undoGanttTransaction])
 
   useEffect(() => {
     if (reasonModal) setTimeout(() => reasonInputRef.current?.focus(), 30)
@@ -2602,6 +2651,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     showDepLabels,
     showDeps,
     hideCrossCatDeps,
+    showCrucialDepsOnly,
+    colorDependencyDirection,
     leftPanelWidth,
     group: {
       activeDimId,
@@ -2619,8 +2670,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     },
   }), [
     activeDimId, activeFilterIds, activeLaneFilterId, axisMode, colorDimId,
-    hiddenCatIds, hiddenGoalsByLane, hideCrossCatDeps, leftPanelWidth,
-    quickFilters, showDepLabels, showDeps, spacing,
+    colorDependencyDirection, hiddenCatIds, hiddenGoalsByLane, hideCrossCatDeps,
+    leftPanelWidth, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps, spacing,
   ])
   capturePerspectiveStateRef.current = capturePerspectiveState
 
@@ -2637,6 +2688,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     if (typeof state.showDepLabels === 'boolean') setShowDepLabels(state.showDepLabels)
     if (typeof state.showDeps === 'boolean') setShowDeps(state.showDeps)
     if (typeof state.hideCrossCatDeps === 'boolean') setHideCrossCatDeps(state.hideCrossCatDeps)
+    if (typeof state.showCrucialDepsOnly === 'boolean') setShowCrucialDepsOnly(state.showCrucialDepsOnly)
+    if (typeof state.colorDependencyDirection === 'boolean') setColorDependencyDirection(state.colorDependencyDirection)
     if (typeof state.leftPanelWidth === 'number') setLeftPanelWidth(Math.max(120, Math.min(600, state.leftPanelWidth)))
 
     setActiveDimId(nextActiveDimId)
@@ -2894,6 +2947,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         showDepLabels={showDepLabels} onShowDepLabelsChange={setShowDepLabels}
         showDeps={showDeps} onShowDepsChange={setShowDeps}
         hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={setHideCrossCatDeps}
+        showCrucialDepsOnly={showCrucialDepsOnly} onShowCrucialDepsOnlyChange={setShowCrucialDepsOnly}
+        colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={setColorDependencyDirection}
         autoSelectConflicts={autoSelectConflicts}
         onAutoSelectConflictsChange={handleAutoSelectConflictsChange}
       />
@@ -3283,6 +3338,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
             <svg className={styles.depSvg}
               style={{ width: totalDays * colW, height: totalContentH + HEADER_H }}>
               {showDeps && dependencies.map(dep => {
+                if (showCrucialDepsOnly && !crucialDependencyIds.has(dep.id)) return null
                 const from = milestones.find(m => m.id === dep.fromId)
                 const to   = milestones.find(m => m.id === dep.toId)
                 if (!from || !to) return null
@@ -3301,13 +3357,21 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
                 const isViol = violationIds.has(dep.toId)
                 const isSelected = selectedDepIds.has(dep.id)
                 const isBlinking = blinkingDepIds.has(dep.id)
-                const midX = (x1 + x2) / 2
-                const midY = (y1 + y2) / 2
-                const depColor = isViol ? '#ef4444' : '#555'
+                const isOutgoingFromSelection = selectedIds.has(dep.fromId)
+                const isIncomingToSelection = selectedIds.has(dep.toId)
+                const depColor = isViol
+                  ? '#ef4444'
+                  : colorDependencyDirection && isOutgoingFromSelection
+                    ? '#16a34a'
+                    : colorDependencyDirection && isIncomingToSelection
+                      ? '#dc2626'
+                      : '#555'
                 const fromGoal = goals.find(g => g.id === from.goalId)
                 const toGoal   = goals.find(g => g.id === to.goalId)
                 const pathD = `M ${x1} ${y1} C ${x1 + cp} ${y1}, ${x2 - cp} ${y2}, ${x2} ${y2}`
                 const inDepMode = mode === 'dependency'
+                const labelPathId = `dep-label-path-${dep.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`
+                const labelPreview = dependencyLabelPreview(dep.reason)
                 return (
                   <g key={dep.id}>
                     {/* Invisible fat path — only active in dependency mode for selecting / editing deps */}
@@ -3341,6 +3405,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
                     )}
                     {/* Visual path — pointer-events none, purely decorative */}
                     <path
+                      id={labelPathId}
                       ref={el => { el ? depPathElsRef.current.set(dep.id, el) : depPathElsRef.current.delete(dep.id) }}
                       className={[
                         styles.depPath,
@@ -3353,9 +3418,11 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
                       style={{ pointerEvents: 'none' }}
                     />
                     {showDepLabels && dep.reason && (
-                      <text className={styles.depLabel} x={midX} y={midY}
-                        textAnchor="middle" dominantBaseline="central">
-                        {dep.reason.length > 45 ? dep.reason.slice(0, 42) + '…' : dep.reason}
+                      <text className={styles.depLabel} dy="-5">
+                        <title>{dep.reason}</title>
+                        <textPath href={`#${labelPathId}`} startOffset="50%" textAnchor="middle">
+                          {labelPreview}
+                        </textPath>
                       </text>
                     )}
                   </g>
@@ -3428,7 +3495,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
           </div>
           <div className={styles.warningPromptActions}>
             <button className={styles.warningUndoBtn} onClick={() => {
-              setWarningPrompt(null)
+              clearWarningPrompt()
             }}>
               {warningPrompt.actions === 'dependency' ? 'Undo' : 'Close'}
             </button>
@@ -3446,9 +3513,13 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       {deleteDraft && createPortal(
         <div className={styles.deleteModalBackdrop} onMouseDown={() => setDeleteDraft(null)}>
           <div className={styles.deleteModal} role="dialog" aria-modal="true" onMouseDown={e => e.stopPropagation()}>
-            <div className={styles.deleteModalTitle}>Delete selected items?</div>
+            <div className={styles.deleteModalTitle}>
+              {deleteDraft.items.every(item => item.type === 'dependency') ? 'Delete constraint?' : 'Delete selected items?'}
+            </div>
             <div className={styles.deleteModalText}>
-              {deleteDraft.items.length === 1
+              {deleteDraft.items.every(item => item.type === 'dependency') && deleteDraft.items.length > 1
+                ? 'Choose which dependency constraints should be deleted.'
+                : deleteDraft.items.length === 1
                 ? 'This item will be deleted.'
                 : 'Choose which selected items should be deleted.'}
             </div>

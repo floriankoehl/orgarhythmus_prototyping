@@ -1,0 +1,129 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+
+.modal {
+  width: 520px;
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 80px);
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 14px 42px rgba(0,0,0,0.22);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid #eee;
+}
+
+.title {
+  font: 700 15px Arial, sans-serif;
+  color: #222;
+}
+
+.sub {
+  margin-top: 3px;
+  font: 12px Arial, sans-serif;
+  color: #888;
+}
+
+.closeBtn {
+  height: 28px;
+  padding: 0 12px;
+  color: #555;
+  background: #f5f5f5;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font: 600 12px Arial, sans-serif;
+}
+
+.closeBtn:hover {
+  background: #e8f0fe;
+  color: #1a73e8;
+}
+
+.body {
+  padding: 14px 18px 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.dimBlock {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.dimName {
+  padding-top: 6px;
+  font: 700 12px Arial, sans-serif;
+  color: #555;
+}
+
+.catGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.catBtn {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  color: #555;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  cursor: pointer;
+  font: 600 12px Arial, sans-serif;
+}
+
+.catBtn:hover {
+  background: #f8f8f8;
+}
+
+.catBtnActive {
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.empty,
+.emptySmall {
+  font: 12px Arial, sans-serif;
+  color: #aaa;
+}
+
+.empty {
+  padding: 18px 0;
+  text-align: center;
+}
+
+.emptySmall {
+  padding-top: 6px;
+  font-style: italic;
+}
