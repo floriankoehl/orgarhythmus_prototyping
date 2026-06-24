@@ -207,7 +207,6 @@ function SpacingPanel({ spacing, onChange, onClose, anchorRef, axisMode, onAxisM
   const rows = [
     ['colW',    'Column width', 20, 250, 'px'],
     ['rowH',    'Row height',   20,  80, 'px'],
-    ['rowGap',  'Row gap',       0,  24, 'px'],
     ['laneGap', 'Lane gap',      8,  80, 'px'],
   ]
   return (
@@ -237,18 +236,23 @@ function SpacingPanel({ spacing, onChange, onClose, anchorRef, axisMode, onAxisM
           ))}
         </div>
       </div>
-      <label className={styles.axisModeRow} style={{ cursor: 'pointer' }}>
-        <span className={styles.spacingLabel}>Show deps</span>
-        <input type="checkbox" checked={showDeps} onChange={e => onShowDepsChange(e.target.checked)} />
-      </label>
-      <label className={styles.axisModeRow} style={{ cursor: showDeps ? 'pointer' : 'default', opacity: showDeps ? 1 : 0.4 }}>
-        <span className={styles.spacingLabel}>Same-category only</span>
-        <input type="checkbox" checked={hideCrossCatDeps} disabled={!showDeps} onChange={e => onHideCrossCatDepsChange(e.target.checked)} />
-      </label>
-      <label className={styles.axisModeRow} style={{ cursor: 'pointer' }}>
-        <span className={styles.spacingLabel}>Dep. labels</span>
-        <input type="checkbox" checked={showDepLabels} onChange={e => onShowDepLabelsChange(e.target.checked)} />
-      </label>
+      <div className={styles.axisModeRow}>
+        <span className={styles.spacingLabel}>Deps</span>
+        <div className={styles.depToggles}>
+          <label className={styles.depToggle} title="Show dependencies">
+            <input type="checkbox" checked={showDeps} onChange={e => onShowDepsChange(e.target.checked)} />
+            <span>Show</span>
+          </label>
+          <label className={styles.depToggle} title="Same-category only" style={{ opacity: showDeps ? 1 : 0.4 }}>
+            <input type="checkbox" checked={hideCrossCatDeps} disabled={!showDeps} onChange={e => onHideCrossCatDepsChange(e.target.checked)} />
+            <span>Same cat</span>
+          </label>
+          <label className={styles.depToggle} title="Show dependency labels">
+            <input type="checkbox" checked={showDepLabels} onChange={e => onShowDepLabelsChange(e.target.checked)} />
+            <span>Labels</span>
+          </label>
+        </div>
+      </div>
     </div>
   )
 }
@@ -1333,8 +1337,12 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const handleSpacingChange = useCallback(next => {
     const prev = spacingRef.current
     if (next.colW !== prev.colW && gridBodyRef.current) {
-      const centerDay = (scrollLeftRef.current + vpRef.current.w / 2) / prev.colW
-      gridBodyRef.current.scrollLeft = Math.max(0, Math.round(centerDay * next.colW - vpRef.current.w / 2))
+      const leftDay = scrollLeftRef.current / prev.colW
+      const nextScrollLeft = Math.max(0, Math.round(leftDay * next.colW))
+      if (gridInnerRef.current) gridInnerRef.current.style.width = `${totalDaysRef.current * next.colW}px`
+      gridBodyRef.current.scrollLeft = nextScrollLeft
+      scrollLeftRef.current = gridBodyRef.current.scrollLeft
+      setScrollLeft(scrollLeftRef.current)
       // Ensure grid stays wider than viewport after colW change
       const needed = Math.ceil(vpRef.current.w / next.colW) + COL_BUF + EDGE_COLS + 1
       if (needed > totalDaysRef.current) {
@@ -1923,10 +1931,20 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     }
 
     const alreadySelected = selectedIdsRef.current.has(milestoneId)
-    const idsToMove = alreadySelected ? [...selectedIdsRef.current] : [milestoneId]
-    // Always call setSelectedIds — this triggers a re-render that picks up dragRef.current.originals
-    // so dragged milestones are never culled from visMilestones during the drag.
-    setSelectedIds(new Set(idsToMove))
+    let idsToMove
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl/Cmd: toggle this milestone in/out of the existing selection
+      const next = new Set(selectedIdsRef.current)
+      if (alreadySelected) next.delete(milestoneId)
+      else next.add(milestoneId)
+      setSelectedIds(next)
+      idsToMove = [...next]
+    } else {
+      idsToMove = alreadySelected ? [...selectedIdsRef.current] : [milestoneId]
+      // Always call setSelectedIds — this triggers a re-render that picks up dragRef.current.originals
+      // so dragged milestones are never culled from visMilestones during the drag.
+      setSelectedIds(new Set(idsToMove))
+    }
 
     const originals = {}
     idsToMove.forEach(id => {
@@ -2036,26 +2054,63 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
                 if (item.type === 'lane-header') {
                   const lhCatKey = item.cat?.id ?? UNASSIGNED_LANE
                   const lhIsOver = dragOverLaneCatId === lhCatKey
+                  const lhReorderOver = dragOverCatReorderId === lhCatKey
+                  const lhLaneGoals = goalsForLane(item.cat)
+                  const lhHiddenIds = hiddenGoalsByLane[lhCatKey] ?? new Set()
+                  const lhVisibleCount = lhLaneGoals.filter(g => !lhHiddenIds.has(g.id)).length
                   return (
                     <div key={`lh-${item.cat?.id ?? 'none'}`}
-                      className={`${styles.laneHdr} ${lhIsOver ? styles.laneHdrDropTarget : ''}`}
+                      className={[
+                        styles.laneHdr,
+                        lhIsOver && styles.laneHdrDropTarget,
+                        lhReorderOver && styles.laneHdrReorderTarget,
+                      ].filter(Boolean).join(' ')}
                       style={{ top: item.top, height: item.height, borderLeftColor: item.cat?.color ?? '#bbb', background: item.cat ? `${item.cat.color}18` : '#f3f3f3' }}
+                      draggable={Boolean(item.cat && activeDimId)}
+                      onDragStart={e => {
+                        if (!item.cat || !activeDimId) return
+                        e.dataTransfer.setData('schedule-cat-id', item.cat.id)
+                        e.dataTransfer.effectAllowed = 'move'
+                        setDraggingCatId(item.cat.id)
+                      }}
+                      onDragEnd={() => { setDraggingCatId(null); setDragOverCatReorderId(null) }}
                       onDragOver={e => {
-                        if (!activeDimId || !e.dataTransfer.types.includes('schedule-goal-id')) return
-                        e.preventDefault()
-                        setDragOverLaneCatId(lhCatKey)
-                        setDragOverGoalId(null)
+                        if (!activeDimId) return
+                        if (e.dataTransfer.types.includes('schedule-cat-id')) {
+                          e.preventDefault()
+                          if (item.cat) { setDragOverCatReorderId(lhCatKey); setDragOverLaneCatId(null) }
+                        } else if (e.dataTransfer.types.includes('schedule-goal-id')) {
+                          e.preventDefault()
+                          setDragOverLaneCatId(lhCatKey); setDragOverGoalId(null); setDragOverCatReorderId(null)
+                        }
                       }}
                       onDragLeave={e => {
-                        if (!e.currentTarget.contains(e.relatedTarget)) setDragOverLaneCatId(null)
+                        if (!e.currentTarget.contains(e.relatedTarget)) {
+                          setDragOverLaneCatId(null)
+                          setDragOverCatReorderId(null)
+                        }
                       }}
                       onDrop={e => {
                         e.preventDefault()
+                        const catId = e.dataTransfer.getData('schedule-cat-id')
                         const goalId = e.dataTransfer.getData('schedule-goal-id')
                         setDragOverLaneCatId(null)
-                        if (goalId) moveGoalToLane(goalId, item.cat?.id ?? null)
+                        setDragOverCatReorderId(null)
+                        if (catId && item.cat) reorderCategoryInGantt(catId, item.cat.id)
+                        else if (goalId) moveGoalToLane(goalId, item.cat?.id ?? null)
                       }}>
-                      <span className={styles.laneHdrName}>{item.cat?.name ?? 'Unassigned'}</span>
+                      <span
+                        className={styles.laneHdrName}
+                        onDoubleClick={e => {
+                          e.stopPropagation()
+                          if (lhVisibleCount > 0) {
+                            hideAllLaneGoals(lhCatKey, lhLaneGoals.map(g => g.id))
+                          } else {
+                            showAllLaneGoals(lhCatKey)
+                          }
+                        }}>
+                        {item.cat?.name ?? 'Unassigned'}
+                      </span>
                       <LaneGoalFilter
                         laneKey={laneKeyForCat(item.cat)}
                         goals={goalsForLane(item.cat)}
