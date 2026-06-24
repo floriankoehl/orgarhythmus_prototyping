@@ -146,6 +146,34 @@ function getOverlapViolation(msList, movedIds = new Set()) {
   return null
 }
 
+function getMilestoneOrderViolation(beforeList, afterList, movedIds = new Set()) {
+  const beforeById = Object.fromEntries(beforeList.map(m => [m.id, m]))
+  const afterById = Object.fromEntries(afterList.map(m => [m.id, m]))
+  const ids = Object.keys(beforeById).filter(id => afterById[id])
+  for (let i = 0; i < ids.length; i += 1) {
+    for (let j = i + 1; j < ids.length; j += 1) {
+      const aBefore = beforeById[ids[i]]
+      const bBefore = beforeById[ids[j]]
+      const aAfter = afterById[ids[i]]
+      const bAfter = afterById[ids[j]]
+      if (aBefore.goalId !== bBefore.goalId || aAfter.goalId !== bAfter.goalId) continue
+      if (!movedIds.has(aBefore.id) && !movedIds.has(bBefore.id)) continue
+      const beforeRelation = aBefore.startCol + aBefore.duration <= bBefore.startCol
+        ? 'a-before-b'
+        : bBefore.startCol + bBefore.duration <= aBefore.startCol
+          ? 'b-before-a'
+          : null
+      const afterRelation = aAfter.startCol + aAfter.duration <= bAfter.startCol
+        ? 'a-before-b'
+        : bAfter.startCol + bAfter.duration <= aAfter.startCol
+          ? 'b-before-a'
+          : null
+      if (beforeRelation && afterRelation && beforeRelation !== afterRelation) return [aBefore.id, bBefore.id]
+    }
+  }
+  return null
+}
+
 function newClientId(prefix) {
   const random = window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
   return `${prefix}-${random}`
@@ -1671,7 +1699,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     presentConflictMilestones(ids)
     setWarningPrompt({
       title: 'Milestone overlap',
-      message: 'Two milestones in the same goal row cannot occupy the same day.',
+      message: 'Milestones in the same goal row cannot overlap or pass each other.',
       actions: 'close',
     })
   }, [presentConflictMilestones])
@@ -1912,6 +1940,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       const nextMilestones = milestonesRef.current.map(m => after.find(candidate => candidate.id === m.id) ?? m)
       const overlap = getOverlapViolation(nextMilestones, new Set(before.map(m => m.id)))
       if (overlap) { reportOverlapViolation(overlap); return }
+      const order = getMilestoneOrderViolation(milestonesRef.current, nextMilestones, new Set(before.map(m => m.id)))
+      if (order) { reportOverlapViolation(order); return }
       if (maybeBlockDependencyWarning(nextMilestones, dependenciesRef.current)) return
       await commitTransaction(tx)
     }
@@ -1943,6 +1973,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       }
       const overlap = getOverlapViolation(updated, new Set(before.map(m => m.id)))
       if (overlap) { reportOverlapViolation(overlap); return }
+      const order = getMilestoneOrderViolation(milestonesRef.current, updated, new Set(before.map(m => m.id)))
+      if (order) { reportOverlapViolation(order); return }
       if (maybeBlockDependencyWarning(updated, dependenciesRef.current)) return
       await commitTransaction(tx)
     }
@@ -1951,19 +1983,41 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   // ── Drag helpers ───────────────────────────────────────────────────────────
   function startMoveDrag(startMouseX, originals) {
     const sp = spacingRef.current
-    dragRef.current = { type: 'move', hasMoved: false, originals, lastValidColDelta: 0, blockedOverlap: null, hitBoundary: false }
+    dragRef.current = { type: 'move', hasMoved: false, originals, lastValidColDelta: 0, blockedOverlap: null, blockedBarrier: null, hitBoundary: false }
     document.body.style.cursor = 'grabbing'
 
     const getBounds = () => {
       let minDelta = -Infinity
       let maxDelta = Infinity
+      let minBlocker = null
+      let maxBlocker = null
+      const movedIds = new Set(Object.keys(originals))
       Object.entries(originals).forEach(([id, orig]) => {
         minDelta = Math.max(minDelta, -orig.startCol)
         const ms = milestonesRef.current.find(m => m.id === id)
         const dl = deadlinesRef.current.find(d => d.goalId === ms?.goalId)
         if (dl) maxDelta = Math.min(maxDelta, dl.col - orig.duration - orig.startCol)
+        if (!ms) return
+        milestonesRef.current.forEach(blocker => {
+          if (blocker.goalId !== ms.goalId || movedIds.has(blocker.id)) return
+          const blockerEnd = blocker.startCol + blocker.duration
+          const origEnd = orig.startCol + orig.duration
+          if (blockerEnd <= orig.startCol) {
+            const bound = blockerEnd - orig.startCol
+            if (bound > minDelta) {
+              minDelta = bound
+              minBlocker = blocker.id
+            }
+          } else if (blocker.startCol >= origEnd) {
+            const bound = blocker.startCol - origEnd
+            if (bound < maxDelta) {
+              maxDelta = bound
+              maxBlocker = blocker.id
+            }
+          }
+        })
       })
-      return { minDelta, maxDelta }
+      return { minDelta, maxDelta, minBlocker, maxBlocker }
     }
 
     const getSnappedColDelta = clientX => {
@@ -1971,9 +2025,13 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       const firstOrig = Object.values(originals)[0]
       if (!firstOrig) return 0
       let colDelta = snapPxToCol(firstOrig.startCol * sp.colW + rawDx, sp.colW) - firstOrig.startCol
-      const { minDelta, maxDelta } = getBounds()
+      const { minDelta, maxDelta, minBlocker, maxBlocker } = getBounds()
       const clamped = Math.max(minDelta, Math.min(maxDelta, colDelta))
-      if (dragRef.current && clamped !== colDelta) dragRef.current.hitBoundary = true
+      if (dragRef.current && clamped !== colDelta) {
+        const blockerId = colDelta < minDelta ? minBlocker : colDelta > maxDelta ? maxBlocker : null
+        if (blockerId) dragRef.current.blockedBarrier = [blockerId, ...Object.keys(originals)]
+        else dragRef.current.hitBoundary = true
+      }
       return clamped
     }
 
@@ -2027,7 +2085,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
       document.body.style.cursor = ''
-      const { hasMoved, blockedOverlap, hitBoundary } = dragRef.current || {}
+      const { hasMoved, blockedOverlap, blockedBarrier, hitBoundary } = dragRef.current || {}
       dragRef.current = null
       if (!hasMoved) return
 
@@ -2052,6 +2110,17 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         }
         return { ...m, startCol: newStartCol }
       })
+      const finalOrder = getMilestoneOrderViolation(milestonesRef.current, next, new Set(Object.keys(originals)))
+      if (finalOrder) {
+        Object.entries(originals).forEach(([id, orig]) => {
+          const el = milestoneElsRef.current.get(id)
+          if (el) el.style.left = `${orig.startCol * sp.colW}px`
+        })
+        updateDependencyPaths()
+        reportOverlapViolation(finalOrder)
+        return
+      }
+      if (blockedBarrier) reportOverlapViolation(blockedBarrier)
       if (updates.length) {
         const applyMove = async () => {
           const before = Object.entries(originals)

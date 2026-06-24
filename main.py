@@ -450,10 +450,11 @@ def _assert_before_matches(con, before: dict, after: dict):
 def _assert_final_state_valid(con, before: dict, after: dict):
     touched_ms = _state_ids(before, "milestones") | _state_ids(after, "milestones")
     touched_deps = _state_ids(before, "dependencies") | _state_ids(after, "dependencies")
+    current_ms = {row["id"]: _ms(row) for row in con.execute("SELECT * FROM milestones").fetchall()}
     final_ms = {
-        row["id"]: _ms(row)
-        for row in con.execute("SELECT * FROM milestones").fetchall()
-        if row["id"] not in touched_ms
+        mid: milestone
+        for mid, milestone in current_ms.items()
+        if mid not in touched_ms
     }
     final_deps = {
         row["id"]: _dep(row)
@@ -479,6 +480,34 @@ def _assert_final_state_valid(con, before: dict, after: dict):
                         "type": "overlap",
                         "milestoneIds": [first["id"], second["id"]],
                     })
+
+    comparable_ids = [mid for mid in current_ms.keys() if mid in final_ms]
+    for i, first_id in enumerate(comparable_ids):
+        for second_id in comparable_ids[i + 1:]:
+            if first_id not in touched_ms and second_id not in touched_ms:
+                continue
+            first_before = current_ms[first_id]
+            second_before = current_ms[second_id]
+            first_after = final_ms[first_id]
+            second_after = final_ms[second_id]
+            if first_before["goalId"] != second_before["goalId"] or first_after["goalId"] != second_after["goalId"]:
+                continue
+            before_relation = None
+            if first_before["startCol"] + first_before["duration"] <= second_before["startCol"]:
+                before_relation = "first-before-second"
+            elif second_before["startCol"] + second_before["duration"] <= first_before["startCol"]:
+                before_relation = "second-before-first"
+            after_relation = None
+            if first_after["startCol"] + first_after["duration"] <= second_after["startCol"]:
+                after_relation = "first-before-second"
+            elif second_after["startCol"] + second_after["duration"] <= first_after["startCol"]:
+                after_relation = "second-before-first"
+            if before_relation and after_relation and before_relation != after_relation:
+                raise HTTPException(422, {
+                    "message": "Milestones in the same goal row cannot pass each other",
+                    "type": "overlap",
+                    "milestoneIds": [first_id, second_id],
+                })
 
     deadlines = {row["goal_id"]: row["col"] for row in con.execute("SELECT goal_id, col FROM deadlines").fetchall()}
     for milestone in final_ms.values():
