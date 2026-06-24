@@ -1115,9 +1115,10 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const [blinkingDepIds, setBlinkingDepIds] = useState(new Set())
   const [blinkingMilestoneIds, setBlinkingMilestoneIds] = useState(new Set())
   const [autoSelectConflicts, setAutoSelectConflicts] = useState(true)
+  const autoSelectConflictsRef = useRef(true)
   const [deleteDraft, setDeleteDraft] = useState(null)
   const capturePerspectiveStateRef = useRef(null)
-  const applyPerspectiveRef = useRef(null)
+  const restorePerspectiveStateRef = useRef(null)
   const conflictRestoreTimerRef = useRef(null)
   const [dragOverGoalId, setDragOverGoalId] = useState(null)
   const [dragOverLaneCatId, setDragOverLaneCatId] = useState(null)
@@ -1126,6 +1127,11 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   useEffect(() => () => {
     if (conflictRestoreTimerRef.current) window.clearTimeout(conflictRestoreTimerRef.current)
+  }, [])
+
+  const handleAutoSelectConflictsChange = useCallback(enabled => {
+    autoSelectConflictsRef.current = enabled
+    setAutoSelectConflicts(enabled)
   }, [])
 
   const activeCategories = useMemo(
@@ -1262,7 +1268,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     })
     setBlinkingMilestoneIds(idSet)
     window.setTimeout(() => setBlinkingMilestoneIds(new Set()), 3000)
-    if (autoSelectConflicts) {
+    if (autoSelectConflictsRef.current) {
       setSelectedDepIds(new Set())
       setSelectedIds(idSet)
       return
@@ -1271,10 +1277,10 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     setSelectedDepIds(new Set())
     if (snapshot) {
       conflictRestoreTimerRef.current = window.setTimeout(() => {
-        applyPerspectiveRef.current?.({ id: activePerspectiveId, name: 'Temporary conflict snapshot', state: snapshot })
+        restorePerspectiveStateRef.current?.(snapshot)
       }, 3000)
     }
-  }, [activePerspectiveId, autoSelectConflicts, getConflictLaneKey])
+  }, [getConflictLaneKey])
 
   const toggleSavedFilter = useCallback(filterId => {
     setActiveFilterIds(prev => prev.includes(filterId) ? prev.filter(id => id !== filterId) : [...prev, filterId])
@@ -2653,7 +2659,13 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       setScrollLeft(scrollLeftRef.current)
     })
   }, [activeDimId, activeLaneFilterId, colorDimId])
-  applyPerspectiveRef.current = applyPerspective
+  restorePerspectiveStateRef.current = state => {
+    applyPerspective({
+      id: activePerspectiveId,
+      name: 'Temporary conflict snapshot',
+      state,
+    })
+  }
 
   const createPerspective = useCallback(async name => {
     try {
@@ -2883,7 +2895,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         showDeps={showDeps} onShowDepsChange={setShowDeps}
         hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={setHideCrossCatDeps}
         autoSelectConflicts={autoSelectConflicts}
-        onAutoSelectConflictsChange={setAutoSelectConflicts}
+        onAutoSelectConflictsChange={handleAutoSelectConflictsChange}
       />
 
       <div className={styles.canvasRow}>
