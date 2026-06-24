@@ -21,6 +21,11 @@ const EDGE_COLS       = 5     // columns from right edge before extending
 const DAY_ABR   = ['Su','Mo','Tu','We','Th','Fr','Sa']
 const MONTH_ABR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
+function makeColorCursor(color) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="10" fill="${color}" stroke="white" stroke-width="2"/></svg>`
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, crosshair`
+}
+
 // col 0 = today; col N = N days from today
 function colToDate(col) {
   const d = new Date(); d.setHours(0, 0, 0, 0)
@@ -149,8 +154,6 @@ function buildRowItems(goals, categories, assignments, assignmentOrders, activeD
   cats.forEach((cat, i) => addLane(cat, catMap[cat.id] ?? [], i === 0))
   if (!hiddenCatIds.has(UNASSIGNED_LANE) && (unassigned.length > 0 || cats.length === 0))
     addLane(null, unassigned, cats.length === 0)
-  const minH = MIN_ROWS * slotH
-  if (top < minH) { items.push({ type: 'empty', top, height: minH - top }); top = minH }
   return items
 }
 
@@ -501,7 +504,10 @@ function ScheduleLegendDropUp({ dimensions, colorDimId, onColorDimChange }) {
   )
 }
 
-function ScheduleColorLegendWidget({ dimensions, categories, colorDimId, onColorDimChange }) {
+function ScheduleColorLegendWidget({
+  dimensions, categories, colorDimId, onColorDimChange,
+  colorFilterCatId, onFilterToggle, paintCat, onPaintActivate,
+}) {
   const [expanded, setExpanded] = useState(false)
   const legendCats = categories.filter(c => c.dimensionId === colorDimId)
 
@@ -510,9 +516,22 @@ function ScheduleColorLegendWidget({ dimensions, categories, colorDimId, onColor
       {expanded && (
         <div className={styles.legendPanel}>
           {legendCats.map(cat => (
-            <div key={cat.id} className={styles.legendItem}>
+            <div key={cat.id}
+              className={`${styles.legendItem} ${paintCat?.id === cat.id ? styles.legendItemActive : ''}`}
+              onClick={e => {
+                e.stopPropagation()
+                onPaintActivate(cat.id, cat.color)
+              }}>
               <span className={styles.legendDot} style={{ background: cat.color }} />
               <span className={styles.legendName}>{cat.name}</span>
+              <button
+                className={`${styles.legendPaintBtn} ${colorFilterCatId === cat.id ? styles.legendPaintBtnActive : ''}`}
+                title="Filter goals by this category"
+                onClick={e => { e.stopPropagation(); onFilterToggle(cat.id) }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/>
+                </svg>
+              </button>
             </div>
           ))}
           {colorDimId && legendCats.length === 0 && (
@@ -579,6 +598,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const [mode,        setMode]        = useState('edit')
   const [activeDimId, setActiveDimId] = useState('')
   const [colorDimId,  setColorDimId]  = useState('')
+  const [colorFilterCatId, setColorFilterCatId] = useState('')
+  const [paintCat, setPaintCat] = useState(null)
   const [spacing,     setSpacing]     = useState(DEFAULT_SPACING)
   const [hiddenCatIds, setHiddenCatIds] = useState(new Set())
   const [hiddenGoalsByLane, setHiddenGoalsByLane] = useState({})
@@ -596,6 +617,11 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     setHiddenCatIds(new Set())
     setHiddenGoalsByLane({})
   }, [activeDimId])
+
+  useEffect(() => {
+    setColorFilterCatId('')
+    setPaintCat(null)
+  }, [colorDimId])
 
   const toggleGoalVisibility = useCallback((laneKey, goalId) => {
     setHiddenGoalsByLane(prev => {
@@ -621,6 +647,22 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   }, [])
 
   const showAllCategories = useCallback(() => setHiddenCatIds(new Set()), [])
+
+  const toggleColorFilter = useCallback(catId => {
+    setColorFilterCatId(prev => prev === catId ? '' : catId)
+  }, [])
+
+  const activatePaint = useCallback((catId, color) => {
+    setPaintCat(prev => prev?.id === catId ? null : { id: catId, color })
+  }, [])
+
+  const paintGoal = useCallback(async goalId => {
+    if (!paintCat || !colorDimId) return
+    try {
+      await api.assign(goalId, colorDimId, paintCat.id)
+      setAssignments(prev => ({ ...prev, [goalId]: { ...(prev[goalId] ?? {}), [colorDimId]: paintCat.id } }))
+    } catch (err) { console.error(err) }
+  }, [colorDimId, paintCat])
 
   // ── Infinite timeline state ────────────────────────────────────────────────
   const [totalDays,  setTotalDays]  = useState(INIT_TOTAL_DAYS)
@@ -675,10 +717,17 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const [scrollLeft,  setScrollLeft]  = useState(0)
   const [scrollTop,   setScrollTop]   = useState(0)
 
+  const visibleGoals = useMemo(
+    () => colorFilterCatId && colorDimId
+      ? goals.filter(g => assignments[g.id]?.[colorDimId] === colorFilterCatId)
+      : goals,
+    [assignments, colorDimId, colorFilterCatId, goals]
+  )
+
   // ── Row model ──────────────────────────────────────────────────────────────
   const rowItems = useMemo(
-    () => buildRowItems(goals, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenGoalsByLane),
-    [goals, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenGoalsByLane]
+    () => buildRowItems(visibleGoals, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenGoalsByLane),
+    [visibleGoals, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenGoalsByLane]
   )
   const rowItemsRef = useRef([])
   rowItemsRef.current = rowItems
@@ -692,9 +741,9 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   goalRowMapRef.current = goalRowMap
 
   const goalsForLane = useCallback(cat => {
-    if (!activeDimId) return goals
+    if (!activeDimId) return visibleGoals
     const key = laneKeyForCat(cat)
-    return goals.filter(goal => {
+    return visibleGoals.filter(goal => {
       const assignedCatId = assignments[goal.id]?.[activeDimId]
       return key === UNASSIGNED_LANE ? !assignedCatId : assignedCatId === key
     }).sort((a, b) => {
@@ -702,7 +751,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       const bo = assignmentOrders[b.id]?.[activeDimId] ?? Number.MAX_SAFE_INTEGER
       return ao - bo
     })
-  }, [activeDimId, assignmentOrders, assignments, goals])
+  }, [activeDimId, assignmentOrders, assignments, visibleGoals])
 
   const reorderGoalInLane = useCallback(async (dragGoalId, targetGoalId) => {
     if (!activeDimId || dragGoalId === targetGoalId) return
@@ -769,7 +818,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   const totalContentH = rowItems.length > 0
     ? rowItems[rowItems.length - 1].top + rowItems[rowItems.length - 1].height
-    : MIN_ROWS * spacing.rowH
+    : 0
 
   // Violations: recomputed whenever milestones or dependencies change
   const violationIds = useMemo(() => computeViolations(milestones, dependencies), [milestones, dependencies])
@@ -907,32 +956,42 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   }, [])
 
   // ── Context menu ───────────────────────────────────────────────────────────
-  const handleContextMenu = useCallback(e => {
-    e.preventDefault()
+  const getGoalCellFromPointer = useCallback(e => {
     const rect = gridBodyRef.current?.getBoundingClientRect(); if (!rect) return
     const sp   = spacingRef.current
     const relY = e.clientY - rect.top
     const rawX = e.clientX - rect.left + scrollLeftRef.current
     const col  = Math.floor(rawX / sp.colW)
+    if (col < 0 || col >= totalDaysRef.current) return null
 
-    if (relY < HEADER_H) {
+    if (relY < HEADER_H) return { type: 'header', col }
+
+    const rawY = e.clientY - rect.top + scrollTopRef.current - HEADER_H
+    const item = rowItemsRef.current.find(r => rawY >= r.top && rawY < r.top + r.height)
+    if (!item || item.type !== 'goal') return null
+
+    let color = '#1a73e8'
+    if (item.cat?.color) color = item.cat.color
+
+    return { type: 'cell', col, goalId: item.goal.id, goalTitle: item.goal.title, color }
+  }, [])
+
+  const handleContextMenu = useCallback(e => {
+    e.preventDefault()
+    const cell = getGoalCellFromPointer(e)
+    if (!cell) return
+
+    if (cell.type === 'header') {
+      const { col } = cell
       setContextMenu({ type: 'header', x: e.clientX, y: e.clientY, col })
       return
     }
     if (e.target.closest('[data-ms-id]')) return  // right-click on milestone — skip for now
 
-    const rawY = e.clientY - rect.top + scrollTopRef.current - HEADER_H
-    const item = rowItemsRef.current.find(r => rawY >= r.top && rawY < r.top + r.height)
-    if (!item || item.type !== 'goal') return
-
-    // Compute suggested milestone color from category
-    let color = '#1a73e8'
-    if (item.cat?.color) color = item.cat.color
-
-    const hasDeadline = deadlinesRef.current.some(d => d.goalId === item.goal.id)
-    setContextMenu({ type: 'cell', x: e.clientX, y: e.clientY, col,
-      goalId: item.goal.id, goalTitle: item.goal.title, color, hasDeadline })
-  }, [])
+    const hasDeadline = deadlinesRef.current.some(d => d.goalId === cell.goalId)
+    setContextMenu({ type: 'cell', x: e.clientX, y: e.clientY, col: cell.col,
+      goalId: cell.goalId, goalTitle: cell.goalTitle, color: cell.color, hasDeadline })
+  }, [getGoalCellFromPointer])
 
   // ── Milestone CRUD ─────────────────────────────────────────────────────────
   const handleCreateMilestone = useCallback(async (goalId, startCol, color) => {
@@ -942,6 +1001,15 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       setMilestones(prev => [...prev, ms])
     } catch (err) { console.error(err) }
   }, [])
+
+  const handleGridDoubleClick = useCallback(e => {
+    if (modeRef.current !== 'edit') return
+    if (e.target.closest('[data-ms-id]')) return
+    const cell = getGoalCellFromPointer(e)
+    if (!cell || cell.type !== 'cell') return
+    e.preventDefault()
+    handleCreateMilestone(cell.goalId, cell.col, cell.color)
+  }, [getGoalCellFromPointer, handleCreateMilestone])
 
   // ── Column insert / delete ─────────────────────────────────────────────────
   const handleInsertDay = useCallback(async col => {
@@ -1458,7 +1526,10 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className={styles.page}>
+    <div
+      className={`${styles.page} ${paintCat ? styles.paintMode : ''}`}
+      style={paintCat ? { cursor: makeColorCursor(paintCat.color) } : undefined}
+      onClick={paintCat ? () => setPaintCat(null) : undefined}>
       <GanttToolbar
         dimensions={dimensions} activeDimId={activeDimId} onDimChange={setActiveDimId}
         activeCategories={activeCategories}
@@ -1512,8 +1583,9 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
                         inLaneMode ? styles.goalRowLane : styles.goalRow,
                         dragOverGoalId === item.goal.id && styles.goalRowDropTarget,
                       ].filter(Boolean).join(' ')}
-                      draggable={Boolean(activeDimId && item.cat)}
+                      draggable={Boolean(activeDimId && item.cat) && !paintCat}
                       onDragStart={e => {
+                        if (paintCat) return
                         if (!activeDimId || !item.cat) return
                         e.dataTransfer.setData('schedule-goal-id', item.goal.id)
                         e.dataTransfer.effectAllowed = 'move'
@@ -1542,6 +1614,15 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
                         if (dragGoalId) reorderGoalInLane(dragGoalId, item.goal.id)
                       }}
                       onDragEnd={() => setDragOverGoalId(null)}
+                      onClick={paintCat ? e => {
+                        e.stopPropagation()
+                        paintGoal(item.goal.id)
+                      } : undefined}
+                      onDoubleClick={e => {
+                        e.stopPropagation()
+                        if (paintCat) return
+                        onGoalOpen?.(item.goal.id)
+                      }}
                       style={{ top: item.top, height: item.height, borderLeftColor: item.cat?.color ?? 'transparent' }}>
                       <span className={styles.goalTitle}>{item.goal.title}</span>
                     </div>
@@ -1558,6 +1639,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
           onMouseDown={handleGridMouseDown}
+          onDoubleClick={handleGridDoubleClick}
           onContextMenu={handleContextMenu}>
 
           <div ref={gridInnerRef} className={styles.gridInner}
@@ -1659,8 +1741,23 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
                     height:     msH,
                     background: getMilestoneColor(m),
                   }}
-                  onMouseDown={e => handleMilestoneMouseDown(e, m.id, null)}
-                  onDoubleClick={e => { e.stopPropagation(); onGoalOpen?.(m.goalId) }}>
+                  onMouseDown={e => {
+                    if (paintCat) {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      return
+                    }
+                    handleMilestoneMouseDown(e, m.id, null)
+                  }}
+                  onClick={paintCat ? e => {
+                    e.stopPropagation()
+                    paintGoal(m.goalId)
+                  } : undefined}
+                  onDoubleClick={e => {
+                    e.stopPropagation()
+                    if (paintCat) return
+                    onGoalOpen?.(m.goalId)
+                  }}>
                   <div
                     className={[styles.msHandle, isDepMode && styles.depHandle, isDepMode && isSource && styles.depHandleSource].filter(Boolean).join(' ')}
                     data-ms-id={m.id}
@@ -1668,6 +1765,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
                     data-dep-side={isDepMode ? 'left' : undefined}
                     onMouseDown={e => {
                       e.stopPropagation()
+                      if (paintCat) return
                       if (isDepMode) startDependencyDrag(e, m.id, 'left')
                       else handleMilestoneMouseDown(e, m.id, 'left')
                     }} />
@@ -1679,6 +1777,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
                     data-dep-side={isDepMode ? 'right' : undefined}
                     onMouseDown={e => {
                       e.stopPropagation()
+                      if (paintCat) return
                       if (isDepMode) startDependencyDrag(e, m.id, 'right')
                       else handleMilestoneMouseDown(e, m.id, 'right')
                     }} />
@@ -1744,6 +1843,10 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         categories={categories}
         colorDimId={colorDimId}
         onColorDimChange={setColorDimId}
+        colorFilterCatId={colorFilterCatId}
+        onFilterToggle={toggleColorFilter}
+        paintCat={paintCat}
+        onPaintActivate={activatePaint}
       />
 
       <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)}

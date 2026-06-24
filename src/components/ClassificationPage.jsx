@@ -4,10 +4,37 @@ import styles from './ClassificationPage.module.css'
 import { api } from '../api'
 
 const PRESET_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#94a3b8']
+const FILTER_STORAGE_KEY = 'goals.classification.namedFilters.v1'
 
 function makeColorCursor(color) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="10" fill="${color}" stroke="white" stroke-width="2"/></svg>`
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, crosshair`
+}
+
+function makeFilterId() {
+  return `filter-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+}
+
+function normalizeFilter(filter) {
+  const selections = {}
+  Object.entries(filter?.selections ?? {}).forEach(([dimId, catIds]) => {
+    const ids = Array.isArray(catIds) ? [...new Set(catIds)].filter(Boolean) : []
+    if (ids.length) selections[dimId] = ids
+  })
+  return {
+    id: filter?.id || makeFilterId(),
+    name: (filter?.name || 'Untitled filter').trim(),
+    gate: filter?.gate === 'OR' ? 'OR' : 'AND',
+    selections,
+    quickKey: filter?.quickKey || null,
+  }
+}
+
+function filterMatchesGoal(filter, goalId, assignments) {
+  const entries = Object.entries(filter.selections).filter(([, catIds]) => catIds.length > 0)
+  if (entries.length === 0) return false
+  const matchesDim = ([dimId, catIds]) => catIds.includes(assignments[goalId]?.[dimId])
+  return filter.gate === 'OR' ? entries.some(matchesDim) : entries.every(matchesDim)
 }
 
 // ── Classification toolbar ────────────────────────────────────────────────────
@@ -184,7 +211,7 @@ function CategoryEditModal({ cat, onClose, onSave, onDelete }) {
 }
 
 // ── Goal row inside a container ───────────────────────────────────────────────
-function GoalRow({ goal, paintCat, onPaint, legendColor, onReorder, onOpen }) {
+function GoalRow({ goal, paintCat, onPaint, legendColor, onGoalDrop, onOpen }) {
   const [expanded, setExpanded] = useState(false)
   const [dragging, setDragging] = useState(false)
 
@@ -217,7 +244,7 @@ function GoalRow({ goal, paintCat, onPaint, legendColor, onReorder, onOpen }) {
         e.preventDefault()
         e.stopPropagation()
         const dragGoalId = e.dataTransfer.getData('goalId')
-        if (dragGoalId) onReorder?.(dragGoalId, goal.id)
+        if (dragGoalId) onGoalDrop?.(dragGoalId, goal.id)
       }}
       onDragEnd={paintCat ? undefined : () => setDragging(false)}
       onClick={paintCat ? e => { e.stopPropagation(); onPaint(goal.id) } : undefined}
@@ -247,6 +274,20 @@ function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onE
   const dragCounter = useRef(0)
   const boxRef = useRef()
 
+  const clearDragOver = () => {
+    dragCounter.current = 0
+    setIsDragOver(false)
+  }
+
+  useEffect(() => {
+    window.addEventListener('dragend', clearDragOver)
+    window.addEventListener('drop', clearDragOver)
+    return () => {
+      window.removeEventListener('dragend', clearDragOver)
+      window.removeEventListener('drop', clearDragOver)
+    }
+  }, [])
+
   const handleDragEnter = e => {
     e.preventDefault()
     if (e.dataTransfer.types.includes('catdrag')) return
@@ -272,11 +313,19 @@ function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onE
   const handleDrop = e => {
     e.preventDefault()
     e.stopPropagation()
-    dragCounter.current = 0
-    setIsDragOver(false)
+    clearDragOver()
     if (e.dataTransfer.types.includes('catdrag')) { onCatDrop?.(); return }
     const goalId = e.dataTransfer.getData('goalId')
     if (goalId) onDrop(goalId)
+  }
+  const handleGoalDrop = (dragGoalId, targetGoalId) => {
+    clearDragOver()
+    if (dragGoalId === targetGoalId) return
+    if (goals.some(g => g.id === dragGoalId)) {
+      onReorderGoal?.(cat?.id, dragGoalId, targetGoalId)
+    } else {
+      onDrop(dragGoalId)
+    }
   }
 
   const cls = [
@@ -347,7 +396,7 @@ function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onE
         {goals.length === 0
           ? <div className={styles.catBoxEmpty}>Drop goals here</div>
           : goals.map(g => <GoalRow key={g.id} goal={g} paintCat={paintCat} onPaint={onPaint} legendColor={getGoalColor?.(g.id)}
-              onReorder={(dragGoalId, targetGoalId) => onReorderGoal?.(cat?.id, dragGoalId, targetGoalId)}
+              onGoalDrop={handleGoalDrop}
               onOpen={onGoalOpen} />)
         }
       </div>
@@ -450,11 +499,163 @@ function LegendDropUp({ dimensions, legendDimId, onLegend }) {
   )
 }
 
+function FilterEditorModal({ filter, dimensions, categories, onSave, onDelete, onClose }) {
+  const [name, setName] = useState(filter?.name ?? 'New filter')
+  const [gate, setGate] = useState(filter?.gate ?? 'AND')
+  const [selections, setSelections] = useState(filter?.selections ?? {})
+  const isEdit = Boolean(filter?.id)
+
+  const toggleCat = (dimId, catId) => {
+    setSelections(prev => {
+      const current = new Set(prev[dimId] ?? [])
+      if (current.has(catId)) current.delete(catId)
+      else current.add(catId)
+      const next = { ...prev }
+      const ids = [...current]
+      if (ids.length) next[dimId] = ids
+      else delete next[dimId]
+      return next
+    })
+  }
+
+  const save = () => {
+    onSave(normalizeFilter({
+      ...filter,
+      name: name.trim() || 'Untitled filter',
+      gate,
+      selections,
+    }))
+  }
+
+  return createPortal(
+    <div className={styles.modalBackdrop} onClick={onClose}>
+      <div className={`${styles.modal} ${styles.filterModal}`} onClick={e => e.stopPropagation()}>
+        <div className={styles.filterModalHeader}>
+          <input
+            className={styles.filterNameInput}
+            value={name}
+            onChange={e => setName(e.target.value)}
+            autoFocus
+          />
+          <div className={styles.filterGateToggle}>
+            <button
+              className={gate === 'AND' ? styles.filterGateActive : ''}
+              onClick={() => setGate('AND')}>
+              AND
+            </button>
+            <button
+              className={gate === 'OR' ? styles.filterGateActive : ''}
+              onClick={() => setGate('OR')}>
+              OR
+            </button>
+          </div>
+        </div>
+
+        <div className={styles.filterDimList}>
+          {dimensions.map(dim => {
+            const dimCats = categories.filter(c => c.dimensionId === dim.id)
+            return (
+              <section key={dim.id} className={styles.filterDimSection}>
+                <div className={styles.filterDimTitle}>{dim.name}</div>
+                <div className={styles.filterCatGrid}>
+                  {dimCats.length === 0 ? (
+                    <span className={styles.filterEmpty}>No categories</span>
+                  ) : dimCats.map(cat => (
+                    <label key={cat.id} className={styles.filterCatOption}>
+                      <input
+                        type="checkbox"
+                        checked={(selections[dim.id] ?? []).includes(cat.id)}
+                        onChange={() => toggleCat(dim.id, cat.id)}
+                      />
+                      <span className={styles.legendDot} style={{ background: cat.color }} />
+                      <span>{cat.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </section>
+            )
+          })}
+        </div>
+
+        <div className={styles.modalActions}>
+          {isEdit && (
+            <button className={styles.dangerBtn} onClick={() => onDelete(filter.id)}>
+              Delete
+            </button>
+          )}
+          <div style={{ flex: 1 }} />
+          <button className={styles.cancelBtn} onClick={onClose}>Cancel</button>
+          <button className={styles.submitBtn} onClick={save}>{isEdit ? 'Save' : 'Create'}</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
+function FilterDropDown({
+  namedFilters, activeFilterIds, onToggleFilter, onCreateFilter, onEditFilter, onClearFilters,
+}) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef()
+
+  useEffect(() => {
+    if (!open) return
+    const close = e => { if (!wrapRef.current?.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+
+  return (
+    <div ref={wrapRef} className={styles.filterDropWrap}>
+      <button className={`${styles.filterDropBtn} ${open ? styles.filterDropBtnOpen : ''}`} onClick={() => setOpen(v => !v)}>
+        Filters
+        {activeFilterIds.length > 0 && <span className={styles.filterCount}>{activeFilterIds.length}</span>}
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"
+          style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', flexShrink: 0 }}>
+          <path d="M7 10l5 5 5-5z"/>
+        </svg>
+      </button>
+      {open && (
+        <div className={styles.filterDropMenu}>
+          <button className={styles.filterCreateBtn} onClick={() => { onCreateFilter(); setOpen(false) }}>
+            + Create filter
+          </button>
+          {activeFilterIds.length > 0 && (
+            <button className={styles.filterClearBtn} onClick={onClearFilters}>
+              Clear active filters
+            </button>
+          )}
+          {namedFilters.length === 0 ? (
+            <div className={styles.filterEmpty}>No filters</div>
+          ) : namedFilters.map(filter => (
+            <div key={filter.id} className={styles.filterDropItem}>
+              <label className={styles.filterCheckLabel}>
+                <input
+                  type="checkbox"
+                  checked={activeFilterIds.includes(filter.id)}
+                  onChange={() => onToggleFilter(filter.id)}
+                />
+                <span>{filter.name}</span>
+              </label>
+              <button
+                className={styles.filterEditBtn}
+                onClick={() => { onEditFilter(filter); setOpen(false) }}>
+                Edit
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Legend widget (floating, collapsible) ─────────────────────────────────────
 function LegendWidget({
   dimensions, categories, legendDimId, onLegend,
-  filterLegendCatId, onFilterToggle, paintCat, onPaintActivate, onEditCat,
-  onCreateCat,
+  namedFilters, activeFilterIds, onToggleFilter, onToggleCategoryFilter, onCreateFilter,
+  onEditFilter, onClearFilters, paintCat, onPaintActivate, onEditCat, onCreateCat,
 }) {
   const [expanded, setExpanded] = useState(false)
   const [addingCat, setAddingCat] = useState(false)
@@ -476,6 +677,15 @@ function LegendWidget({
     <div className={styles.legendWidget}>
       {expanded && (
         <div className={styles.legendPanel}>
+          <FilterDropDown
+            namedFilters={namedFilters}
+            activeFilterIds={activeFilterIds}
+            onToggleFilter={onToggleFilter}
+            onCreateFilter={onCreateFilter}
+            onEditFilter={onEditFilter}
+            onClearFilters={onClearFilters}
+          />
+
           {/* Add category form */}
           {legendDimId && (
             addingCat ? (
@@ -506,17 +716,24 @@ function LegendWidget({
           {/* Legend items */}
           {legendCats.map(cat => (
             <div key={cat.id}
-              className={`${styles.legendItem} ${filterLegendCatId === cat.id ? styles.legendItemActive : ''}`}
-              onClick={() => onFilterToggle(cat.id)}
+              className={`${styles.legendItem} ${paintCat?.id === cat.id ? styles.legendItemActive : ''}`}
+              onClick={e => {
+                e.stopPropagation()
+                onPaintActivate(cat.id, cat.color)
+              }}
               onDoubleClick={() => onEditCat(cat)}>
               <span className={styles.legendDot} style={{ background: cat.color }} />
               <span className={styles.legendName}>{cat.name}</span>
               <button
-                className={`${styles.legendPaintBtn} ${paintCat?.id === cat.id ? styles.legendPaintBtnActive : ''}`}
-                title="Paint goals with this category"
-                onClick={e => { e.stopPropagation(); onPaintActivate(cat.id, cat.color) }}>
+                className={`${styles.legendPaintBtn} ${activeFilterIds.some(id => namedFilters.find(f => f.id === id)?.selections?.[legendDimId]?.includes(cat.id)) ? styles.legendPaintBtnActive : ''}`}
+                title="Filter goals by this category"
+                onClick={e => {
+                  e.stopPropagation()
+                  onToggleCategoryFilter(legendDimId, cat)
+                }}
+                onDoubleClick={e => e.stopPropagation()}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M7 14c-1.66 0-3 1.34-3 3 0 1.31-1.16 2-2 2 .92 1.22 2.49 2 4 2 2.21 0 4-1.79 4-4 0-1.66-1.34-3-3-3zm13.71-9.37-1.34-1.34a1 1 0 0 0-1.41 0L9 12.25 11.75 15l8.96-8.96a1 1 0 0 0 0-1.41z"/>
+                  <path d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/>
                 </svg>
               </button>
             </div>
@@ -547,7 +764,9 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
   const [assignmentOrders, setAssignmentOrders] = useState({})
   const [containerDimId, setContainerDimId] = useState('')
   const [legendDimId, setLegendDimId]       = useState('')
-  const [filterLegendCatId, setFilterLegendCatId] = useState('')
+  const [namedFilters, setNamedFilters] = useState([])
+  const [activeFilterIds, setActiveFilterIds] = useState([])
+  const [editingFilter, setEditingFilter] = useState(null)
   const [paintCat, setPaintCat]             = useState(null)
   const [editCat, setEditCat]               = useState(null)
   const [confirmDeleteDimId, setConfirmDeleteDimId] = useState(null)
@@ -580,7 +799,19 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
   }, [])
 
   useEffect(() => {
-    setFilterLegendCatId('')
+    try {
+      const saved = JSON.parse(localStorage.getItem(FILTER_STORAGE_KEY) || '[]')
+      if (Array.isArray(saved)) setNamedFilters(saved.map(normalizeFilter))
+    } catch (e) {
+      console.error(e)
+    }
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(namedFilters))
+  }, [namedFilters])
+
+  useEffect(() => {
     setPaintCat(null)
   }, [legendDimId])
 
@@ -598,6 +829,11 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
       setCategories(p => p.filter(c => c.dimensionId !== id))
       if (containerDimId === id) setContainerDimId('')
       if (legendDimId === id) setLegendDimId('')
+      setNamedFilters(prev => prev.map(filter => {
+        const selections = { ...filter.selections }
+        delete selections[id]
+        return normalizeFilter({ ...filter, selections })
+      }))
     } catch (e) { console.error(e) }
   }
 
@@ -625,14 +861,55 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
         return next
       })
       if (paintCat?.id === id) setPaintCat(null)
-      if (filterLegendCatId === id) setFilterLegendCatId('')
+      setNamedFilters(prev => prev.map(filter => normalizeFilter({
+        ...filter,
+        selections: Object.fromEntries(
+          Object.entries(filter.selections).map(([dimId, catIds]) => [dimId, catIds.filter(catId => catId !== id)])
+        ),
+      })))
     } catch (e) { console.error(e) }
   }
 
-  const toggleFilter = catId => setFilterLegendCatId(prev => prev === catId ? '' : catId)
-
   const activatePaint = (catId, color) => {
     setPaintCat(prev => prev?.id === catId ? null : { id: catId, color })
+  }
+
+  const saveNamedFilter = filter => {
+    const normalized = normalizeFilter(filter)
+    setNamedFilters(prev => {
+      const exists = prev.some(f => f.id === normalized.id)
+      return exists ? prev.map(f => f.id === normalized.id ? normalized : f) : [...prev, normalized]
+    })
+    setActiveFilterIds(prev => prev.includes(normalized.id) ? prev : [...prev, normalized.id])
+    setEditingFilter(null)
+  }
+
+  const deleteNamedFilter = id => {
+    setNamedFilters(prev => prev.filter(f => f.id !== id))
+    setActiveFilterIds(prev => prev.filter(filterId => filterId !== id))
+    setEditingFilter(null)
+  }
+
+  const toggleNamedFilter = id => {
+    setActiveFilterIds(prev => prev.includes(id) ? prev.filter(filterId => filterId !== id) : [...prev, id])
+  }
+
+  const toggleCategoryFilter = (dimId, cat) => {
+    if (!dimId || !cat) return
+    const quickKey = `${dimId}:${cat.id}`
+    const existing = namedFilters.find(f => f.quickKey === quickKey)
+    if (existing) {
+      toggleNamedFilter(existing.id)
+      return
+    }
+    const filter = normalizeFilter({
+      name: cat.name,
+      gate: 'AND',
+      selections: { [dimId]: [cat.id] },
+      quickKey,
+    })
+    setNamedFilters(prev => [...prev, filter])
+    setActiveFilterIds(prev => [...prev, filter.id])
   }
 
   const assignGoal = async (goalId, catId) => {
@@ -707,8 +984,12 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
     return categories.find(c => c.id === catId)?.color ?? null
   }
 
-  const visibleGoals = filterLegendCatId && legendDimId
-    ? goals.filter(g => assignments[g.id]?.[legendDimId] === filterLegendCatId)
+  const activeFilters = activeFilterIds
+    .map(id => namedFilters.find(filter => filter.id === id))
+    .filter(Boolean)
+
+  const visibleGoals = activeFilters.length
+    ? goals.filter(g => activeFilters.some(filter => filterMatchesGoal(filter, g.id, assignments)))
     : goals
 
   const goalsForCat = catId => visibleGoals.filter(g => assignments[g.id]?.[containerDimId] === catId)
@@ -825,8 +1106,13 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
           categories={categories}
           legendDimId={legendDimId}
           onLegend={setLegendDimId}
-          filterLegendCatId={filterLegendCatId}
-          onFilterToggle={toggleFilter}
+          namedFilters={namedFilters}
+          activeFilterIds={activeFilterIds}
+          onToggleFilter={toggleNamedFilter}
+          onToggleCategoryFilter={toggleCategoryFilter}
+          onCreateFilter={() => setEditingFilter({})}
+          onEditFilter={setEditingFilter}
+          onClearFilters={() => setActiveFilterIds([])}
           paintCat={paintCat}
           onPaintActivate={activatePaint}
           onEditCat={setEditCat}
@@ -864,6 +1150,17 @@ export default function ClassificationPage({ goals = [], onGoalOpen }) {
           onClose={() => setEditCat(null)}
           onSave={updateCategory}
           onDelete={deleteCategory}
+        />
+      )}
+
+      {editingFilter && (
+        <FilterEditorModal
+          filter={editingFilter.id ? editingFilter : null}
+          dimensions={dimensions}
+          categories={categories}
+          onSave={saveNamedFilter}
+          onDelete={deleteNamedFilter}
+          onClose={() => setEditingFilter(null)}
         />
       )}
     </div>
