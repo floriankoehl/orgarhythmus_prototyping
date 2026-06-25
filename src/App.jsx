@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import Header from './components/Header'
-import Toolbar from './components/Toolbar'
-import DocumentCanvas from './components/DocumentCanvas'
 import ClassificationPage from './components/ClassificationPage'
 import SchedulePage from './components/SchedulePage'
 import BrainstormV2 from './components/BrainstormV2'
@@ -12,7 +10,7 @@ import ProjectDashboard from './components/ProjectDashboard'
 import { api, setProjectId } from './api'
 import styles from './App.module.css'
 
-const PAGE_COUNT = 3
+const PAGE_COUNT = 4
 
 // ── Success toast ─────────────────────────────────────────────────────────────
 function Toast({ toast, onOpen, onDismiss }) {
@@ -51,7 +49,7 @@ export default function App() {
   const [navDragOffset, setNavDragOffset] = useState(0)
   const [navDragging, setNavDragging] = useState(false)
   const [activeProject, setActiveProject] = useState(null)
-  const [appScreen, setAppScreen] = useState('home') // 'home' | 'dashboard' | 'workspace'
+  const [appScreen, setAppScreen] = useState('home') // 'home' | 'workspace'
   const [goals, setGoals] = useState([])
   const [refreshKey, setRefreshKey] = useState(0)
   const [popupGoalId, setPopupGoalId] = useState(null)
@@ -63,21 +61,13 @@ export default function App() {
     setGoals([])
     setToast(null)
     setPopupGoalId(null)
+    setView(0)
     setRefreshKey(0)
-    setAppScreen('dashboard')
+    setAppScreen('workspace')
   }
 
   const handleProjectUpdate = (updated) => {
     setActiveProject(updated)
-  }
-
-  const enterWorkspace = (wsView = 0) => {
-    setView(wsView)
-    setAppScreen('workspace')
-  }
-
-  const backToDashboard = () => {
-    setAppScreen('dashboard')
   }
 
   const backToHome = () => {
@@ -248,56 +238,45 @@ export default function App() {
     )
   }
 
-  if (appScreen === 'dashboard') {
-    return (
-      <div className={styles.app}>
-        <ProjectDashboard
-          project={activeProject}
-          onUpdate={handleProjectUpdate}
-          onBack={backToHome}
-          onEnterWorkspace={enterWorkspace}
-        />
-      </div>
-    )
-  }
-
   // appScreen === 'workspace'
   return (
     <div className={styles.app}>
       <Header
         view={view} onNavigate={setView} onQuickAdd={handleQuickAdd}
-        projectName={activeProject.name} onBack={backToDashboard}
+        projectName={activeProject.name} onBack={backToHome}
       />
       <div
         className={`${styles.slider} ${navDragging ? styles.sliderDragging : ''}`}
         style={{ transform: `translateX(calc(${-view * 100}vw + ${navDragOffset}px))` }}>
 
-        {/* View 0 — Brainstorming */}
-        {/* <div className={styles.view}>
-          <Toolbar />
-          <DocumentCanvas onGoalsChange={setGoals} refreshKey={refreshKey} />
-        </div> */}
-        {/* View 3 — Flow (BrainstormV2) */}
+        {/* View 0 — Project Dashboard */}
+        <div className={styles.view}>
+          <ProjectDashboard
+            project={activeProject}
+            onUpdate={handleProjectUpdate}
+            isActive={view === 0}
+          />
+        </div>
+
+        {/* View 1 — Goals */}
         <div className={styles.view}>
           <BrainstormV2 goals={goals} onGoalCreated={handleGoalCreated} />
         </div>
 
-        {/* View 1 — Classification */}
+        {/* View 2 — Classification */}
         <div className={styles.view}>
-          <ClassificationPage goals={goals} isActive={view === 1} onGoalOpen={openGoalPopup} />
+          <ClassificationPage goals={goals} isActive={view === 2} onGoalOpen={openGoalPopup} />
         </div>
 
-        {/* View 2 — Schedule */}
+        {/* View 3 — Schedule */}
         <div className={styles.view}>
           <SchedulePage
             goals={goals}
-            isActive={view === 2}
+            isActive={view === 3}
             onGoalOpen={openGoalPopup}
             defaultMetric={activeProject?.metric ?? 'days'}
           />
         </div>
-
-        
 
       </div>
 

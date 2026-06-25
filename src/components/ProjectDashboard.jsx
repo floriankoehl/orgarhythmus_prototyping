@@ -27,24 +27,30 @@ function StatCard({ label, value }) {
   )
 }
 
-export default function ProjectDashboard({ project, onUpdate, onBack, onEnterWorkspace }) {
-  const [name,   setName]   = useState(project.name)
-  const [desc,   setDesc]   = useState(project.description || '')
-  const [metric, setMetric] = useState(project.metric || 'days')
-  const [stats,  setStats]  = useState(null)
+export default function ProjectDashboard({ project, onUpdate, isActive }) {
+  const [name,        setName]        = useState(project.name)
+  const [desc,        setDesc]        = useState(project.description || '')
+  const [metric,      setMetric]      = useState(project.metric || 'days')
+  const [stats,       setStats]       = useState(null)
   const [editingName, setEditingName] = useState(false)
+  const [editingDesc, setEditingDesc] = useState(false)
+  const [draftDesc,   setDraftDesc]   = useState(project.description || '')
+  const [exporting,   setExporting]   = useState(false)
   const nameInputRef = useRef()
   const saveTimerRef = useRef(null)
 
   useEffect(() => {
     setName(project.name)
     setDesc(project.description || '')
+    setDraftDesc(project.description || '')
     setMetric(project.metric || 'days')
   }, [project.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    projectsApi.getProjectStats(project.id).then(setStats).catch(console.error)
-  }, [project.id])
+    if (isActive) {
+      projectsApi.getProjectStats(project.id).then(setStats).catch(console.error)
+    }
+  }, [project.id, isActive])
 
   useEffect(() => {
     if (editingName) nameInputRef.current?.focus()
@@ -69,37 +75,47 @@ export default function ProjectDashboard({ project, onUpdate, onBack, onEnterWor
     if (e.key === 'Enter' || e.key === 'Escape') nameInputRef.current?.blur()
   }
 
-  const handleDescChange = (val) => {
-    setDesc(val)
-    persist({ description: val })
+  const handleDescSave = () => {
+    setDesc(draftDesc)
+    setEditingDesc(false)
+    persist({ description: draftDesc })
   }
 
-  const handleMetricChange = (val) => {
+  const handleDescCancel = () => {
+    setDraftDesc(desc)
+    setEditingDesc(false)
+  }
+
+  const handleMetricChange = (e) => {
+    const val = e.target.value
     setMetric(val)
     persist({ metric: val })
     onUpdate({ ...project, metric: val })
   }
 
-  const metricLabel = PROJECT_METRICS.find(m => m.value === metric)?.label ?? metric
-  const date = new Date(project.createdAt)
-  const dateStr = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      const data = await projectsApi.exportDatabase()
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const date = new Date().toISOString().split('T')[0]
+      a.download = `orgarythmus_${date}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('Export failed', e)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return (
     <div className={styles.page}>
-      {/* Top bar */}
-      <div className={styles.topBar}>
-        <button className={styles.backBtn} onClick={onBack}>
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path d="M9 2L4 7l5 5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          All projects
-        </button>
-        <div className={styles.topBarRight}>
-          <span className={styles.topBarDate}>Created {dateStr}</span>
-        </div>
-      </div>
-
-      {/* Main content */}
       <div className={styles.content}>
 
         {/* Project name */}
@@ -121,36 +137,6 @@ export default function ProjectDashboard({ project, onUpdate, onBack, onEnterWor
           )}
         </div>
 
-        {/* Description */}
-        <div className={styles.section}>
-          <label className={styles.sectionLabel}>Description</label>
-          <textarea
-            className={styles.descTextarea}
-            value={desc}
-            onChange={e => handleDescChange(e.target.value)}
-            placeholder="Add a description for this project…"
-            rows={3}
-          />
-        </div>
-
-        {/* Metric */}
-        <div className={styles.section}>
-          <label className={styles.sectionLabel}>Time metric</label>
-          <div className={styles.metricPills}>
-            {PROJECT_METRICS.map(m => (
-              <button
-                key={m.value}
-                className={`${styles.metricPill} ${metric === m.value ? styles.metricPillActive : ''}`}
-                onClick={() => handleMetricChange(m.value)}>
-                {m.label}
-              </button>
-            ))}
-          </div>
-          <p className={styles.metricHint}>
-            Sets how columns are labelled on the Gantt chart. Currently: <strong>{metricLabel}</strong>.
-          </p>
-        </div>
-
         {/* Stats */}
         <div className={styles.section}>
           <label className={styles.sectionLabel}>Overview</label>
@@ -161,27 +147,63 @@ export default function ProjectDashboard({ project, onUpdate, onBack, onEnterWor
           </div>
         </div>
 
-        {/* Enter workspace */}
-        <div className={styles.workspaceRow}>
-          <button className={styles.workspaceBtn} onClick={() => onEnterWorkspace(0)}>
-            Goals
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M5 2l5 5-5 5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </button>
-          <button className={styles.workspaceBtn} onClick={() => onEnterWorkspace(1)}>
-            Classification
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M5 2l5 5-5 5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </button>
-          <button className={`${styles.workspaceBtn} ${styles.workspaceBtnPrimary}`} onClick={() => onEnterWorkspace(2)}>
-            Schedule
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M5 2l5 5-5 5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
+        {/* Description */}
+        <div className={styles.section}>
+          <div className={styles.sectionHeader}>
+            <label className={styles.sectionLabel}>Description</label>
+            {!editingDesc && (
+              <button className={styles.editBtn} onClick={() => { setDraftDesc(desc); setEditingDesc(true) }}>
+                Edit
+              </button>
+            )}
+          </div>
+          {editingDesc ? (
+            <div className={styles.descEditBlock}>
+              <textarea
+                className={styles.descTextarea}
+                value={draftDesc}
+                onChange={e => setDraftDesc(e.target.value)}
+                placeholder="Add a description for this project…"
+                rows={4}
+                autoFocus
+              />
+              <div className={styles.descActions}>
+                <button className={styles.descCancel} onClick={handleDescCancel}>Cancel</button>
+                <button className={styles.descSave} onClick={handleDescSave}>Save</button>
+              </div>
+            </div>
+          ) : (
+            <p className={styles.descText}>
+              {desc || <span className={styles.descPlaceholder}>No description yet.</span>}
+            </p>
+          )}
+        </div>
+
+        {/* Footer row: metric + export */}
+        <div className={styles.footerRow}>
+          <div className={styles.metricRow}>
+            <label className={styles.metricLabel} htmlFor="metric-select">Metric</label>
+            <select
+              id="metric-select"
+              className={styles.metricSelect}
+              value={metric}
+              onChange={handleMetricChange}
+            >
+              {PROJECT_METRICS.map(m => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+          </div>
+          <button
+            className={styles.exportBtn}
+            onClick={handleExport}
+            disabled={exporting}
+            title="Download a JSON snapshot of all projects and data"
+          >
+            {exporting ? 'Saving…' : 'Save snapshot'}
           </button>
         </div>
+
       </div>
     </div>
   )

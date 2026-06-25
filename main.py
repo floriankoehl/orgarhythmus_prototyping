@@ -1406,3 +1406,41 @@ def set_deadline(goal_id: str, data: DeadlineColIn):
 def remove_deadline(goal_id: str):
     with _db() as con:
         con.execute("DELETE FROM deadlines WHERE goal_id = ?", (goal_id,))
+
+
+# ── Full database export ───────────────────────────────────────────────────────
+@app.get("/export/db")
+def export_database():
+    def rows(con, table, json_cols=()):
+        all_rows = con.execute(f"SELECT * FROM {table}").fetchall()
+        out = []
+        for row in all_rows:
+            d = dict(row)
+            for col in json_cols:
+                if col in d and d[col]:
+                    try:
+                        d[col] = json.loads(d[col])
+                    except Exception:
+                        pass
+            out.append(d)
+        return out
+
+    with _db() as con:
+        return {
+            "exported_at": con.execute("SELECT datetime('now')").fetchone()[0] + "Z",
+            "version": 1,
+            "tables": {
+                "projects":                   rows(con, "projects"),
+                "pages":                      rows(con, "pages"),
+                "dimensions":                 rows(con, "dimensions"),
+                "categories":                 rows(con, "categories"),
+                "assignments":                rows(con, "assignments"),
+                "milestones":                 rows(con, "milestones"),
+                "dependencies":               rows(con, "dependencies"),
+                "deadlines":                  rows(con, "deadlines"),
+                "saved_filters":              rows(con, "saved_filters",              ("selections_json",)),
+                "schedule_perspectives":      rows(con, "schedule_perspectives",      ("state_json",)),
+                "classification_perspectives": rows(con, "classification_perspectives", ("state_json",)),
+                "transaction_history":        rows(con, "transaction_history",        ("transaction_json", "before_json", "after_json")),
+            },
+        }

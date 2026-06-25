@@ -1,55 +1,13 @@
 .page {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
+  height: 100%;
+  overflow-y: auto;
   background: #f7f8fa;
   font-family: Arial, sans-serif;
 }
 
-/* ── Top bar ───────────────────────────────────────────────────────────────── */
-.topBar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 32px;
-  height: 52px;
-  background: #fff;
-  border-bottom: 1px solid #e8eaed;
-  flex-shrink: 0;
-}
-
-.backBtn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  font-size: 12px;
-  font-family: Arial, sans-serif;
-  font-weight: 500;
-  color: #555;
-  background: none;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: color 0.15s, background 0.15s;
-}
-.backBtn:hover { color: #1a73e8; background: #e8f0fe; }
-
-.topBarRight {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.topBarDate {
-  font-size: 11px;
-  color: #9aa0a6;
-}
-
 /* ── Content ───────────────────────────────────────────────────────────────── */
 .content {
-  flex: 1;
-  max-width: 720px;
+  max-width: 680px;
   width: 100%;
   margin: 0 auto;
   padding: 40px 24px 60px;
@@ -107,65 +65,18 @@
   gap: 10px;
 }
 
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .sectionLabel {
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.07em;
   color: #9aa0a6;
-}
-
-/* ── Description ───────────────────────────────────────────────────────────── */
-.descTextarea {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 12px 14px;
-  font-size: 13px;
-  font-family: Arial, sans-serif;
-  color: #333;
-  border: 1.5px solid #e0e0e0;
-  border-radius: 8px;
-  outline: none;
-  resize: vertical;
-  line-height: 1.5;
-  background: #fff;
-  transition: border-color 0.15s;
-  min-height: 80px;
-}
-.descTextarea:focus { border-color: #1a73e8; }
-.descTextarea::placeholder { color: #bbb; }
-
-/* ── Metric ────────────────────────────────────────────────────────────────── */
-.metricPills {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.metricPill {
-  padding: 6px 16px;
-  font-size: 13px;
-  font-family: Arial, sans-serif;
-  font-weight: 500;
-  border: 1.5px solid #e0e0e0;
-  border-radius: 20px;
-  background: #fff;
-  color: #555;
-  cursor: pointer;
-  transition: all 0.12s;
-}
-.metricPill:hover { border-color: #1a73e8; color: #1a73e8; }
-.metricPillActive {
-  background: #1a73e8;
-  border-color: #1a73e8;
-  color: #fff;
-}
-
-.metricHint {
-  font-size: 12px;
-  color: #9aa0a6;
-  margin: 0;
-  line-height: 1.4;
 }
 
 /* ── Stats grid ────────────────────────────────────────────────────────────── */
@@ -200,41 +111,141 @@
   font-weight: 500;
 }
 
-/* ── Workspace buttons ─────────────────────────────────────────────────────── */
-.workspaceRow {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
+/* ── Description ───────────────────────────────────────────────────────────── */
+.editBtn {
+  padding: 2px 10px;
+  font-size: 11px;
+  font-family: Arial, sans-serif;
+  font-weight: 500;
+  color: #1a73e8;
+  background: none;
+  border: 1px solid #c5d9f8;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.editBtn:hover { background: #e8f0fe; }
+
+.descText {
+  font-size: 13px;
+  color: #444;
+  line-height: 1.6;
+  margin: 0;
+  white-space: pre-wrap;
 }
 
-.workspaceBtn {
+.descPlaceholder {
+  color: #bbb;
+  font-style: italic;
+}
+
+.descEditBlock {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 18px;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.descTextarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
   font-size: 13px;
   font-family: Arial, sans-serif;
-  font-weight: 600;
-  border: 1.5px solid #e0e0e0;
+  color: #333;
+  border: 1.5px solid #1a73e8;
   border-radius: 8px;
+  outline: none;
+  resize: vertical;
+  line-height: 1.5;
   background: #fff;
-  color: #444;
-  cursor: pointer;
-  transition: all 0.15s;
+  min-height: 90px;
 }
-.workspaceBtn:hover {
-  border-color: #1a73e8;
-  color: #1a73e8;
-  background: #f0f5ff;
+.descTextarea::placeholder { color: #bbb; }
+
+.descActions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
 }
 
-.workspaceBtnPrimary {
+.descCancel {
+  padding: 5px 13px;
+  font-size: 12px;
+  font-family: Arial, sans-serif;
+  font-weight: 500;
+  background: none;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #666;
+  transition: background 0.12s;
+}
+.descCancel:hover { background: #f5f5f5; }
+
+.descSave {
+  padding: 5px 14px;
+  font-size: 12px;
+  font-family: Arial, sans-serif;
+  font-weight: 600;
   background: #1a73e8;
-  border-color: #1a73e8;
   color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
 }
-.workspaceBtnPrimary:hover {
-  background: #1765cc;
-  border-color: #1765cc;
-  color: #fff;
+.descSave:hover { background: #1765cc; }
+
+/* ── Footer row ────────────────────────────────────────────────────────────── */
+.footerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 8px;
+  border-top: 1px solid #e8eaed;
+  gap: 16px;
 }
+
+.metricRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.metricLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9aa0a6;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.metricSelect {
+  font-size: 12px;
+  font-family: Arial, sans-serif;
+  color: #444;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 5px;
+  padding: 4px 8px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+.metricSelect:hover { border-color: #aaa; }
+.metricSelect:focus { border-color: #1a73e8; }
+
+.exportBtn {
+  padding: 5px 13px;
+  font-size: 12px;
+  font-family: Arial, sans-serif;
+  font-weight: 500;
+  color: #555;
+  background: none;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.exportBtn:hover:not(:disabled) { border-color: #1a73e8; color: #1a73e8; background: #e8f0fe; }
+.exportBtn:disabled { opacity: 0.5; cursor: not-allowed; }

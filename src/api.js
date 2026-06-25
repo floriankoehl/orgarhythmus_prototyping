@@ -53,6 +53,7 @@ export const projectsApi = {
   updateProject:    (id, patch) => baseReq('PATCH',  `/projects/${id}`, patch),
   deleteProject:    (id)        => baseReq('DELETE', `/projects/${id}`),
   getProjectStats:  (id)        => baseReq('GET',    `/projects/${id}/stats`),
+  exportDatabase:   ()          => baseReq('GET',    '/export/db'),
 }
 
 export const api = {

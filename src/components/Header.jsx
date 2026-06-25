@@ -3,7 +3,7 @@ import styles from './Header.module.css'
 import { api } from '../api'
 import CategoryAssignmentPicker from './CategoryAssignmentPicker'
 
-const PAGES = ['Goals', 'Classification', 'Schedule']
+const PAGES = ['Overview', 'Goals', 'Classification', 'Schedule']
 
 function computeWordRects(el) {
   const base = el.getBoundingClientRect()
