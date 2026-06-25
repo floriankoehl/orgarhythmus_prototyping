@@ -34,11 +34,11 @@ function normalizeFilter(filter) {
   }
 }
 
-function filterMatchesGoal(filter, goalId, assignments) {
+function filterMatchesNote(filter, noteId, assignments) {
   if (!filter) return false
   const entries = Object.entries(filter.selections).filter(([, catIds]) => catIds.length > 0)
   if (entries.length === 0) return false
-  const matchesDim = ([dimId, catIds]) => catIds.includes(assignments[goalId]?.[dimId])
+  const matchesDim = ([dimId, catIds]) => catIds.includes(assignments[noteId]?.[dimId])
   return filter.gate === 'OR' ? entries.some(matchesDim) : entries.every(matchesDim)
 }
 
@@ -452,8 +452,8 @@ function CategoryEditModal({ cat, onClose, onSave, onDelete }) {
       {confirm ? (
         <div className={styles.modal} onClick={e => e.stopPropagation()}>
           <p className={styles.confirmText}>
-            All goals assigned to <strong>"{cat.name}"</strong> will be unassigned.
-            The goals themselves won't be deleted.
+            All notes assigned to <strong>"{cat.name}"</strong> will be unassigned.
+            The notes themselves won't be deleted.
           </p>
           <div className={styles.modalActions}>
             <button className={styles.dangerBtn}
@@ -510,18 +510,18 @@ function CategoryEditModal({ cat, onClose, onSave, onDelete }) {
   )
 }
 
-// ── Goal row inside a container ───────────────────────────────────────────────
-function GoalRow({ goal, paintCat, onPaint, legendColor, onGoalDrop, onOpen, canDrag = true }) {
+// ── Note row inside a container ───────────────────────────────────────────────
+function NoteRow({ note, paintCat, onPaint, legendColor, onNoteDrop, onOpen, canDrag = true }) {
   const [expanded, setExpanded] = useState(false)
   const [dragging, setDragging] = useState(false)
 
   return (
     <div
-      className={`${styles.goalRow} ${dragging ? styles.dragging : ''}`}
+      className={`${styles.noteRow} ${dragging ? styles.dragging : ''}`}
       style={legendColor ? { borderLeft: `3px solid ${legendColor}`, background: `${legendColor}28` } : undefined}
       draggable={!paintCat && canDrag}
       onDragStart={paintCat || !canDrag ? undefined : e => {
-        e.dataTransfer.setData('goalId', goal.id)
+        e.dataTransfer.setData('noteId', note.id)
         e.dataTransfer.effectAllowed = 'move'
         setDragging(true)
         const el = e.currentTarget
@@ -537,20 +537,20 @@ function GoalRow({ goal, paintCat, onPaint, legendColor, onGoalDrop, onOpen, can
         setTimeout(() => ghost.remove(), 0)
       }}
       onDragOver={paintCat || !canDrag ? undefined : e => {
-        if (!e.dataTransfer.types.includes('goalid')) return
+        if (!e.dataTransfer.types.includes('noteid')) return
         e.preventDefault()
       }}
       onDrop={paintCat || !canDrag ? undefined : e => {
         e.preventDefault()
         e.stopPropagation()
-        const dragGoalId = e.dataTransfer.getData('goalId')
-        if (dragGoalId) onGoalDrop?.(dragGoalId, goal.id)
+        const dragNoteId = e.dataTransfer.getData('noteId')
+        if (dragNoteId) onNoteDrop?.(dragNoteId, note.id)
       }}
       onDragEnd={paintCat ? undefined : () => setDragging(false)}
-      onClick={paintCat ? e => { e.stopPropagation(); onPaint(goal.id) } : undefined}
-      onDoubleClick={paintCat ? undefined : e => { e.stopPropagation(); onOpen?.(goal.id) }}
+      onClick={paintCat ? e => { e.stopPropagation(); onPaint(note.id) } : undefined}
+      onDoubleClick={paintCat ? undefined : e => { e.stopPropagation(); onOpen?.(note.id) }}
     >
-      <div className={styles.goalRowHeader}>
+      <div className={styles.noteRowHeader}>
         <button className={styles.rowChevron}
           onClick={paintCat ? undefined : () => setExpanded(e => !e)}>
           <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"
@@ -558,18 +558,18 @@ function GoalRow({ goal, paintCat, onPaint, legendColor, onGoalDrop, onOpen, can
             <path d="M7 10l5 5 5-5z" />
           </svg>
         </button>
-        <span className={styles.rowTitle}>{goal.title}</span>
+        <span className={styles.rowTitle}>{note.title}</span>
       </div>
-      {expanded && !paintCat && goal.html && (
-        <div className={styles.goalContent} dangerouslySetInnerHTML={{ __html: goal.html }} />
+      {expanded && !paintCat && note.html && (
+        <div className={styles.noteContent} dangerouslySetInnerHTML={{ __html: note.html }} />
       )}
     </div>
   )
 }
 
 // ── Category container box ────────────────────────────────────────────────────
-function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onEdit, onCollapse,
-  onCatDragStart, onCatDragEnd, onCatDragOver, onCatDrop, onReorderGoal, insertSide, isDraggingCat, onGoalOpen, dynamic = false }) {
+function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onEdit, onCollapse,
+  onCatDragStart, onCatDragEnd, onCatDragOver, onCatDrop, onReorderNote, insertSide, isDraggingCat, onNoteOpen, dynamic = false }) {
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounter = useRef(0)
   const boxRef = useRef()
@@ -618,16 +618,16 @@ function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onE
     e.stopPropagation()
     clearDragOver()
     if (e.dataTransfer.types.includes('catdrag')) { onCatDrop?.(); return }
-    const goalId = e.dataTransfer.getData('goalId')
-    if (goalId) onDrop(goalId)
+    const noteId = e.dataTransfer.getData('noteId')
+    if (noteId) onDrop(noteId)
   }
-  const handleGoalDrop = (dragGoalId, targetGoalId) => {
+  const handleNoteDrop = (dragNoteId, targetNoteId) => {
     clearDragOver()
-    if (dragGoalId === targetGoalId) return
-    if (goals.some(g => g.id === dragGoalId)) {
-      onReorderGoal?.(cat?.id, dragGoalId, targetGoalId)
+    if (dragNoteId === targetNoteId) return
+    if (notes.some(g => g.id === dragNoteId)) {
+      onReorderNote?.(cat?.id, dragNoteId, targetNoteId)
     } else {
-      onDrop(dragGoalId)
+      onDrop(dragNoteId)
     }
   }
 
@@ -680,7 +680,7 @@ function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onE
         <span className={styles.catBoxName}>
           {cat?.name ?? 'Unassigned'}
           {dynamic && <span className={styles.dynamicBadge}>Filter</span>}
-          <span className={styles.catBoxCount}> {goals.length}</span>
+          <span className={styles.catBoxCount}> {notes.length}</span>
         </span>
         {cat && onEdit && (
           <button className={styles.catEditBtn} onClick={onEdit} title="Edit category">
@@ -698,12 +698,12 @@ function ContainerBox({ cat, goals, onDrop, paintCat, onPaint, getGoalColor, onE
         )}
       </div>
       <div className={styles.catBoxBody}>
-        {goals.length === 0
-          ? <div className={styles.catBoxEmpty}>{dynamic ? 'No matching goals' : 'Drop goals here'}</div>
-          : goals.map(g => <GoalRow key={g.id} goal={g} paintCat={paintCat} onPaint={onPaint} legendColor={getGoalColor?.(g.id)}
-              onGoalDrop={handleGoalDrop}
+        {notes.length === 0
+          ? <div className={styles.catBoxEmpty}>{dynamic ? 'No matching notes' : 'Drop notes here'}</div>
+          : notes.map(g => <NoteRow key={g.id} note={g} paintCat={paintCat} onPaint={onPaint} legendColor={getNoteColor?.(g.id)}
+              onNoteDrop={handleNoteDrop}
               canDrag={!dynamic}
-              onOpen={onGoalOpen} />)
+              onOpen={onNoteOpen} />)
         }
       </div>
     </div>
@@ -1020,7 +1020,7 @@ function LegendWidget({
               ) : (
                 <button
                   className={`${styles.legendPaintBtn} ${quickFilters.some(f => f.dimId === legendDimId && f.catId === cat.id) ? styles.legendPaintBtnActive : ''}`}
-                  title="Quick filter goals by this category"
+                  title="Quick filter notes by this category"
                   onClick={e => {
                     e.stopPropagation()
                     onToggleQuickFilter(legendDimId, cat.id)
@@ -1050,7 +1050,7 @@ function LegendWidget({
       {!expanded && (
         <span className={styles.floatingHint}>
           <strong>Color dimension</strong>
-          <small>Color and quick-filter goals</small>
+          <small>Color and quick-filter notes</small>
         </span>
       )}
     </div>
@@ -1058,7 +1058,7 @@ function LegendWidget({
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ClassificationPage({ goals = [], isActive = false, onGoalOpen, refreshKey = 0 }) {
+export default function ClassificationPage({ notes = [], isActive = false, onNoteOpen, refreshKey = 0 }) {
   const [dimensions, setDimensions]         = useState([])
   const [categories, setCategories]         = useState([])
   const [assignments, setAssignments]       = useState({})
@@ -1092,10 +1092,10 @@ export default function ClassificationPage({ goals = [], isActive = false, onGoa
     const map = {}
     const orderMap = {}
     assigns.forEach(a => {
-      if (!map[a.goalId]) map[a.goalId] = {}
-      if (!orderMap[a.goalId]) orderMap[a.goalId] = {}
-      map[a.goalId][a.dimensionId] = a.categoryId
-      orderMap[a.goalId][a.dimensionId] = a.orderIdx ?? 0
+      if (!map[a.noteId]) map[a.noteId] = {}
+      if (!orderMap[a.noteId]) orderMap[a.noteId] = {}
+      map[a.noteId][a.dimensionId] = a.categoryId
+      orderMap[a.noteId][a.dimensionId] = a.orderIdx ?? 0
     })
     setAssignments(map)
     setAssignmentOrders(orderMap)
@@ -1283,8 +1283,8 @@ export default function ClassificationPage({ goals = [], isActive = false, onGoa
       setCategories(p => p.filter(c => c.id !== id))
       setAssignments(prev => {
         const next = {}
-        for (const [goalId, dims] of Object.entries(prev)) {
-          next[goalId] = Object.fromEntries(Object.entries(dims).filter(([, catId]) => catId !== id))
+        for (const [noteId, dims] of Object.entries(prev)) {
+          next[noteId] = Object.fromEntries(Object.entries(dims).filter(([, catId]) => catId !== id))
         }
         return next
       })
@@ -1342,34 +1342,34 @@ export default function ClassificationPage({ goals = [], isActive = false, onGoa
     })
   }
 
-  const assignGoal = async (goalId, catId) => {
+  const assignNote = async (noteId, catId) => {
     if (!containerDimId) return
     try {
       if (catId) {
-        await api.assign(goalId, containerDimId, catId)
-        setAssignments(prev => ({ ...prev, [goalId]: { ...(prev[goalId] ?? {}), [containerDimId]: catId } }))
-        setAssignmentOrders(prev => ({ ...prev, [goalId]: { ...(prev[goalId] ?? {}), [containerDimId]: Number.MAX_SAFE_INTEGER } }))
+        await api.assign(noteId, containerDimId, catId)
+        setAssignments(prev => ({ ...prev, [noteId]: { ...(prev[noteId] ?? {}), [containerDimId]: catId } }))
+        setAssignmentOrders(prev => ({ ...prev, [noteId]: { ...(prev[noteId] ?? {}), [containerDimId]: Number.MAX_SAFE_INTEGER } }))
       } else {
-        await api.unassign(goalId, containerDimId)
+        await api.unassign(noteId, containerDimId)
         setAssignments(prev => {
-          const g = { ...(prev[goalId] ?? {}) }
+          const g = { ...(prev[noteId] ?? {}) }
           delete g[containerDimId]
-          return { ...prev, [goalId]: g }
+          return { ...prev, [noteId]: g }
         })
         setAssignmentOrders(prev => {
-          const g = { ...(prev[goalId] ?? {}) }
+          const g = { ...(prev[noteId] ?? {}) }
           delete g[containerDimId]
-          return { ...prev, [goalId]: g }
+          return { ...prev, [noteId]: g }
         })
       }
     } catch (e) { console.error(e) }
   }
 
-  const paintGoal = async goalId => {
+  const paintNote = async noteId => {
     if (!paintCat || !legendDimId || legendDimId === FILTER_DIMENSION_ID) return
     try {
-      await api.assign(goalId, legendDimId, paintCat.id)
-      setAssignments(prev => ({ ...prev, [goalId]: { ...(prev[goalId] ?? {}), [legendDimId]: paintCat.id } }))
+      await api.assign(noteId, legendDimId, paintCat.id)
+      setAssignments(prev => ({ ...prev, [noteId]: { ...(prev[noteId] ?? {}), [legendDimId]: paintCat.id } }))
     } catch (e) { console.error(e) }
   }
 
@@ -1420,13 +1420,13 @@ export default function ClassificationPage({ goals = [], isActive = false, onGoa
   }
 
   // ── Derived ─────────────────────────────────────────────────────────────────
-  const getGoalLegendColor = goalId => {
+  const getNoteLegendColor = noteId => {
     if (!legendDimId) return null
     if (legendDimId === FILTER_DIMENSION_ID) {
-      const match = filterCategories.find(cat => filterMatchesGoal(namedFilters.find(f => f.id === cat.filterId), goalId, assignments))
+      const match = filterCategories.find(cat => filterMatchesNote(namedFilters.find(f => f.id === cat.filterId), noteId, assignments))
       return match?.color ?? null
     }
-    const catId = assignments[goalId]?.[legendDimId]
+    const catId = assignments[noteId]?.[legendDimId]
     if (!catId) return null
     return categories.find(c => c.id === catId)?.color ?? null
   }
@@ -1436,46 +1436,46 @@ export default function ClassificationPage({ goals = [], isActive = false, onGoa
     .filter(Boolean)
 
   const hasActiveFiltering = activeFilters.length > 0 || quickFilters.length > 0
-  const matchesQuickFilter = goal => quickFilters.some(f => assignments[goal.id]?.[f.dimId] === f.catId)
+  const matchesQuickFilter = note => quickFilters.some(f => assignments[note.id]?.[f.dimId] === f.catId)
 
-  const visibleGoals = hasActiveFiltering
-    ? goals.filter(g => activeFilters.some(filter => filterMatchesGoal(filter, g.id, assignments)) || matchesQuickFilter(g))
-    : goals
+  const visibleNotes = hasActiveFiltering
+    ? notes.filter(g => activeFilters.some(filter => filterMatchesNote(filter, g.id, assignments)) || matchesQuickFilter(g))
+    : notes
 
-  const goalsForCat = catId => {
+  const notesForCat = catId => {
     if (containerDimId === FILTER_DIMENSION_ID) {
       const filterId = filterIdFromCategoryId(catId)
       const filter = namedFilters.find(f => f.id === filterId)
-      return filter ? visibleGoals.filter(g => filterMatchesGoal(filter, g.id, assignments)) : []
+      return filter ? visibleNotes.filter(g => filterMatchesNote(filter, g.id, assignments)) : []
     }
-    return visibleGoals.filter(g => assignments[g.id]?.[containerDimId] === catId)
+    return visibleNotes.filter(g => assignments[g.id]?.[containerDimId] === catId)
       .sort((a, b) => (assignmentOrders[a.id]?.[containerDimId] ?? Number.MAX_SAFE_INTEGER) - (assignmentOrders[b.id]?.[containerDimId] ?? Number.MAX_SAFE_INTEGER))
   }
-  const unassignedGoals = containerDimId
+  const unassignedNotes = containerDimId
     ? (containerDimId === FILTER_DIMENSION_ID
-      ? visibleGoals.filter(g => !namedFilters.some(filter => filterMatchesGoal(filter, g.id, assignments)))
-      : visibleGoals.filter(g => !assignments[g.id]?.[containerDimId]))
-    : visibleGoals
+      ? visibleNotes.filter(g => !namedFilters.some(filter => filterMatchesNote(filter, g.id, assignments)))
+      : visibleNotes.filter(g => !assignments[g.id]?.[containerDimId]))
+    : visibleNotes
 
-  const reorderGoalInCategory = async (catId, dragGoalId, targetGoalId) => {
-    if (!containerDimId || !catId || dragGoalId === targetGoalId) return
-    if (assignments[dragGoalId]?.[containerDimId] !== catId || assignments[targetGoalId]?.[containerDimId] !== catId) return
-    const laneGoals = goalsForCat(catId)
-    const fromIdx = laneGoals.findIndex(g => g.id === dragGoalId)
-    const toIdx = laneGoals.findIndex(g => g.id === targetGoalId)
+  const reorderNoteInCategory = async (catId, dragNoteId, targetNoteId) => {
+    if (!containerDimId || !catId || dragNoteId === targetNoteId) return
+    if (assignments[dragNoteId]?.[containerDimId] !== catId || assignments[targetNoteId]?.[containerDimId] !== catId) return
+    const laneNotes = notesForCat(catId)
+    const fromIdx = laneNotes.findIndex(g => g.id === dragNoteId)
+    const toIdx = laneNotes.findIndex(g => g.id === targetNoteId)
     if (fromIdx === -1 || toIdx === -1) return
-    const reordered = [...laneGoals]
+    const reordered = [...laneNotes]
     const [moved] = reordered.splice(fromIdx, 1)
     reordered.splice(toIdx, 0, moved)
-    const goalIds = reordered.map(g => g.id)
+    const noteIds = reordered.map(g => g.id)
     setAssignmentOrders(prev => {
       const next = { ...prev }
-      goalIds.forEach((goalId, idx) => {
-        next[goalId] = { ...(next[goalId] ?? {}), [containerDimId]: idx }
+      noteIds.forEach((noteId, idx) => {
+        next[noteId] = { ...(next[noteId] ?? {}), [containerDimId]: idx }
       })
       return next
     })
-    try { await api.reorderAssignments(containerDimId, catId, goalIds) }
+    try { await api.reorderAssignments(containerDimId, catId, noteIds) }
     catch (e) { console.error(e) }
   }
 
@@ -1492,7 +1492,7 @@ export default function ClassificationPage({ goals = [], isActive = false, onGoa
 
   return (
     <div
-      className={`${styles.page} ${paintCat ? styles.paintMode : ''}`}
+      className={`${styles.note} ${paintCat ? styles.paintMode : ''}`}
       style={paintCat ? { cursor: makeColorCursor(paintCat.color) } : undefined}
       onClick={paintCat ? () => setPaintCat(null) : undefined}
     >
@@ -1520,7 +1520,7 @@ export default function ClassificationPage({ goals = [], isActive = false, onGoa
                 <span className={styles.collapsedDot} style={{ background: cat.color }} />
                 <span style={{ color: '#444' }}>{cat.name}</span>
                 {cat.dynamic && <span style={{ color: '#888', fontWeight: 700 }}> Filter</span>}
-                <span style={{ color: '#aaa', fontWeight: 400 }}> {goalsForCat(cat.id).length}</span>
+                <span style={{ color: '#aaa', fontWeight: 400 }}> {notesForCat(cat.id).length}</span>
               </button>
             ))}
             {unassignedCollapsed && (
@@ -1529,7 +1529,7 @@ export default function ClassificationPage({ goals = [], isActive = false, onGoa
                 onClick={() => setUnassignedCollapsed(false)}>
                 <span className={styles.collapsedDot} style={{ background: '#ccc' }} />
                 <span style={{ color: '#444' }}>Unassigned</span>
-                <span style={{ color: '#aaa', fontWeight: 400 }}> {unassignedGoals.length}</span>
+                <span style={{ color: '#aaa', fontWeight: 400 }}> {unassignedNotes.length}</span>
               </button>
             )}
           </div>
@@ -1540,29 +1540,29 @@ export default function ClassificationPage({ goals = [], isActive = false, onGoa
           onDrop={e => { if (e.dataTransfer.types.includes('catdrag')) { reorderCatsDrop(); catDragCleanup() } }}
         >
           {containerCats.filter(c => !collapsedCatIds.has(c.id)).map(cat => (
-            <ContainerBox key={cat.id} cat={cat} goals={goalsForCat(cat.id)}
-              onDrop={cat.dynamic ? undefined : goalId => assignGoal(goalId, cat.id)}
+            <ContainerBox key={cat.id} cat={cat} notes={notesForCat(cat.id)}
+              onDrop={cat.dynamic ? undefined : noteId => assignNote(noteId, cat.id)}
               onEdit={() => cat.dynamic ? setEditingFilter(namedFilters.find(f => f.id === cat.filterId)) : setEditCat(cat)}
               onCollapse={() => setCollapsedCatIds(prev => new Set([...prev, cat.id]))}
-              paintCat={paintCat} onPaint={paintGoal} getGoalColor={getGoalLegendColor}
+              paintCat={paintCat} onPaint={paintNote} getNoteColor={getNoteLegendColor}
               onCatDragStart={setCatDragId}
               onCatDragEnd={catDragCleanup}
               onCatDragOver={handleCatDragOver}
               onCatDrop={() => { reorderCatsDrop(); catDragCleanup() }}
-              onReorderGoal={reorderGoalInCategory}
+              onReorderNote={reorderNoteInCategory}
               insertSide={getCatInsertSide(cat.id)}
               isDraggingCat={catDragId === cat.id}
               dynamic={cat.dynamic}
-              onGoalOpen={onGoalOpen}
+              onNoteOpen={onNoteOpen}
             />
           ))}
           {!unassignedCollapsed && (
-            <ContainerBox cat={null} goals={unassignedGoals}
-              onDrop={goalId => assignGoal(goalId, null)}
+            <ContainerBox cat={null} notes={unassignedNotes}
+              onDrop={noteId => assignNote(noteId, null)}
               onCollapse={() => setUnassignedCollapsed(true)}
-              onReorderGoal={reorderGoalInCategory}
-              paintCat={paintCat} onPaint={paintGoal} getGoalColor={getGoalLegendColor}
-              onGoalOpen={onGoalOpen} />
+              onReorderNote={reorderNoteInCategory}
+              paintCat={paintCat} onPaint={paintNote} getNoteColor={getNoteLegendColor}
+              onNoteOpen={onNoteOpen} />
           )}
           {containerDimId && containerDimId !== FILTER_DIMENSION_ID && <AddCatBox onAdd={name => createCategory(containerDimId, name, PRESET_COLORS[containerCats.length % PRESET_COLORS.length])} />}
         </div>
@@ -1610,8 +1610,8 @@ export default function ClassificationPage({ goals = [], isActive = false, onGoa
           <div className={styles.modal} onClick={e => e.stopPropagation()}>
             <p className={styles.confirmText}>
               Delete dimension <strong>"{confirmDim.name}"</strong>?
-              All its categories will be removed and any goals assigned to them will be unassigned.
-              The goals themselves won't be deleted.
+              All its categories will be removed and any notes assigned to them will be unassigned.
+              The notes themselves won't be deleted.
             </p>
             <div className={styles.modalActions}>
               <button className={styles.dangerBtn} onClick={() => {

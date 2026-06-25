@@ -28,11 +28,11 @@ function makeColorCursor(color) {
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, crosshair`
 }
 
-function filterMatchesGoal(filter, goalId, assignments) {
+function filterMatchesNote(filter, noteId, assignments) {
   if (!filter) return false
   const entries = Object.entries(filter.selections ?? {}).filter(([, catIds]) => catIds.length > 0)
   if (entries.length === 0) return false
-  const matchesDim = ([dimId, catIds]) => catIds.includes(assignments[goalId]?.[dimId])
+  const matchesDim = ([dimId, catIds]) => catIds.includes(assignments[noteId]?.[dimId])
   return filter.gate === 'OR' ? entries.some(matchesDim) : entries.every(matchesDim)
 }
 
@@ -186,12 +186,12 @@ function dependencyLabelPreview(reason) {
 }
 
 function getOverlapViolation(msList, movedIds = new Set()) {
-  const byGoal = new Map()
+  const byNote = new Map()
   msList.forEach(m => {
-    if (!byGoal.has(m.goalId)) byGoal.set(m.goalId, [])
-    byGoal.get(m.goalId).push(m)
+    if (!byNote.has(m.noteId)) byNote.set(m.noteId, [])
+    byNote.get(m.noteId).push(m)
   })
-  for (const laneMilestones of byGoal.values()) {
+  for (const laneMilestones of byNote.values()) {
     for (let i = 0; i < laneMilestones.length; i += 1) {
       for (let j = i + 1; j < laneMilestones.length; j += 1) {
         const a = laneMilestones[i]
@@ -214,7 +214,7 @@ function getMilestoneOrderViolation(beforeList, afterList, movedIds = new Set())
       const bBefore = beforeById[ids[j]]
       const aAfter = afterById[ids[i]]
       const bAfter = afterById[ids[j]]
-      if (aBefore.goalId !== bBefore.goalId || aAfter.goalId !== bAfter.goalId) continue
+      if (aBefore.noteId !== bBefore.noteId || aAfter.noteId !== bAfter.noteId) continue
       if (!movedIds.has(aBefore.id) && !movedIds.has(bBefore.id)) continue
       const beforeRelation = aBefore.startCol + aBefore.duration <= bBefore.startCol
         ? 'a-before-b'
@@ -251,36 +251,36 @@ function laneKeyForCat(cat) {
   return cat?.id ?? UNASSIGNED_LANE
 }
 
-function buildRowItems(goals, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds = new Set(), hiddenGoalsByLane = {}, filterAsLane = null) {
+function buildRowItems(notes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds = new Set(), hiddenNotesByLane = {}, filterAsLane = null) {
   const { rowH, rowGap, laneGap } = spacing
   const slotH = rowH + rowGap
 
-  // Filter-as-lane: two lanes — goals matching the filter, and the rest
+  // Filter-as-lane: two lanes — notes matching the filter, and the rest
   if (filterAsLane) {
     const matchCat   = { id: filterAsLane.id, name: filterAsLane.name, color: filterAsLane.color }
-    const matchGoals = goals.filter(g => filterMatchesGoal(filterAsLane, g.id, assignments))
-    const otherGoals = goals.filter(g => !filterMatchesGoal(filterAsLane, g.id, assignments))
+    const matchNotes = notes.filter(g => filterMatchesNote(filterAsLane, g.id, assignments))
+    const otherNotes = notes.filter(g => !filterMatchesNote(filterAsLane, g.id, assignments))
     const items = []; let top = 0
-    const addFilterLane = (cat, laneGoals, key, first) => {
-      const hiddenGoalIds = hiddenGoalsByLane[key] ?? new Set()
-      const visible = laneGoals.filter(g => !hiddenGoalIds.has(g.id))
+    const addFilterLane = (cat, laneNotes, key, first) => {
+      const hiddenNoteIds = hiddenNotesByLane[key] ?? new Set()
+      const visible = laneNotes.filter(g => !hiddenNoteIds.has(g.id))
       if (!first) { items.push({ type: 'lane-gap', cat: null, top, height: laneGap }); top += laneGap }
       items.push({ type: 'lane-header', cat, top, height: LANE_HDR_H }); top += LANE_HDR_H
-      if (laneGoals.length === 0) {
+      if (laneNotes.length === 0) {
         items.push({ type: 'empty', cat, top, height: slotH }); top += slotH
       } else {
-        visible.forEach(g => { items.push({ type: 'goal', goal: g, cat, top, height: slotH }); top += slotH })
+        visible.forEach(g => { items.push({ type: 'note', note: g, cat, top, height: slotH }); top += slotH })
       }
     }
     const matchHidden = hiddenCatIds.has(filterAsLane.id)
     const otherHidden = hiddenCatIds.has(UNASSIGNED_LANE)
-    if (!matchHidden) addFilterLane(matchCat, matchGoals, filterAsLane.id, true)
-    if (!otherHidden) addFilterLane(null, otherGoals, UNASSIGNED_LANE, matchHidden)
+    if (!matchHidden) addFilterLane(matchCat, matchNotes, filterAsLane.id, true)
+    if (!otherHidden) addFilterLane(null, otherNotes, UNASSIGNED_LANE, matchHidden)
     return items
   }
 
   if (!activeDimId) {
-    return goals.map((g, i) => ({ type: 'goal', goal: g, cat: null, top: i * slotH, height: slotH }))
+    return notes.map((g, i) => ({ type: 'note', note: g, cat: null, top: i * slotH, height: slotH }))
   }
 
   const allCats = categories.filter(c => c.dimensionId === activeDimId)
@@ -288,29 +288,29 @@ function buildRowItems(goals, categories, assignments, assignmentOrders, activeD
   const allCatIds = new Set(allCats.map(c => c.id))
   const catMap  = Object.fromEntries(cats.map(c => [c.id, []]))
   const unassigned = []
-  goals.forEach(g => {
+  notes.forEach(g => {
     const cid = assignments[g.id]?.[activeDimId]
     if (cid && catMap[cid]) catMap[cid].push(g)
     else if (cid && allCatIds.has(cid)) return
     else unassigned.push(g)
   })
 
-  const sortLaneGoals = laneGoals => [...laneGoals].sort((a, b) => {
+  const sortLaneNotes = laneNotes => [...laneNotes].sort((a, b) => {
     const ao = assignmentOrders[a.id]?.[activeDimId] ?? Number.MAX_SAFE_INTEGER
     const bo = assignmentOrders[b.id]?.[activeDimId] ?? Number.MAX_SAFE_INTEGER
     return ao - bo
   })
 
   const items = []; let top = 0
-  const addLane = (cat, laneGoals, first) => {
-    const hiddenGoalIds = hiddenGoalsByLane[laneKeyForCat(cat)] ?? new Set()
-    const visibleLaneGoals = sortLaneGoals(laneGoals).filter(g => !hiddenGoalIds.has(g.id))
+  const addLane = (cat, laneNotes, first) => {
+    const hiddenNoteIds = hiddenNotesByLane[laneKeyForCat(cat)] ?? new Set()
+    const visibleLaneNotes = sortLaneNotes(laneNotes).filter(g => !hiddenNoteIds.has(g.id))
     if (!first) { items.push({ type: 'lane-gap', cat: null, top, height: laneGap }); top += laneGap }
     items.push({ type: 'lane-header', cat, top, height: LANE_HDR_H }); top += LANE_HDR_H
-    if (laneGoals.length === 0) {
+    if (laneNotes.length === 0) {
       items.push({ type: 'empty', cat, top, height: slotH }); top += slotH
     } else {
-      visibleLaneGoals.forEach(g => { items.push({ type: 'goal', goal: g, cat, top, height: slotH }); top += slotH })
+      visibleLaneNotes.forEach(g => { items.push({ type: 'note', note: g, cat, top, height: slotH }); top += slotH })
     }
   }
   cats.forEach((cat, i) => addLane(cat, catMap[cat.id] ?? [], i === 0))
@@ -328,7 +328,7 @@ function SpacingPanel({
   hideCrossCatDeps, onHideCrossCatDepsChange,
   showCrucialDepsOnly, onShowCrucialDepsOnlyChange,
   colorDependencyDirection, onColorDependencyDirectionChange,
-  canFilterToSelection, onFilterToSelectedGoals, onExpandEverything,
+  canFilterToSelection, onFilterToSelectedNotes, onExpandEverything,
 }) {
   const panelRef = useRef()
   const closeRef = useRef(onClose)
@@ -407,14 +407,14 @@ function SpacingPanel({
           <button
             className={styles.panelActionBtn}
             disabled={!canFilterToSelection}
-            onClick={onFilterToSelectedGoals}
-            title="Show only goals that have selected milestones">
-            Only selected goals
+            onClick={onFilterToSelectedNotes}
+            title="Show only notes that have selected milestones">
+            Only selected notes
           </button>
           <button
             className={styles.panelActionBtn}
             onClick={onExpandEverything}
-            title="Show all lane categories and goals">
+            title="Show all lane categories and notes">
             Expand everything
           </button>
         </div>
@@ -432,16 +432,16 @@ function ContextMenu({ menu, onClose, onCreate, onInsertDay, onDeleteDay, onSetD
       <div className={styles.ctxMenu} style={{ left: menu.x, top: menu.y }}>
         {menu.type === 'cell' && (<>
           <button className={styles.ctxItem}
-            onClick={() => { onCreate(menu.goalId, menu.col, menu.color); onClose() }}>
-            Add milestone — {menu.goalTitle}
+            onClick={() => { onCreate(menu.noteId, menu.col, menu.color); onClose() }}>
+            Add milestone — {menu.noteTitle}
           </button>
           {menu.hasDeadline
             ? <button className={styles.ctxItem}
-                onClick={() => { onRemoveDeadline(menu.goalId); onClose() }}>
+                onClick={() => { onRemoveDeadline(menu.noteId); onClose() }}>
                 Remove hard deadline
               </button>
             : <button className={styles.ctxItem}
-                onClick={() => { onSetDeadline(menu.goalId, menu.col); onClose() }}>
+                onClick={() => { onSetDeadline(menu.noteId, menu.col); onClose() }}>
                 Set hard deadline here
               </button>
           }
@@ -544,7 +544,7 @@ function CategoryVisibilityDropdown({ categories, hiddenCatIds, onToggle, onShow
   )
 }
 
-function LaneGoalFilter({ laneKey, goals, hiddenGoalIds, onToggleGoal, onShowAllGoals, onHideAllGoals }) {
+function LaneNoteFilter({ laneKey, notes, hiddenNoteIds, onToggleNote, onShowAllNotes, onHideAllNotes }) {
   const [open, setOpen] = useState(false)
   const btnRef = useRef()
   const menuRef = useRef()
@@ -568,15 +568,15 @@ function LaneGoalFilter({ laneKey, goals, hiddenGoalIds, onToggleGoal, onShowAll
     return () => document.removeEventListener('mousedown', close)
   }, [open])
 
-  const hiddenCount = goals.filter(g => hiddenGoalIds.has(g.id)).length
+  const hiddenCount = notes.filter(g => hiddenNoteIds.has(g.id)).length
 
   return (
     <>
       <button
         ref={btnRef}
         className={`${styles.laneFilterBtn} ${hiddenCount > 0 ? styles.laneFilterBtnActive : ''}`}
-        disabled={goals.length === 0}
-        title="Filter goals in this lane"
+        disabled={notes.length === 0}
+        title="Filter notes in this lane"
         onClick={openMenu}>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
           <path d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/>
@@ -585,22 +585,22 @@ function LaneGoalFilter({ laneKey, goals, hiddenGoalIds, onToggleGoal, onShowAll
       {open && pos && createPortal(
         <div ref={menuRef} className={styles.laneFilterMenu}
           style={{ top: pos.top, left: pos.left, minWidth: pos.width }}>
-          {goals.length === 0 ? (
-            <div className={styles.laneFilterEmpty}>No goals</div>
+          {notes.length === 0 ? (
+            <div className={styles.laneFilterEmpty}>No notes</div>
           ) : (
             <>
               <div className={styles.laneFilterActions}>
-                <button className={styles.laneFilterAll} onClick={() => onShowAllGoals(laneKey)}>Show all</button>
-                <button className={styles.laneFilterAll} onClick={() => onHideAllGoals(laneKey, goals.map(g => g.id))}>Show none</button>
+                <button className={styles.laneFilterAll} onClick={() => onShowAllNotes(laneKey)}>Show all</button>
+                <button className={styles.laneFilterAll} onClick={() => onHideAllNotes(laneKey, notes.map(g => g.id))}>Show none</button>
               </div>
-              {goals.map(goal => (
-                <label key={goal.id} className={styles.laneFilterItem}>
+              {notes.map(note => (
+                <label key={note.id} className={styles.laneFilterItem}>
                   <input
                     type="checkbox"
-                    checked={!hiddenGoalIds.has(goal.id)}
-                    onChange={() => onToggleGoal(laneKey, goal.id)}
+                    checked={!hiddenNoteIds.has(note.id)}
+                    onChange={() => onToggleNote(laneKey, note.id)}
                   />
-                  <span className={styles.laneFilterName}>{goal.title}</span>
+                  <span className={styles.laneFilterName}>{note.title}</span>
                 </label>
               ))}
             </>
@@ -626,7 +626,7 @@ function GanttToolbar({
   colorDependencyDirection, onColorDependencyDirectionChange,
   autoResolveDependencyView, onAutoResolveDependencyViewChange,
   canDeleteSelection, onDeleteSelection,
-  canFilterToSelection, onFilterToSelectedGoals, onExpandEverything,
+  canFilterToSelection, onFilterToSelectedNotes, onExpandEverything,
   canUndo, canRedo, onUndo, onRedo,
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -718,7 +718,7 @@ function GanttToolbar({
             showCrucialDepsOnly={showCrucialDepsOnly} onShowCrucialDepsOnlyChange={onShowCrucialDepsOnlyChange}
             colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={onColorDependencyDirectionChange}
             canFilterToSelection={canFilterToSelection}
-            onFilterToSelectedGoals={onFilterToSelectedGoals}
+            onFilterToSelectedNotes={onFilterToSelectedNotes}
             onExpandEverything={onExpandEverything} />
         )}
       </div>
@@ -1101,7 +1101,7 @@ function ScheduleColorLegendWidget({
               ) : (
                 <button
                   className={`${styles.legendPaintBtn} ${quickFilters.some(f => f.dimId === colorDimId && f.catId === cat.id) ? styles.legendPaintBtnActive : ''}`}
-                  title="Quick filter goals by this category"
+                  title="Quick filter notes by this category"
                   onClick={e => { e.stopPropagation(); onToggleQuickFilter(colorDimId, cat.id) }}
                   onDoubleClick={e => e.stopPropagation()}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
@@ -1133,7 +1133,7 @@ function ScheduleColorLegendWidget({
       {!expanded && (
         <span className={styles.floatingHint}>
           <strong>Color dimension</strong>
-          <small>Color and quick-filter goals</small>
+          <small>Color and quick-filter notes</small>
         </span>
       )}
     </div>
@@ -1141,7 +1141,7 @@ function ScheduleColorLegendWidget({
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function SchedulePage({ goals = [], isActive = false, onGoalOpen, defaultMetric = 'days', refreshKey = 0 }) {
+export default function SchedulePage({ notes = [], isActive = false, onNoteOpen, defaultMetric = 'days', refreshKey = 0 }) {
   // ── API data ───────────────────────────────────────────────────────────────
   const [dimensions,   setDimensions]   = useState([])
   const [categories,   setCategories]   = useState([])
@@ -1166,10 +1166,10 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
     const map = {}
     const orderMap = {}
     assigns.forEach(a => {
-      if (!map[a.goalId]) map[a.goalId] = {}
-      if (!orderMap[a.goalId]) orderMap[a.goalId] = {}
-      map[a.goalId][a.dimensionId] = a.categoryId
-      orderMap[a.goalId][a.dimensionId] = a.orderIdx ?? 0
+      if (!map[a.noteId]) map[a.noteId] = {}
+      if (!orderMap[a.noteId]) orderMap[a.noteId] = {}
+      map[a.noteId][a.dimensionId] = a.categoryId
+      orderMap[a.noteId][a.dimensionId] = a.orderIdx ?? 0
     })
     setAssignments(map)
     setAssignmentOrders(orderMap)
@@ -1219,9 +1219,9 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
   const [floatingPanel, setFloatingPanel] = useState(null)
   const [spacing,     setSpacing]     = useState(DEFAULT_SPACING)
   const [hiddenCatIds, setHiddenCatIds] = useState(new Set())
-  const [hiddenGoalsByLane, setHiddenGoalsByLane] = useState({})
-  const [revealedConflictGoalIds, setRevealedConflictGoalIds] = useState(new Set())
-  const [visibleGoalFilterIds, setVisibleGoalFilterIds] = useState(new Set())
+  const [hiddenNotesByLane, setHiddenNotesByLane] = useState({})
+  const [revealedConflictNoteIds, setRevealedConflictNoteIds] = useState(new Set())
+  const [visibleNoteFilterIds, setVisibleNoteFilterIds] = useState(new Set())
   const [pendingConflictMilestoneIds, setPendingConflictMilestoneIds] = useState(new Set())
   const [warningPrompt, setWarningPrompt] = useState(null)
   const [blinkingDepIds, setBlinkingDepIds] = useState(new Set())
@@ -1234,7 +1234,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
   const capturePerspectiveStateRef = useRef(null)
   const resolveDependencySelectionRef = useRef(null)
   const autoResolveDependencyViewRef = useRef(false)
-  const [dragOverGoalId, setDragOverGoalId] = useState(null)
+  const [dragOverNoteId, setDragOverNoteId] = useState(null)
   const [dragOverLaneCatId, setDragOverLaneCatId] = useState(null)
   const [draggingCatId, setDraggingCatId] = useState(null)
   const [dragOverCatReorderId, setDragOverCatReorderId] = useState(null)
@@ -1295,7 +1295,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
         leftPanelWidth: 220,
         group: { activeDimId: '', activeLaneFilterId: '' },
         collapsedCategories: [],
-        hiddenGoalsByLane: {},
+        hiddenNotesByLane: {},
         scrollLeft: 0,
         color: {
           colorDimId: priorityDim?.id ?? '',
@@ -1326,7 +1326,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
       return
     }
     setHiddenCatIds(activeLaneFilterId ? new Set([UNASSIGNED_LANE]) : new Set())
-    setHiddenGoalsByLane({})
+    setHiddenNotesByLane({})
   }, [activeDimId, activeLaneFilterId])
 
   useEffect(() => {
@@ -1339,21 +1339,21 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
     setPaintCat(null)
   }, [colorDimId])
 
-  const toggleGoalVisibility = useCallback((laneKey, goalId) => {
-    setHiddenGoalsByLane(prev => {
+  const toggleNoteVisibility = useCallback((laneKey, noteId) => {
+    setHiddenNotesByLane(prev => {
       const nextLane = new Set(prev[laneKey] ?? [])
-      if (nextLane.has(goalId)) nextLane.delete(goalId)
-      else nextLane.add(goalId)
+      if (nextLane.has(noteId)) nextLane.delete(noteId)
+      else nextLane.add(noteId)
       return { ...prev, [laneKey]: nextLane }
     })
   }, [])
 
-  const showAllLaneGoals = useCallback(laneKey => {
-    setHiddenGoalsByLane(prev => ({ ...prev, [laneKey]: new Set() }))
+  const showAllLaneNotes = useCallback(laneKey => {
+    setHiddenNotesByLane(prev => ({ ...prev, [laneKey]: new Set() }))
   }, [])
 
-  const hideAllLaneGoals = useCallback((laneKey, goalIds) => {
-    setHiddenGoalsByLane(prev => ({ ...prev, [laneKey]: new Set(goalIds) }))
+  const hideAllLaneNotes = useCallback((laneKey, noteIds) => {
+    setHiddenNotesByLane(prev => ({ ...prev, [laneKey]: new Set(noteIds) }))
   }, [])
 
 
@@ -1371,28 +1371,28 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
   const presentConflictMilestones = useCallback(ids => {
     const idSet = new Set(ids)
     const conflictMilestones = milestonesRef.current.filter(m => idSet.has(m.id))
-    const goalIds = conflictMilestones.map(m => m.goalId)
-    if (conflictMilestones.length === 0 || goalIds.length === 0) return
+    const noteIds = conflictMilestones.map(m => m.noteId)
+    if (conflictMilestones.length === 0 || noteIds.length === 0) return
     const hiddenMilestoneIds = conflictMilestones
-      .filter(m => !goalRowMapRef.current[m.goalId])
+      .filter(m => !noteRowMapRef.current[m.noteId])
       .map(m => m.id)
     setPendingConflictMilestoneIds(new Set(hiddenMilestoneIds.length ? hiddenMilestoneIds : conflictMilestones.map(m => m.id)))
-    setRevealedConflictGoalIds(prev => new Set([...prev, ...goalIds]))
+    setRevealedConflictNoteIds(prev => new Set([...prev, ...noteIds]))
     setHiddenCatIds(prev => {
       const next = new Set(prev)
-      goalIds.forEach(goalId => {
+      noteIds.forEach(noteId => {
         if (activeLaneFilter) {
-          if (filterMatchesGoal(activeLaneFilter, goalId, assignments)) next.delete(activeLaneFilter.id)
+          if (filterMatchesNote(activeLaneFilter, noteId, assignments)) next.delete(activeLaneFilter.id)
         } else if (activeDimId) {
-          const catId = assignments[goalId]?.[activeDimId]
+          const catId = assignments[noteId]?.[activeDimId]
           if (catId) next.delete(catId)
         }
       })
       return next
     })
     if (colorDimId && colorDimId !== FILTER_DIMENSION_ID) {
-      const colorFilterAdds = goalIds
-        .map(goalId => assignments[goalId]?.[colorDimId])
+      const colorFilterAdds = noteIds
+        .map(noteId => assignments[noteId]?.[colorDimId])
         .filter(Boolean)
       if (colorFilterAdds.length > 0) {
         setQuickFilters(prev => {
@@ -1407,13 +1407,13 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
         })
       }
     }
-    setHiddenGoalsByLane(prev => {
+    setHiddenNotesByLane(prev => {
       const next = { ...prev }
-      goalIds.forEach(goalId => {
+      noteIds.forEach(noteId => {
         Object.entries(next).forEach(([laneKey, hiddenIds]) => {
-          if (!hiddenIds?.has?.(goalId)) return
+          if (!hiddenIds?.has?.(noteId)) return
           const laneHidden = new Set(hiddenIds)
-          laneHidden.delete(goalId)
+          laneHidden.delete(noteId)
           next[laneKey] = laneHidden
         })
       })
@@ -1428,10 +1428,10 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
   const presentDependencyConflictMilestones = useCallback(ids => {
     const idSet = new Set(ids)
     const conflictMilestones = milestonesRef.current.filter(m => idSet.has(m.id))
-    const goalIds = new Set(conflictMilestones.map(m => m.goalId))
-    if (conflictMilestones.length === 0 || goalIds.size === 0) return
+    const noteIds = new Set(conflictMilestones.map(m => m.noteId))
+    if (conflictMilestones.length === 0 || noteIds.size === 0) return
 
-    setRevealedConflictGoalIds(new Set(goalIds))
+    setRevealedConflictNoteIds(new Set(noteIds))
     setPendingConflictMilestoneIds(idSet)
     setPendingDependencyResolveIds(prev => new Set([...prev, ...idSet]))
     setSelectedDepIds(new Set())
@@ -1455,11 +1455,11 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
     setPaintCat(prev => prev?.id === catId ? null : { id: catId, color })
   }, [])
 
-  const paintGoal = useCallback(async goalId => {
+  const paintNote = useCallback(async noteId => {
     if (!paintCat || !colorDimId || colorDimId === FILTER_DIMENSION_ID) return
     try {
-      await api.assign(goalId, colorDimId, paintCat.id)
-      setAssignments(prev => ({ ...prev, [goalId]: { ...(prev[goalId] ?? {}), [colorDimId]: paintCat.id } }))
+      await api.assign(noteId, colorDimId, paintCat.id)
+      setAssignments(prev => ({ ...prev, [noteId]: { ...(prev[noteId] ?? {}), [colorDimId]: paintCat.id } }))
     } catch (err) { console.error(err) }
   }, [colorDimId, paintCat])
 
@@ -1488,7 +1488,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
   const [selectedIds,  setSelectedIds]  = useState(new Set())
   const [selectedDepIds, setSelectedDepIds] = useState(new Set())
   const [contextMenu,  setContextMenu]  = useState(null)
-  const [clickedGoalId, setClickedGoalId] = useState(null)
+  const [clickedNoteId, setClickedNoteId] = useState(null)
 
   // ── DOM refs ───────────────────────────────────────────────────────────────
   const gridBodyRef      = useRef()
@@ -1658,40 +1658,40 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
     [categories, filterCategories]
   )
 
-  const visibleGoals = useMemo(
+  const visibleNotes = useMemo(
     () => {
-      if (visibleGoalFilterIds.size > 0) {
-        return goals.filter(goal => visibleGoalFilterIds.has(goal.id))
+      if (visibleNoteFilterIds.size > 0) {
+        return notes.filter(note => visibleNoteFilterIds.has(note.id))
       }
       const activeSavedFilters = activeFilterIds
         .map(id => savedFilters.find(filter => filter.id === id))
         .filter(Boolean)
       const hasActiveFiltering = activeSavedFilters.length > 0 || quickFilters.length > 0
-      if (!hasActiveFiltering) return goals
-      return goals.filter(goal =>
-        revealedConflictGoalIds.has(goal.id) ||
-        activeSavedFilters.some(filter => filterMatchesGoal(filter, goal.id, assignments)) ||
-        quickFilters.some(filter => assignments[goal.id]?.[filter.dimId] === filter.catId)
+      if (!hasActiveFiltering) return notes
+      return notes.filter(note =>
+        revealedConflictNoteIds.has(note.id) ||
+        activeSavedFilters.some(filter => filterMatchesNote(filter, note.id, assignments)) ||
+        quickFilters.some(filter => assignments[note.id]?.[filter.dimId] === filter.catId)
       )
     },
-    [activeFilterIds, assignments, goals, quickFilters, revealedConflictGoalIds, savedFilters, visibleGoalFilterIds]
+    [activeFilterIds, assignments, notes, quickFilters, revealedConflictNoteIds, savedFilters, visibleNoteFilterIds]
   )
 
   // ── Row model ──────────────────────────────────────────────────────────────
   const rowItems = useMemo(
-    () => buildRowItems(visibleGoals, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenGoalsByLane, activeLaneFilter),
-    [visibleGoals, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenGoalsByLane, activeLaneFilter]
+    () => buildRowItems(visibleNotes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenNotesByLane, activeLaneFilter),
+    [visibleNotes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenNotesByLane, activeLaneFilter]
   )
   const rowItemsRef = useRef([])
   rowItemsRef.current = rowItems
 
-  const goalRowMap = useMemo(() => {
+  const noteRowMap = useMemo(() => {
     const map = {}
-    rowItems.forEach(item => { if (item.type === 'goal') map[item.goal.id] = item })
+    rowItems.forEach(item => { if (item.type === 'note') map[item.note.id] = item })
     return map
   }, [rowItems])
-  const goalRowMapRef = useRef({})
-  goalRowMapRef.current = goalRowMap
+  const noteRowMapRef = useRef({})
+  noteRowMapRef.current = noteRowMap
 
   useEffect(() => {
     if (selectedIds.size === 0) return
@@ -1700,20 +1700,20 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
     const next = new Set()
     selectedIds.forEach(msId => {
       const milestone = milestoneById.get(msId)
-      if (milestone && goalRowMap[milestone.goalId]) {
+      if (milestone && noteRowMap[milestone.noteId]) {
         next.add(msId)
       } else {
         changed = true
       }
     })
     if (changed) setSelectedIds(next)
-  }, [goalRowMap, milestones, selectedIds])
+  }, [noteRowMap, milestones, selectedIds])
 
   useEffect(() => {
     if (pendingConflictMilestoneIds.size === 0) return
-    const target = milestones.find(m => pendingConflictMilestoneIds.has(m.id) && goalRowMap[m.goalId])
+    const target = milestones.find(m => pendingConflictMilestoneIds.has(m.id) && noteRowMap[m.noteId])
     if (!target) return
-    const row = goalRowMap[target.goalId]
+    const row = noteRowMap[target.noteId]
     requestAnimationFrame(() => {
       const el = gridBodyRef.current
       if (!el) return
@@ -1725,35 +1725,35 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
       setScrollTop(el.scrollTop)
       setPendingConflictMilestoneIds(new Set())
     })
-  }, [goalRowMap, milestones, pendingConflictMilestoneIds])
+  }, [noteRowMap, milestones, pendingConflictMilestoneIds])
 
-  const selectedGoalIds = useMemo(() => {
+  const selectedNoteIds = useMemo(() => {
     const set = new Set()
     selectedIds.forEach(msId => {
       const m = milestones.find(m => m.id === msId)
-      if (m) set.add(m.goalId)
+      if (m) set.add(m.noteId)
     })
     return set
   }, [selectedIds, milestones])
 
-  const applyGoalVisibilityFilter = useCallback(goalIds => {
-    if (goalIds.size === 0) return
-    setVisibleGoalFilterIds(new Set(goalIds))
+  const applyNoteVisibilityFilter = useCallback(noteIds => {
+    if (noteIds.size === 0) return
+    setVisibleNoteFilterIds(new Set(noteIds))
 
     if (activeLaneFilter) {
       let hasMatch = false
       let hasOther = false
-      goalIds.forEach(goalId => {
-        if (filterMatchesGoal(activeLaneFilter, goalId, assignments)) hasMatch = true
+      noteIds.forEach(noteId => {
+        if (filterMatchesNote(activeLaneFilter, noteId, assignments)) hasMatch = true
         else hasOther = true
       })
       const nextHidden = new Set()
       if (!hasMatch) nextHidden.add(activeLaneFilter.id)
       if (!hasOther) nextHidden.add(UNASSIGNED_LANE)
       setHiddenCatIds(nextHidden)
-      setHiddenGoalsByLane({
-        [activeLaneFilter.id]: new Set(goals.filter(goal => !goalIds.has(goal.id)).map(goal => goal.id)),
-        [UNASSIGNED_LANE]: new Set(goals.filter(goal => !goalIds.has(goal.id)).map(goal => goal.id)),
+      setHiddenNotesByLane({
+        [activeLaneFilter.id]: new Set(notes.filter(note => !noteIds.has(note.id)).map(note => note.id)),
+        [UNASSIGNED_LANE]: new Set(notes.filter(note => !noteIds.has(note.id)).map(note => note.id)),
       })
       return
     }
@@ -1761,8 +1761,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
     if (activeDimId) {
       const selectedCatIds = new Set()
       let hasUnassigned = false
-      goalIds.forEach(goalId => {
-        const catId = assignments[goalId]?.[activeDimId]
+      noteIds.forEach(noteId => {
+        const catId = assignments[noteId]?.[activeDimId]
         if (catId) selectedCatIds.add(catId)
         else hasUnassigned = true
       })
@@ -1773,39 +1773,39 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
       )
       if (!hasUnassigned) nextHidden.add(UNASSIGNED_LANE)
       setHiddenCatIds(nextHidden)
-      const nextHiddenGoalsByLane = {}
+      const nextHiddenNotesByLane = {}
       categories
         .filter(cat => cat.dimensionId === activeDimId)
         .forEach(cat => {
-          nextHiddenGoalsByLane[cat.id] = new Set(
-            goals
-              .filter(goal => assignments[goal.id]?.[activeDimId] === cat.id && !goalIds.has(goal.id))
-              .map(goal => goal.id)
+          nextHiddenNotesByLane[cat.id] = new Set(
+            notes
+              .filter(note => assignments[note.id]?.[activeDimId] === cat.id && !noteIds.has(note.id))
+              .map(note => note.id)
           )
         })
-      nextHiddenGoalsByLane[UNASSIGNED_LANE] = new Set(
-        goals
-          .filter(goal => !assignments[goal.id]?.[activeDimId] && !goalIds.has(goal.id))
-          .map(goal => goal.id)
+      nextHiddenNotesByLane[UNASSIGNED_LANE] = new Set(
+        notes
+          .filter(note => !assignments[note.id]?.[activeDimId] && !noteIds.has(note.id))
+          .map(note => note.id)
       )
-      setHiddenGoalsByLane(nextHiddenGoalsByLane)
+      setHiddenNotesByLane(nextHiddenNotesByLane)
       return
     }
 
     setHiddenCatIds(new Set())
-    setHiddenGoalsByLane({
-      [UNASSIGNED_LANE]: new Set(goals.filter(goal => !goalIds.has(goal.id)).map(goal => goal.id)),
+    setHiddenNotesByLane({
+      [UNASSIGNED_LANE]: new Set(notes.filter(note => !noteIds.has(note.id)).map(note => note.id)),
     })
-  }, [activeDimId, activeLaneFilter, assignments, categories, goals])
+  }, [activeDimId, activeLaneFilter, assignments, categories, notes])
 
-  const filterToSelectedGoals = useCallback(() => {
-    applyGoalVisibilityFilter(selectedGoalIds)
-  }, [applyGoalVisibilityFilter, selectedGoalIds])
+  const filterToSelectedNotes = useCallback(() => {
+    applyNoteVisibilityFilter(selectedNoteIds)
+  }, [applyNoteVisibilityFilter, selectedNoteIds])
 
   const expandEverything = useCallback(() => {
-    setVisibleGoalFilterIds(new Set())
+    setVisibleNoteFilterIds(new Set())
     setHiddenCatIds(new Set())
-    setHiddenGoalsByLane({})
+    setHiddenNotesByLane({})
   }, [])
 
   const resolveDependencySelection = useCallback((milestoneIds = null) => {
@@ -1816,10 +1816,10 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
       ? pendingDependencyResolveIds
       : selectedIdsRef.current
     const accumulatedIds = new Set([...selectedIdsRef.current, ...idsToResolve])
-    const goalIds = new Set()
+    const noteIds = new Set()
     accumulatedIds.forEach(msId => {
       const milestone = milestonesRef.current.find(m => m.id === msId)
-      if (milestone) goalIds.add(milestone.goalId)
+      if (milestone) noteIds.add(milestone.noteId)
     })
     const snapshot = capturePerspectiveStateRef.current?.()
     if (snapshot) setDependencyResolveSnapshot(prev => prev ?? snapshot)
@@ -1829,87 +1829,87 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
     setQuickFilters([])
     setPaintCat(null)
     setHiddenCatIds(new Set())
-    setHiddenGoalsByLane({})
-    applyGoalVisibilityFilter(goalIds)
+    setHiddenNotesByLane({})
+    applyNoteVisibilityFilter(noteIds)
     setPendingDependencyResolveIds(new Set())
     clearWarningPrompt()
-  }, [applyGoalVisibilityFilter, clearWarningPrompt, pendingDependencyResolveIds])
+  }, [applyNoteVisibilityFilter, clearWarningPrompt, pendingDependencyResolveIds])
   resolveDependencySelectionRef.current = resolveDependencySelection
 
-  const isGoalHighlighted = goalId => selectedGoalIds.has(goalId) || goalId === clickedGoalId
+  const isNoteHighlighted = noteId => selectedNoteIds.has(noteId) || noteId === clickedNoteId
 
-  const goalsForLane = useCallback(cat => {
+  const notesForLane = useCallback(cat => {
     if (activeLaneFilter) {
       const key = laneKeyForCat(cat)
       return key === UNASSIGNED_LANE
-        ? visibleGoals.filter(g => !filterMatchesGoal(activeLaneFilter, g.id, assignments))
-        : visibleGoals.filter(g => filterMatchesGoal(activeLaneFilter, g.id, assignments))
+        ? visibleNotes.filter(g => !filterMatchesNote(activeLaneFilter, g.id, assignments))
+        : visibleNotes.filter(g => filterMatchesNote(activeLaneFilter, g.id, assignments))
     }
-    if (!activeDimId) return visibleGoals
+    if (!activeDimId) return visibleNotes
     const key = laneKeyForCat(cat)
-    return visibleGoals.filter(goal => {
-      const assignedCatId = assignments[goal.id]?.[activeDimId]
+    return visibleNotes.filter(note => {
+      const assignedCatId = assignments[note.id]?.[activeDimId]
       return key === UNASSIGNED_LANE ? !assignedCatId : assignedCatId === key
     }).sort((a, b) => {
       const ao = assignmentOrders[a.id]?.[activeDimId] ?? Number.MAX_SAFE_INTEGER
       const bo = assignmentOrders[b.id]?.[activeDimId] ?? Number.MAX_SAFE_INTEGER
       return ao - bo
     })
-  }, [activeDimId, activeLaneFilter, assignmentOrders, assignments, visibleGoals])
+  }, [activeDimId, activeLaneFilter, assignmentOrders, assignments, visibleNotes])
 
-  const reorderGoalInLane = useCallback(async (dragGoalId, targetGoalId) => {
-    if (!activeDimId || dragGoalId === targetGoalId) return
-    const catId = assignments[dragGoalId]?.[activeDimId]
-    if (!catId || assignments[targetGoalId]?.[activeDimId] !== catId) return
-    const laneGoals = goalsForLane(categories.find(c => c.id === catId))
-    const fromIdx = laneGoals.findIndex(g => g.id === dragGoalId)
-    const toIdx = laneGoals.findIndex(g => g.id === targetGoalId)
+  const reorderNoteInLane = useCallback(async (dragNoteId, targetNoteId) => {
+    if (!activeDimId || dragNoteId === targetNoteId) return
+    const catId = assignments[dragNoteId]?.[activeDimId]
+    if (!catId || assignments[targetNoteId]?.[activeDimId] !== catId) return
+    const laneNotes = notesForLane(categories.find(c => c.id === catId))
+    const fromIdx = laneNotes.findIndex(g => g.id === dragNoteId)
+    const toIdx = laneNotes.findIndex(g => g.id === targetNoteId)
     if (fromIdx === -1 || toIdx === -1) return
-    const reordered = [...laneGoals]
+    const reordered = [...laneNotes]
     const [moved] = reordered.splice(fromIdx, 1)
     reordered.splice(toIdx, 0, moved)
-    const goalIds = reordered.map(g => g.id)
+    const noteIds = reordered.map(g => g.id)
     setAssignmentOrders(prev => {
       const next = { ...prev }
-      goalIds.forEach((goalId, idx) => {
-        next[goalId] = { ...(next[goalId] ?? {}), [activeDimId]: idx }
+      noteIds.forEach((noteId, idx) => {
+        next[noteId] = { ...(next[noteId] ?? {}), [activeDimId]: idx }
       })
       return next
     })
-    try { await api.reorderAssignments(activeDimId, catId, goalIds) }
+    try { await api.reorderAssignments(activeDimId, catId, noteIds) }
     catch (err) { console.error(err) }
-  }, [activeDimId, assignments, categories, goalsForLane])
+  }, [activeDimId, assignments, categories, notesForLane])
 
-  const moveGoalToLane = useCallback(async (goalId, targetCatId) => {
+  const moveNoteToLane = useCallback(async (noteId, targetCatId) => {
     if (!activeDimId) return
-    const currentCatId = assignments[goalId]?.[activeDimId] ?? null
+    const currentCatId = assignments[noteId]?.[activeDimId] ?? null
     if (currentCatId === targetCatId) return
     // Optimistic update
     setAssignments(prev => {
       const next = { ...prev }
       if (targetCatId === null) {
-        const ga = { ...(next[goalId] ?? {}) }
+        const ga = { ...(next[noteId] ?? {}) }
         delete ga[activeDimId]
-        next[goalId] = ga
+        next[noteId] = ga
       } else {
-        next[goalId] = { ...(next[goalId] ?? {}), [activeDimId]: targetCatId }
+        next[noteId] = { ...(next[noteId] ?? {}), [activeDimId]: targetCatId }
       }
       return next
     })
     try {
-      if (targetCatId === null) await api.unassign(goalId, activeDimId)
-      else await api.assign(goalId, activeDimId, targetCatId)
+      if (targetCatId === null) await api.unassign(noteId, activeDimId)
+      else await api.assign(noteId, activeDimId, targetCatId)
     } catch (err) {
       console.error(err)
       // Revert
       setAssignments(prev => {
         const next = { ...prev }
         if (currentCatId === null) {
-          const ga = { ...(next[goalId] ?? {}) }
+          const ga = { ...(next[noteId] ?? {}) }
           delete ga[activeDimId]
-          next[goalId] = ga
+          next[noteId] = ga
         } else {
-          next[goalId] = { ...(next[goalId] ?? {}), [activeDimId]: currentCatId }
+          next[noteId] = { ...(next[noteId] ?? {}), [activeDimId]: currentCatId }
         }
         return next
       })
@@ -1937,22 +1937,22 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
   const getMilestoneColor = useCallback(milestone => {
     if (!colorDimId) return milestone.color
     if (colorDimId === FILTER_DIMENSION_ID) {
-      const match = filterCategories.find(cat => filterMatchesGoal(savedFilters.find(f => f.id === cat.filterId), milestone.goalId, assignments))
+      const match = filterCategories.find(cat => filterMatchesNote(savedFilters.find(f => f.id === cat.filterId), milestone.noteId, assignments))
       return match?.color ?? null
     }
-    const catId = assignments[milestone.goalId]?.[colorDimId]
+    const catId = assignments[milestone.noteId]?.[colorDimId]
     if (!catId) return null
     return categories.find(c => c.id === catId)?.color ?? null
   }, [assignments, categories, colorDimId, filterCategories, savedFilters])
 
-  // Color for the goal row indicator dot — same logic as milestones but returns null when unassigned
-  const getGoalColor = useCallback(goalId => {
+  // Color for the note row indicator dot — same logic as milestones but returns null when unassigned
+  const getNoteColor = useCallback(noteId => {
     if (!colorDimId) return null
     if (colorDimId === FILTER_DIMENSION_ID) {
-      const match = filterCategories.find(cat => filterMatchesGoal(savedFilters.find(f => f.id === cat.filterId), goalId, assignments))
+      const match = filterCategories.find(cat => filterMatchesNote(savedFilters.find(f => f.id === cat.filterId), noteId, assignments))
       return match?.color ?? null
     }
-    const catId = assignments[goalId]?.[colorDimId]
+    const catId = assignments[noteId]?.[colorDimId]
     if (!catId) return null
     return categories.find(c => c.id === catId)?.color ?? null
   }, [assignments, categories, colorDimId, filterCategories, savedFilters])
@@ -1961,8 +1961,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
     const from = overrides[dep.fromId] ?? milestonesRef.current.find(m => m.id === dep.fromId)
     const to   = overrides[dep.toId]   ?? milestonesRef.current.find(m => m.id === dep.toId)
     if (!from || !to) return null
-    const fromRow = goalRowMapRef.current[from.goalId]
-    const toRow   = goalRowMapRef.current[to.goalId]
+    const fromRow = noteRowMapRef.current[from.noteId]
+    const toRow   = noteRowMapRef.current[to.noteId]
     if (!fromRow || !toRow) return null
     const sp = spacingRef.current
     const fromLeftPx = from.leftPx ?? from.startCol * sp.colW
@@ -2002,7 +2002,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
     presentConflictMilestones(ids)
     showWarningPrompt({
       title: 'Milestone overlap',
-      message: 'Milestones in the same goal row cannot overlap or pass each other.',
+      message: 'Milestones in the same note row cannot overlap or pass each other.',
       actions: 'close',
     })
   }, [presentConflictMilestones, showWarningPrompt])
@@ -2010,7 +2010,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
   const reportDeadlineViolation = useCallback(() => {
     showWarningPrompt({
       title: 'Hard deadline',
-      message: "Milestones cannot move before today or past their goal's hard deadline.",
+      message: "Milestones cannot move before today or past their note's hard deadline.",
       actions: 'close',
     })
   }, [showWarningPrompt])
@@ -2141,7 +2141,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
     const col  = Math.floor(rawX / sp.colW)
     if (col < 0 || col >= totalColsRef.current) return
     const item = rowItemsRef.current.find(r => rawY >= r.top && rawY < r.top + r.height)
-    if (!item || item.type !== 'goal') { if (highlightRef.current) highlightRef.current.style.display = ''; return }
+    if (!item || item.type !== 'note') { if (highlightRef.current) highlightRef.current.style.display = ''; return }
     hoveredCellRef.current = { col, item }
     const h = highlightRef.current
     if (h) {
@@ -2180,7 +2180,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
   }, [])
 
   // ── Context menu ───────────────────────────────────────────────────────────
-  const getGoalCellFromPointer = useCallback(e => {
+  const getNoteCellFromPointer = useCallback(e => {
     const rect = gridBodyRef.current?.getBoundingClientRect(); if (!rect) return
     const sp   = spacingRef.current
     const relY = e.clientY - rect.top
@@ -2192,17 +2192,17 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
 
     const rawY = e.clientY - rect.top + scrollTopRef.current - HEADER_H
     const item = rowItemsRef.current.find(r => rawY >= r.top && rawY < r.top + r.height)
-    if (!item || item.type !== 'goal') return null
+    if (!item || item.type !== 'note') return null
 
     let color = '#1a73e8'
     if (item.cat?.color) color = item.cat.color
 
-    return { type: 'cell', col, goalId: item.goal.id, goalTitle: item.goal.title, color }
+    return { type: 'cell', col, noteId: item.note.id, noteTitle: item.note.title, color }
   }, [])
 
   const handleContextMenu = useCallback(e => {
     e.preventDefault()
-    const cell = getGoalCellFromPointer(e)
+    const cell = getNoteCellFromPointer(e)
     if (!cell) return
 
     if (cell.type === 'header') {
@@ -2212,16 +2212,16 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
     }
     if (e.target.closest('[data-ms-id]')) return  // right-click on milestone — skip for now
 
-    const hasDeadline = deadlinesRef.current.some(d => d.goalId === cell.goalId)
+    const hasDeadline = deadlinesRef.current.some(d => d.noteId === cell.noteId)
     setContextMenu({ type: 'cell', x: e.clientX, y: e.clientY, col: cell.col,
-      goalId: cell.goalId, goalTitle: cell.goalTitle, color: cell.color, hasDeadline })
-  }, [getGoalCellFromPointer])
+      noteId: cell.noteId, noteTitle: cell.noteTitle, color: cell.color, hasDeadline })
+  }, [getNoteCellFromPointer])
 
   // ── Milestone CRUD ─────────────────────────────────────────────────────────
-  const handleCreateMilestone = useCallback(async (goalId, startCol, color) => {
+  const handleCreateMilestone = useCallback(async (noteId, startCol, color) => {
     clearWarningPrompt()
-    const ms = { id: newClientId('ms'), goalId, startCol, duration: 1, title: '', color: color || '#1a73e8' }
-    const dl = deadlinesRef.current.find(d => d.goalId === goalId)
+    const ms = { id: newClientId('ms'), noteId, startCol, duration: 1, title: '', color: color || '#1a73e8' }
+    const dl = deadlinesRef.current.find(d => d.noteId === noteId)
     if (startCol < 0 || (dl && startCol + 1 > dl.col)) {
       reportDeadlineViolation()
       return
@@ -2243,11 +2243,11 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
   const handleGridDoubleClick = useCallback(e => {
     if (modeRef.current !== 'milestone') return
     if (e.target.closest('[data-ms-id]')) return
-    const cell = getGoalCellFromPointer(e)
+    const cell = getNoteCellFromPointer(e)
     if (!cell || cell.type !== 'cell') return
     e.preventDefault()
-    handleCreateMilestone(cell.goalId, cell.col, cell.color)
-  }, [getGoalCellFromPointer, handleCreateMilestone])
+    handleCreateMilestone(cell.noteId, cell.col, cell.color)
+  }, [getNoteCellFromPointer, handleCreateMilestone])
 
   // ── Column insert / delete ─────────────────────────────────────────────────
   const handleInsertDay = useCallback(async col => {
@@ -2323,7 +2323,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
       Object.entries(originals).forEach(([id, orig]) => {
         minDelta = Math.max(minDelta, -orig.startCol)
         const ms = milestonesRef.current.find(m => m.id === id)
-        const dl = deadlinesRef.current.find(d => d.goalId === ms?.goalId)
+        const dl = deadlinesRef.current.find(d => d.noteId === ms?.noteId)
         if (dl) maxDelta = Math.min(maxDelta, dl.col - orig.duration - orig.startCol)
       })
       return { minDelta, maxDelta }
@@ -2351,7 +2351,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
       Object.entries(originals).forEach(([id, orig]) => {
         dx = Math.max(dx, -orig.startCol * sp.colW)
         const ms = milestonesRef.current.find(m => m.id === id)
-        const dl = deadlinesRef.current.find(d => d.goalId === ms?.goalId)
+        const dl = deadlinesRef.current.find(d => d.noteId === ms?.noteId)
         if (dl) dx = Math.min(dx, (dl.col - orig.duration - orig.startCol) * sp.colW)
       })
       return dx
@@ -2452,7 +2452,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
 
     const getSnappedResize = clientX => {
       const dx = clientX - startMouseX
-      const dl = deadlinesRef.current.find(d => d.goalId === ms.goalId)
+      const dl = deadlinesRef.current.find(d => d.noteId === ms.noteId)
       const maxRight = dl?.col ?? Infinity
       if (side === 'left') {
         const requested = snapPxToCol(origStart * sp.colW + dx, sp.colW)
@@ -2599,10 +2599,10 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
       if (selR - selL < 4 && selB - selT < 4) return  // tiny drag = click, skip
 
       const sp    = spacingRef.current
-      const grm   = goalRowMapRef.current
+      const grm   = noteRowMapRef.current
       const hit   = new Set()
       milestonesRef.current.forEach(m => {
-        const row = grm[m.goalId]; if (!row) return
+        const row = grm[m.noteId]; if (!row) return
         const mL  = m.startCol * sp.colW; const mR = (m.startCol + m.duration) * sp.colW
         if (mR > selL && mL < selR && row.top + row.height > selT && row.top < selB) hit.add(m.id)
       })
@@ -2638,7 +2638,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
   const updatePreviewArrow = useCallback((sourceId, clientX, clientY) => {
     const rect = gridBodyRef.current?.getBoundingClientRect()
     const source = milestonesRef.current.find(m => m.id === sourceId)
-    const sourceRow = source && goalRowMapRef.current[source.goalId]
+    const sourceRow = source && noteRowMapRef.current[source.noteId]
     if (!rect || !source || !sourceRow || !previewArrowRef.current) return
     const sp = spacingRef.current
     const x2 = clientX - rect.left + scrollLeftRef.current
@@ -2711,17 +2711,17 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
   }, [createDependencyFromDrag, updatePreviewArrow])
 
   // ── Deadlines ──────────────────────────────────────────────────────────────
-  const handleSetDeadline = useCallback(async (goalId, col) => {
+  const handleSetDeadline = useCallback(async (noteId, col) => {
     try {
-      const dl = await api.setDeadline(goalId, col)
-      setDeadlines(prev => { const next = prev.filter(d => d.goalId !== goalId); return [...next, dl] })
+      const dl = await api.setDeadline(noteId, col)
+      setDeadlines(prev => { const next = prev.filter(d => d.noteId !== noteId); return [...next, dl] })
     } catch (err) { console.error(err) }
   }, [])
 
-  const handleRemoveDeadline = useCallback(async goalId => {
+  const handleRemoveDeadline = useCallback(async noteId => {
     try {
-      await api.removeDeadline(goalId)
-      setDeadlines(prev => prev.filter(d => d.goalId !== goalId))
+      await api.removeDeadline(noteId)
+      setDeadlines(prev => prev.filter(d => d.noteId !== noteId))
     } catch (err) { console.error(err) }
   }, [])
 
@@ -2763,12 +2763,12 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
       .map(id => {
         const milestone = milestonesRef.current.find(m => m.id === id)
         if (!milestone) return null
-        const goal = goals.find(g => g.id === milestone.goalId)
+        const note = notes.find(g => g.id === milestone.noteId)
         return {
           key: `milestone:${id}`,
           type: 'milestone',
           id,
-          label: `${goal?.title ?? 'Milestone'} · ${milestone.title || colToLabel(milestone.startCol, metric)}`,
+          label: `${note?.title ?? 'Milestone'} · ${milestone.title || colToLabel(milestone.startCol, metric)}`,
           checked: true,
         }
       })
@@ -2779,19 +2779,19 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
         if (!dep) return null
         const from = milestonesRef.current.find(m => m.id === dep.fromId)
         const to = milestonesRef.current.find(m => m.id === dep.toId)
-        const fromGoal = goals.find(g => g.id === from?.goalId)
-        const toGoal = goals.find(g => g.id === to?.goalId)
+        const fromNote = notes.find(g => g.id === from?.noteId)
+        const toNote = notes.find(g => g.id === to?.noteId)
         return {
           key: `dependency:${id}`,
           type: 'dependency',
           id,
-          label: `${fromGoal?.title ?? 'Milestone'} -> ${toGoal?.title ?? 'Milestone'}`,
+          label: `${fromNote?.title ?? 'Milestone'} -> ${toNote?.title ?? 'Milestone'}`,
           checked: true,
         }
       })
       .filter(Boolean)
     return [...milestoneItems, ...dependencyItems]
-  }, [goals])
+  }, [notes])
 
   const handleRequestDeleteSelection = useCallback(() => {
     const items = buildDeleteItems()
@@ -2888,10 +2888,10 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
       activeLaneFilterId,
     },
     collapsedCategories: [...hiddenCatIds],
-    hiddenGoalsByLane: Object.fromEntries(
-      Object.entries(hiddenGoalsByLane).map(([laneKey, ids]) => [laneKey, [...ids]])
+    hiddenNotesByLane: Object.fromEntries(
+      Object.entries(hiddenNotesByLane).map(([laneKey, ids]) => [laneKey, [...ids]])
     ),
-    visibleGoalFilterIds: [...visibleGoalFilterIds],
+    visibleNoteFilterIds: [...visibleNoteFilterIds],
     scrollLeft: scrollLeftRef.current,
     color: {
       colorDimId,
@@ -2904,8 +2904,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
     },
   }), [
     activeDimId, activeFilterIds, activeLaneFilterId, activePerspectiveId, axisMode, colorDimId,
-    colorDependencyDirection, hiddenCatIds, hiddenGoalsByLane, hideCrossCatDeps,
-    leftPanelWidth, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps, spacing, visibleGoalFilterIds,
+    colorDependencyDirection, hiddenCatIds, hiddenNotesByLane, hideCrossCatDeps,
+    leftPanelWidth, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps, spacing, visibleNoteFilterIds,
   ])
   capturePerspectiveStateRef.current = capturePerspectiveState
 
@@ -2929,16 +2929,16 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
     setActiveDimId(nextActiveDimId)
     setActiveLaneFilterId(nextActiveLaneFilterId)
     setHiddenCatIds(new Set(Array.isArray(state.collapsedCategories) ? state.collapsedCategories : []))
-    setHiddenGoalsByLane(Object.fromEntries(
-      Object.entries(state.hiddenGoalsByLane ?? {}).map(([laneKey, ids]) => [laneKey, new Set(Array.isArray(ids) ? ids : [])])
+    setHiddenNotesByLane(Object.fromEntries(
+      Object.entries(state.hiddenNotesByLane ?? {}).map(([laneKey, ids]) => [laneKey, new Set(Array.isArray(ids) ? ids : [])])
     ))
-    setVisibleGoalFilterIds(new Set(Array.isArray(state.visibleGoalFilterIds) ? state.visibleGoalFilterIds : []))
+    setVisibleNoteFilterIds(new Set(Array.isArray(state.visibleNoteFilterIds) ? state.visibleNoteFilterIds : []))
 
     setColorDimId(nextColorDimId)
     setActiveFilterIds(Array.isArray(state.color?.activeFilterIds) ? state.color.activeFilterIds : [])
     setQuickFilters(Array.isArray(state.color?.quickFilters) ? state.color.quickFilters : [])
     setPaintCat(null)
-    setRevealedConflictGoalIds(new Set())
+    setRevealedConflictNoteIds(new Set())
     setDependencyResolveSnapshot(null)
     setActivePerspectiveId(perspective?.id ?? NONE_PERSPECTIVE_ID)
 
@@ -2971,16 +2971,16 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
     setActiveDimId(nextActiveDimId)
     setActiveLaneFilterId(nextActiveLaneFilterId)
     setHiddenCatIds(new Set(Array.isArray(state.collapsedCategories) ? state.collapsedCategories : []))
-    setHiddenGoalsByLane(Object.fromEntries(
-      Object.entries(state.hiddenGoalsByLane ?? {}).map(([laneKey, ids]) => [laneKey, new Set(Array.isArray(ids) ? ids : [])])
+    setHiddenNotesByLane(Object.fromEntries(
+      Object.entries(state.hiddenNotesByLane ?? {}).map(([laneKey, ids]) => [laneKey, new Set(Array.isArray(ids) ? ids : [])])
     ))
-    setVisibleGoalFilterIds(new Set(Array.isArray(state.visibleGoalFilterIds) ? state.visibleGoalFilterIds : []))
+    setVisibleNoteFilterIds(new Set(Array.isArray(state.visibleNoteFilterIds) ? state.visibleNoteFilterIds : []))
 
     setColorDimId(nextColorDimId)
     setActiveFilterIds(Array.isArray(state.color?.activeFilterIds) ? state.color.activeFilterIds : [])
     setQuickFilters(Array.isArray(state.color?.quickFilters) ? state.color.quickFilters : [])
     setPaintCat(null)
-    setRevealedConflictGoalIds(new Set())
+    setRevealedConflictNoteIds(new Set())
     setSelectedIds(new Set(Array.isArray(state.selection?.milestoneIds) ? state.selection.milestoneIds : []))
     setSelectedDepIds(new Set(Array.isArray(state.selection?.dependencyIds) ? state.selection.dependencyIds : []))
     setActivePerspectiveId(state.activePerspectiveId ?? activePerspectiveId)
@@ -3194,7 +3194,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
   const visMilestones = milestones.filter(m => {
     if (draggedIds.has(m.id)) return true
     if (m.startCol + m.duration < startCol || m.startCol > endCol) return false
-    const row = goalRowMap[m.goalId]; if (!row) return false
+    const row = noteRowMap[m.noteId]; if (!row) return false
     return row.top + row.height >= scrollTop - bufH && row.top <= scrollTop + vpSize.h + bufH
   })
 
@@ -3203,7 +3203,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div
-      className={`${styles.page} ${paintCat ? styles.paintMode : ''}`}
+      className={`${styles.note} ${paintCat ? styles.paintMode : ''}`}
       style={paintCat ? { cursor: makeColorCursor(paintCat.color) } : undefined}
       onClick={paintCat ? () => setPaintCat(null) : undefined}>
       <GanttToolbar
@@ -3218,7 +3218,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
         canDeleteSelection={selectedIds.size > 0 || selectedDepIds.size > 0}
         onDeleteSelection={handleRequestDeleteSelection}
         canFilterToSelection={selectedIds.size > 0}
-        onFilterToSelectedGoals={filterToSelectedGoals}
+        onFilterToSelectedNotes={filterToSelectedNotes}
         onExpandEverything={expandEverything}
         canUndo={transactionHistory.undo.length > 0}
         canRedo={transactionHistory.redo.length > 0}
@@ -3252,9 +3252,9 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
                   const lhCatKey = item.cat?.id ?? UNASSIGNED_LANE
                   const lhIsOver = dragOverLaneCatId === lhCatKey
                   const lhReorderOver = dragOverCatReorderId === lhCatKey
-                  const lhLaneGoals = goalsForLane(item.cat)
-                  const lhHiddenIds = hiddenGoalsByLane[lhCatKey] ?? new Set()
-                  const lhVisibleCount = lhLaneGoals.filter(g => !lhHiddenIds.has(g.id)).length
+                  const lhLaneNotes = notesForLane(item.cat)
+                  const lhHiddenIds = hiddenNotesByLane[lhCatKey] ?? new Set()
+                  const lhVisibleCount = lhLaneNotes.filter(g => !lhHiddenIds.has(g.id)).length
                   return (
                     <div key={`lh-${item.cat?.id ?? 'none'}`}
                       className={[
@@ -3276,9 +3276,9 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
                         if (e.dataTransfer.types.includes('schedule-cat-id')) {
                           e.preventDefault()
                           if (item.cat) { setDragOverCatReorderId(lhCatKey); setDragOverLaneCatId(null) }
-                        } else if (e.dataTransfer.types.includes('schedule-goal-id')) {
+                        } else if (e.dataTransfer.types.includes('schedule-note-id')) {
                           e.preventDefault()
-                          setDragOverLaneCatId(lhCatKey); setDragOverGoalId(null); setDragOverCatReorderId(null)
+                          setDragOverLaneCatId(lhCatKey); setDragOverNoteId(null); setDragOverCatReorderId(null)
                         }
                       }}
                       onDragLeave={e => {
@@ -3290,31 +3290,31 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
                       onDrop={e => {
                         e.preventDefault()
                         const catId = e.dataTransfer.getData('schedule-cat-id')
-                        const goalId = e.dataTransfer.getData('schedule-goal-id')
+                        const noteId = e.dataTransfer.getData('schedule-note-id')
                         setDragOverLaneCatId(null)
                         setDragOverCatReorderId(null)
                         if (catId && item.cat) reorderCategoryInGantt(catId, item.cat.id)
-                        else if (goalId) moveGoalToLane(goalId, item.cat?.id ?? null)
+                        else if (noteId) moveNoteToLane(noteId, item.cat?.id ?? null)
                       }}>
                       <span
                         className={styles.laneHdrName}
                         onDoubleClick={e => {
                           e.stopPropagation()
                           if (lhVisibleCount > 0) {
-                            hideAllLaneGoals(lhCatKey, lhLaneGoals.map(g => g.id))
+                            hideAllLaneNotes(lhCatKey, lhLaneNotes.map(g => g.id))
                           } else {
-                            showAllLaneGoals(lhCatKey)
+                            showAllLaneNotes(lhCatKey)
                           }
                         }}>
                         {item.cat?.name ?? 'Unassigned'}
                       </span>
-                      <LaneGoalFilter
+                      <LaneNoteFilter
                         laneKey={laneKeyForCat(item.cat)}
-                        goals={goalsForLane(item.cat)}
-                        hiddenGoalIds={hiddenGoalsByLane[laneKeyForCat(item.cat)] ?? new Set()}
-                        onToggleGoal={toggleGoalVisibility}
-                        onShowAllGoals={showAllLaneGoals}
-                        onHideAllGoals={hideAllLaneGoals}
+                        notes={notesForLane(item.cat)}
+                        hiddenNoteIds={hiddenNotesByLane[laneKeyForCat(item.cat)] ?? new Set()}
+                        onToggleNote={toggleNoteVisibility}
+                        onShowAllNotes={showAllLaneNotes}
+                        onHideAllNotes={hideAllLaneNotes}
                       />
                       <button
                         className={styles.laneCollapseBtn}
@@ -3327,19 +3327,19 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
                     </div>
                   )
                 }
-                if (item.type === 'goal')
+                if (item.type === 'note')
                   return (
-                    <div key={item.goal.id}
+                    <div key={item.note.id}
                       className={[
-                        inLaneMode ? styles.goalRowLane : styles.goalRow,
-                        dragOverGoalId === item.goal.id && styles.goalRowDropTarget,
-                        isGoalHighlighted(item.goal.id) && styles.goalRowHighlight,
+                        inLaneMode ? styles.noteRowLane : styles.noteRow,
+                        dragOverNoteId === item.note.id && styles.noteRowDropTarget,
+                        isNoteHighlighted(item.note.id) && styles.noteRowHighlight,
                       ].filter(Boolean).join(' ')}
                       draggable={Boolean(activeDimId) && !paintCat}
                       onDragStart={e => {
                         if (paintCat || !activeDimId) return
-                        e.dataTransfer.setData('schedule-goal-id', item.goal.id)
-                        e.dataTransfer.setData('schedule-goal-cat', item.cat?.id ?? '')
+                        e.dataTransfer.setData('schedule-note-id', item.note.id)
+                        e.dataTransfer.setData('schedule-note-cat', item.cat?.id ?? '')
                         e.dataTransfer.effectAllowed = 'move'
                         // Ghost must be in the viewport for browsers to render it at full opacity
                         const el = e.currentTarget
@@ -3355,56 +3355,56 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
                         setTimeout(() => ghost.remove(), 0)
                       }}
                       onDragOver={e => {
-                        if (!activeDimId || !e.dataTransfer.types.includes('schedule-goal-id')) return
+                        if (!activeDimId || !e.dataTransfer.types.includes('schedule-note-id')) return
                         e.preventDefault()
-                        setDragOverGoalId(item.goal.id)
+                        setDragOverNoteId(item.note.id)
                         setDragOverLaneCatId(null)
                       }}
-                      onDragLeave={() => setDragOverGoalId(prev => prev === item.goal.id ? null : prev)}
+                      onDragLeave={() => setDragOverNoteId(prev => prev === item.note.id ? null : prev)}
                       onDrop={e => {
-                        const dragGoalId = e.dataTransfer.getData('schedule-goal-id')
-                        const dragCat = e.dataTransfer.getData('schedule-goal-cat')
-                        setDragOverGoalId(null)
-                        if (!dragGoalId) return
+                        const dragNoteId = e.dataTransfer.getData('schedule-note-id')
+                        const dragCat = e.dataTransfer.getData('schedule-note-cat')
+                        setDragOverNoteId(null)
+                        if (!dragNoteId) return
                         const targetCatId = item.cat?.id ?? null
                         const sourceCatId = dragCat || null
                         if (sourceCatId !== targetCatId) {
-                          moveGoalToLane(dragGoalId, targetCatId)
+                          moveNoteToLane(dragNoteId, targetCatId)
                         } else {
-                          reorderGoalInLane(dragGoalId, item.goal.id)
+                          reorderNoteInLane(dragNoteId, item.note.id)
                         }
                       }}
-                      onDragEnd={() => setDragOverGoalId(null)}
+                      onDragEnd={() => setDragOverNoteId(null)}
                       onClick={paintCat ? e => {
                         e.stopPropagation()
-                        paintGoal(item.goal.id)
+                        paintNote(item.note.id)
                       } : undefined}
                       onDoubleClick={e => {
                         e.stopPropagation()
                         if (paintCat) return
-                        onGoalOpen?.(item.goal.id)
+                        onNoteOpen?.(item.note.id)
                       }}
                       style={{ top: item.top, height: item.height, borderLeftColor: item.cat?.color ?? 'transparent' }}>
                       <span
-                        className={`${styles.goalTitle} ${paintCat ? styles.paintTarget : ''}`}
+                        className={`${styles.noteTitle} ${paintCat ? styles.paintTarget : ''}`}
                         title={paintCat ? 'Apply selected category' : undefined}
                         onClick={paintCat ? undefined : e => {
                           e.stopPropagation()
-                          setClickedGoalId(prev => prev === item.goal.id ? null : item.goal.id)
+                          setClickedNoteId(prev => prev === item.note.id ? null : item.note.id)
                         }}>
-                        {item.goal.title}
+                        {item.note.title}
                       </span>
                       {!paintCat && (() => {
-                        const c = getGoalColor(item.goal.id)
-                        return c ? <span className={styles.goalColorCorner} style={{ borderTopColor: c }} /> : null
+                        const c = getNoteColor(item.note.id)
+                        return c ? <span className={styles.noteColorCorner} style={{ borderTopColor: c }} /> : null
                       })()}
                       {!paintCat && (
                         <button
-                          className={styles.goalEyeBtn}
-                          title="Hide goal"
+                          className={styles.noteEyeBtn}
+                          title="Hide note"
                           onClick={e => {
                             e.stopPropagation()
-                            toggleGoalVisibility(laneKeyForCat(item.cat), item.goal.id)
+                            toggleNoteVisibility(laneKeyForCat(item.cat), item.note.id)
                           }}>
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
@@ -3419,19 +3419,19 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
                     className={`${styles.emptyRow} ${dragOverLaneCatId === (item.cat?.id ?? UNASSIGNED_LANE) ? styles.laneHdrDropTarget : ''}`}
                     style={{ top: item.top, height: item.height }}
                     onDragOver={e => {
-                      if (!activeDimId || !e.dataTransfer.types.includes('schedule-goal-id')) return
+                      if (!activeDimId || !e.dataTransfer.types.includes('schedule-note-id')) return
                       e.preventDefault()
                       setDragOverLaneCatId(item.cat?.id ?? UNASSIGNED_LANE)
-                      setDragOverGoalId(null)
+                      setDragOverNoteId(null)
                     }}
                     onDragLeave={e => {
                       if (!e.currentTarget.contains(e.relatedTarget)) setDragOverLaneCatId(null)
                     }}
                     onDrop={e => {
                       e.preventDefault()
-                      const goalId = e.dataTransfer.getData('schedule-goal-id')
+                      const noteId = e.dataTransfer.getData('schedule-note-id')
                       setDragOverLaneCatId(null)
-                      if (goalId) moveGoalToLane(goalId, item.cat?.id ?? null)
+                      if (noteId) moveNoteToLane(noteId, item.cat?.id ?? null)
                     }}
                   />
                 )
@@ -3525,27 +3525,27 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
                     height: item.height,
                     background: item.cat ? `${item.cat.color}24` : 'rgba(0,0,0,0.05)',
                   }} />
-              if (item.type === 'goal')
-                return <div key={`gr-${item.goal.id}`}
-                  className={`${styles.gridGoalRow} ${isGoalHighlighted(item.goal.id) ? styles.gridGoalRowHighlight : ''}`}
+              if (item.type === 'note')
+                return <div key={`gr-${item.note.id}`}
+                  className={`${styles.gridNoteRow} ${isNoteHighlighted(item.note.id) ? styles.gridNoteRowHighlight : ''}`}
                   style={{ top: HEADER_H + item.top, height: item.height }} />
               return null
             })}
 
             {/* Hard deadline markers */}
             {deadlines.map(dl => {
-              const row = goalRowMap[dl.goalId]; if (!row) return null
+              const row = noteRowMap[dl.noteId]; if (!row) return null
               const hatchLeft  = dl.col * colW
               const hatchWidth = Math.max(0, totalCols - dl.col) * colW
               return hatchWidth > 0 ? (
-                <div key={`dl-${dl.goalId}`} className={styles.deadlineHatch}
+                <div key={`dl-${dl.noteId}`} className={styles.deadlineHatch}
                   style={{ left: hatchLeft, top: HEADER_H + row.top, width: hatchWidth, height: row.height }} />
               ) : null
             })}
 
             {/* Milestones */}
             {visMilestones.map(m => {
-              const row = goalRowMap[m.goalId]; if (!row) return null
+              const row = noteRowMap[m.noteId]; if (!row) return null
               const isSelected    = selectedIds.has(m.id)
               const isViolating   = violationIds.has(m.id)
               const isBlinking    = blinkingMilestoneIds.has(m.id)
@@ -3586,14 +3586,14 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
                   }}
                   onClick={paintCat ? e => {
                     e.stopPropagation()
-                    paintGoal(m.goalId)
+                    paintNote(m.noteId)
                   } : undefined}
                   onContextMenu={e => {
                     e.preventDefault()
                     e.stopPropagation()
                     if (paintCat) return
-                    const goal = goals.find(g => g.id === m.goalId)
-                    const label = `${goal?.title ?? 'Milestone'} · ${m.title || colToLabel(m.startCol, metric)}`
+                    const note = notes.find(g => g.id === m.noteId)
+                    const label = `${note?.title ?? 'Milestone'} · ${m.title || colToLabel(m.startCol, metric)}`
                     setContextMenu({ type: 'milestone', x: e.clientX, y: e.clientY, milestoneId: m.id, label })
                   }}>
                   <div
@@ -3631,11 +3631,11 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
                 const from = milestones.find(m => m.id === dep.fromId)
                 const to   = milestones.find(m => m.id === dep.toId)
                 if (!from || !to) return null
-                const fromRow = goalRowMap[from.goalId]; const toRow = goalRowMap[to.goalId]
+                const fromRow = noteRowMap[from.noteId]; const toRow = noteRowMap[to.noteId]
                 if (!fromRow || !toRow) return null
                 if (hideCrossCatDeps && activeDimId) {
-                  const fromCat = assignments[from.goalId]?.[activeDimId] ?? null
-                  const toCat   = assignments[to.goalId]?.[activeDimId] ?? null
+                  const fromCat = assignments[from.noteId]?.[activeDimId] ?? null
+                  const toCat   = assignments[to.noteId]?.[activeDimId] ?? null
                   if (fromCat !== toCat) return null
                 }
                 const x1 = (from.startCol + from.duration) * colW
@@ -3655,8 +3655,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
                     : colorDependencyDirection && isIncomingToSelection
                       ? '#dc2626'
                       : '#555'
-                const fromGoal = goals.find(g => g.id === from.goalId)
-                const toGoal   = goals.find(g => g.id === to.goalId)
+                const fromNote = notes.find(g => g.id === from.noteId)
+                const toNote   = notes.find(g => g.id === to.noteId)
                 const pathD = `M ${x1} ${y1} C ${x1 + cp} ${y1}, ${x2 - cp} ${y2}, ${x2} ${y2}`
                 const inDepMode = mode === 'dependency'
                 const labelPathId = `dep-label-path-${dep.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`
@@ -3687,7 +3687,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
                         onContextMenu={e => {
                           e.preventDefault()
                           e.stopPropagation()
-                          const label = `${fromGoal?.title ?? '?'} → ${toGoal?.title ?? '?'}`
+                          const label = `${fromNote?.title ?? '?'} → ${toNote?.title ?? '?'}`
                           setContextMenu({ type: 'dep', x: e.clientX, y: e.clientY, depId: dep.id, label, reason: dep.reason ?? '' })
                         }}
                       />
@@ -3883,9 +3883,9 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
                 const dep = dependencies.find(d => d.id === reasonModal.depId)
                 const from = milestones.find(m => m.id === dep?.fromId)
                 const to   = milestones.find(m => m.id === dep?.toId)
-                const fromGoal = goals.find(g => g.id === from?.goalId)
-                const toGoal   = goals.find(g => g.id === to?.goalId)
-                const label = `${fromGoal?.title ?? '?'} → ${toGoal?.title ?? '?'}`
+                const fromNote = notes.find(g => g.id === from?.noteId)
+                const toNote   = notes.find(g => g.id === to?.noteId)
+                const label = `${fromNote?.title ?? '?'} → ${toNote?.title ?? '?'}`
                 setReasonModal(null)
                 handleDeleteDepRequest(dep.id, label)
               }}>Delete</button>

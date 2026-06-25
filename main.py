@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import sqlite3
 import time
 import uuid
@@ -14,7 +15,8 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, Field
 
-DB_PATH = "goals.db"
+DB_PATH = "notes.db"
+LEGACY_DB_PATH = "goals.db"
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_MINUTES = 30
 REFRESH_TOKEN_DAYS = 30
@@ -58,6 +60,29 @@ def _load_local_env(path: str | None = None):
 _load_local_env()
 
 
+def _bootstrap_database_file():
+    def project_count(path: str) -> int:
+        if not os.path.exists(path):
+            return 0
+        try:
+            con = sqlite3.connect(path)
+            count = con.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
+            con.close()
+            return count
+        except sqlite3.Error:
+            return 0
+
+    if os.path.exists(DB_PATH) and project_count(DB_PATH) > 0:
+        return
+    if os.path.exists(LEGACY_DB_PATH) and project_count(LEGACY_DB_PATH) > 0:
+        if os.path.exists(DB_PATH):
+            shutil.copyfile(DB_PATH, f"{DB_PATH}.empty-backup")
+        shutil.copyfile(LEGACY_DB_PATH, DB_PATH)
+
+
+_bootstrap_database_file()
+
+
 # ── DB setup ──────────────────────────────────────────────────────────────────
 @contextmanager
 def _db():
@@ -93,7 +118,7 @@ def _init_db():
             )
         """)
         con.execute("""
-            CREATE TABLE IF NOT EXISTS pages (
+            CREATE TABLE IF NOT EXISTS notes (
                 id         TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL DEFAULT 'default',
                 html       TEXT NOT NULL DEFAULT '',
@@ -120,17 +145,17 @@ def _init_db():
         """)
         con.execute("""
             CREATE TABLE IF NOT EXISTS assignments (
-                goal_id      TEXT NOT NULL,
+                note_id      TEXT NOT NULL,
                 dimension_id TEXT NOT NULL,
                 category_id  TEXT NOT NULL,
                 order_idx    INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (goal_id, dimension_id)
+                PRIMARY KEY (note_id, dimension_id)
             )
         """)
         con.execute("""
             CREATE TABLE IF NOT EXISTS milestones (
                 id         TEXT PRIMARY KEY,
-                goal_id    TEXT NOT NULL,
+                note_id    TEXT NOT NULL,
                 start_col  INTEGER NOT NULL,
                 duration   INTEGER NOT NULL DEFAULT 1,
                 title      TEXT NOT NULL DEFAULT '',
@@ -149,7 +174,7 @@ def _init_db():
         con.execute("""
             CREATE TABLE IF NOT EXISTS deadlines (
                 id      TEXT PRIMARY KEY,
-                goal_id TEXT NOT NULL UNIQUE,
+                note_id TEXT NOT NULL UNIQUE,
                 col     INTEGER NOT NULL
             )
         """)
@@ -198,6 +223,44 @@ _init_db()
 
 def _migrate():
     with _db() as con:
+        tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+        if "notes" not in tables and "pages" in tables:
+            con.execute("ALTER TABLE pages RENAME TO notes")
+            tables.add("notes")
+        elif "pages" in tables and "notes" in tables:
+            con.execute("""
+                INSERT OR IGNORE INTO notes (id, project_id, html, title, collapsed, order_idx)
+                SELECT id, project_id, html, title, collapsed, order_idx FROM pages
+            """)
+            con.execute("DROP TABLE pages")
+
+        for table in ("assignments", "milestones", "deadlines"):
+            cols = [r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()]
+            if "goal_id" in cols and "note_id" not in cols:
+                con.execute(f"ALTER TABLE {table} RENAME COLUMN goal_id TO note_id")
+
+        for table, cols in {
+            "schedule_perspectives": ("state_json",),
+            "classification_perspectives": ("state_json",),
+            "transaction_history": ("transaction_json", "before_json", "after_json"),
+        }.items():
+            table_exists = con.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
+            if not table_exists:
+                continue
+            for col in cols:
+                if col not in [r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()]:
+                    continue
+                con.execute(f"""
+                    UPDATE {table}
+                    SET {col} = replace(replace(replace(replace(replace({col},
+                        'goalId', 'noteId'),
+                        'hiddenGoalsByLane', 'hiddenNotesByLane'),
+                        'visibleGoalFilterIds', 'visibleNoteFilterIds'),
+                        'revealedConflictGoalIds', 'revealedConflictNoteIds'),
+                        'selectedGoalIds', 'selectedNoteIds')
+                    WHERE {col} IS NOT NULL
+                """)
+
         con.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id                  TEXT PRIMARY KEY,
@@ -215,7 +278,7 @@ def _migrate():
             con.execute("ALTER TABLE users ADD COLUMN is_superuser INTEGER NOT NULL DEFAULT 0")
 
         # Add project_id to tables that need it
-        for table in ['pages', 'dimensions', 'saved_filters', 'schedule_perspectives', 'classification_perspectives']:
+        for table in ['notes', 'dimensions', 'saved_filters', 'schedule_perspectives', 'classification_perspectives']:
             cols = [r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()]
             if 'project_id' not in cols:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default'")
@@ -231,7 +294,7 @@ def _migrate():
         if 'order_idx' not in assignment_cols:
             con.execute("ALTER TABLE assignments ADD COLUMN order_idx INTEGER NOT NULL DEFAULT 0")
             rows = con.execute(
-                "SELECT goal_id, dimension_id, category_id FROM assignments ORDER BY dimension_id, category_id, rowid"
+                "SELECT note_id, dimension_id, category_id FROM assignments ORDER BY dimension_id, category_id, rowid"
             ).fetchall()
             counters = {}
             for row in rows:
@@ -239,8 +302,8 @@ def _migrate():
                 idx = counters.get(key, 0)
                 counters[key] = idx + 1
                 con.execute(
-                    "UPDATE assignments SET order_idx = ? WHERE goal_id = ? AND dimension_id = ?",
-                    (idx, row["goal_id"], row["dimension_id"]),
+                    "UPDATE assignments SET order_idx = ? WHERE note_id = ? AND dimension_id = ?",
+                    (idx, row["note_id"], row["dimension_id"]),
                 )
 
         filter_cols = [r[1] for r in con.execute("PRAGMA table_info(saved_filters)").fetchall()]
@@ -268,31 +331,8 @@ def _migrate():
         proj_cols = [r[1] for r in con.execute("PRAGMA table_info(projects)").fetchall()]
         proj_fks = con.execute("PRAGMA foreign_key_list(projects)").fetchall()
         has_user_fk = any(row[2] == "users" and row[3] == "user_id" for row in proj_fks)
-        if 'user_id' not in proj_cols or not has_user_fk:
-            con.execute("DELETE FROM dependencies")
-            con.execute("DELETE FROM milestones")
-            con.execute("DELETE FROM deadlines")
-            con.execute("DELETE FROM assignments")
-            con.execute("DELETE FROM categories")
-            con.execute("DELETE FROM dimensions")
-            con.execute("DELETE FROM pages")
-            con.execute("DELETE FROM saved_filters")
-            con.execute("DELETE FROM schedule_perspectives")
-            con.execute("DELETE FROM classification_perspectives")
-            con.execute("DELETE FROM transaction_history")
-            con.execute("DELETE FROM projects")
-            con.execute("ALTER TABLE projects RENAME TO projects_old")
-            con.execute("""
-                CREATE TABLE projects (
-                    id          TEXT PRIMARY KEY,
-                    user_id     TEXT NOT NULL REFERENCES users(id),
-                    name        TEXT NOT NULL DEFAULT 'Untitled',
-                    description TEXT NOT NULL DEFAULT '',
-                    metric      TEXT NOT NULL DEFAULT 'days',
-                    created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            con.execute("DROP TABLE projects_old")
+        if 'user_id' not in proj_cols:
+            con.execute("ALTER TABLE projects ADD COLUMN user_id TEXT")
             proj_cols = [r[1] for r in con.execute("PRAGMA table_info(projects)").fetchall()]
         if 'description' not in proj_cols:
             con.execute("ALTER TABLE projects ADD COLUMN description TEXT NOT NULL DEFAULT ''")
@@ -309,22 +349,26 @@ def _ensure_superuser():
     with _db() as con:
         row = con.execute("SELECT id FROM users WHERE email = ?", (SUPERUSER_EMAIL,)).fetchone()
         if row:
+            user_id = row["id"]
             con.execute(
                 """
                 UPDATE users
                 SET display_name = ?, hashed_password = ?, google_oauth = 0, is_superuser = 1
                 WHERE id = ?
                 """,
-                (SUPERUSER_DISPLAY_NAME, hashed_password, row["id"]),
+                (SUPERUSER_DISPLAY_NAME, hashed_password, user_id),
             )
+            con.execute("UPDATE projects SET user_id = ? WHERE user_id IS NULL OR user_id = ''", (user_id,))
             return
+        user_id = str(uuid.uuid4())
         con.execute(
             """
             INSERT INTO users (id, email, display_name, hashed_password, google_oauth, is_superuser)
             VALUES (?, ?, ?, ?, 0, 1)
             """,
-            (str(uuid.uuid4()), SUPERUSER_EMAIL, SUPERUSER_DISPLAY_NAME, hashed_password),
+            (user_id, SUPERUSER_EMAIL, SUPERUSER_DISPLAY_NAME, hashed_password),
         )
+        con.execute("UPDATE projects SET user_id = ? WHERE user_id IS NULL OR user_id = ''", (user_id,))
 
 
 _ensure_superuser()
@@ -334,6 +378,7 @@ def _seed_defaults(project_id: str = 'default'):
     defaults = [
         ("Group",    [("All",    "#94a3b8")]),
         ("Priority", [("High",   "#ef4444"), ("Medium", "#eab308"), ("Low", "#94a3b8")]),
+        ("Type",     [("Idea",   "#8b5cf6"), ("Goal",   "#22c55e"), ("Task", "#1a73e8")]),
     ]
     with _db() as con:
         if not con.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone():
@@ -351,7 +396,14 @@ def _seed_defaults(project_id: str = 'default'):
                     (str(uuid.uuid4()), dim_id, cat_name, color),
                 )
 
-_seed_defaults('default')
+def _seed_defaults_for_all_projects():
+    with _db() as con:
+        project_ids = [row["id"] for row in con.execute("SELECT id FROM projects").fetchall()]
+    for project_id in project_ids:
+        _seed_defaults(project_id)
+
+
+_seed_defaults_for_all_projects()
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -389,13 +441,13 @@ class ProjectPatch(BaseModel):
     description: Optional[str] = None
     metric: Optional[str] = None
 
-class PageIn(BaseModel):
+class NoteIn(BaseModel):
     id: Optional[str] = None
     html: str = ""
     title: str = "Untitled"
     collapsed: bool = False
 
-class PagePatch(BaseModel):
+class NotePatch(BaseModel):
     html: Optional[str] = None
     title: Optional[str] = None
     collapsed: Optional[bool] = None
@@ -424,14 +476,14 @@ class AssignIn(BaseModel):
 
 class MilestoneIn(BaseModel):
     id: Optional[str] = None
-    goal_id: str
-    start_col: int
+    noteId: str
+    startCol: int
     duration: int = 1
     title: str = ''
     color: str = '#1a73e8'
 
 class MilestonePatch(BaseModel):
-    start_col: Optional[int] = None
+    startCol: Optional[int] = None
     duration: Optional[int] = None
     title: Optional[str] = None
     color: Optional[str] = None
@@ -441,8 +493,8 @@ class MilestoneBatch(BaseModel):
 
 class DependencyIn(BaseModel):
     id: Optional[str] = None
-    from_id: str
-    to_id: str
+    fromId: str
+    toId: str
     reason: Optional[str] = ''
 
 class DependencyPatchIn(BaseModel):
@@ -507,7 +559,7 @@ def _project(row) -> dict:
         "createdAt": d["created_at"],
     }
 
-def _page(row) -> dict:
+def _note(row) -> dict:
     d = dict(row)
     d["collapsed"] = bool(d["collapsed"])
     return d
@@ -518,11 +570,11 @@ def _cat(row) -> dict:
 
 def _assign(row) -> dict:
     d = dict(row)
-    return {"goalId": d["goal_id"], "dimensionId": d["dimension_id"], "categoryId": d["category_id"], "orderIdx": d["order_idx"]}
+    return {"noteId": d["note_id"], "dimensionId": d["dimension_id"], "categoryId": d["category_id"], "orderIdx": d["order_idx"]}
 
 def _ms(row) -> dict:
     d = dict(row)
-    return {"id": d["id"], "goalId": d["goal_id"], "startCol": d["start_col"],
+    return {"id": d["id"], "noteId": d["note_id"], "startCol": d["start_col"],
             "duration": d["duration"], "title": d["title"], "color": d["color"]}
 
 def _dep(row) -> dict:
@@ -531,7 +583,7 @@ def _dep(row) -> dict:
 
 def _dl(row) -> dict:
     d = dict(row)
-    return {"id": d["id"], "goalId": d["goal_id"], "col": d["col"]}
+    return {"id": d["id"], "noteId": d["note_id"], "col": d["col"]}
 
 def _filter(row) -> dict:
     d = dict(row)
@@ -587,10 +639,10 @@ def assert_project_access(project_id: str, user: dict):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Project access denied")
     return _project(row)
 
-def _project_id_for_page(con, page_id: str) -> str:
-    row = con.execute("SELECT project_id FROM pages WHERE id = ?", (page_id,)).fetchone()
+def _project_id_for_note(con, note_id: str) -> str:
+    row = con.execute("SELECT project_id FROM notes WHERE id = ?", (note_id,)).fetchone()
     if not row:
-        raise HTTPException(404, "Page not found")
+        raise HTTPException(404, "Note not found")
     return row["project_id"]
 
 def _project_id_for_dimension(con, dim_id: str) -> str:
@@ -613,7 +665,7 @@ def _project_id_for_category(con, cat_id: str) -> str:
 def _project_id_for_milestone(con, ms_id: str) -> str:
     row = con.execute(
         """SELECT p.project_id FROM milestones m
-        JOIN pages p ON p.id = m.goal_id
+        JOIN notes p ON p.id = m.note_id
         WHERE m.id = ?""",
         (ms_id,),
     ).fetchone()
@@ -625,7 +677,7 @@ def _project_id_for_dependency(con, dep_id: str) -> str:
     row = con.execute(
         """SELECT p.project_id FROM dependencies d
         JOIN milestones m ON m.id = d.from_id
-        JOIN pages p ON p.id = m.goal_id
+        JOIN notes p ON p.id = m.note_id
         WHERE d.id = ?""",
         (dep_id,),
     ).fetchone()
@@ -656,7 +708,7 @@ HISTORY_LIMIT = 20
 def _milestone_from_api(data: dict) -> dict:
     return {
         "id": data["id"],
-        "goalId": data["goalId"],
+        "noteId": data["noteId"],
         "startCol": int(data.get("startCol", 0)),
         "duration": max(1, int(data.get("duration", 1))),
         "title": data.get("title", ""),
@@ -744,15 +796,15 @@ def _assert_final_state_valid(con, before: dict, after: dict):
         if milestone["startCol"] < 0 or milestone["duration"] < 1:
             raise HTTPException(422, {"message": "Milestones must have a non-negative start and positive duration", "id": milestone["id"]})
 
-    by_goal = {}
+    by_note = {}
     for milestone in final_ms.values():
-        by_goal.setdefault(milestone["goalId"], []).append(milestone)
-    for lane_milestones in by_goal.values():
+        by_note.setdefault(milestone["noteId"], []).append(milestone)
+    for lane_milestones in by_note.values():
         for i, first in enumerate(lane_milestones):
             for second in lane_milestones[i + 1:]:
                 if first["startCol"] < second["startCol"] + second["duration"] and second["startCol"] < first["startCol"] + first["duration"]:
                     raise HTTPException(422, {
-                        "message": "Milestones in the same goal row cannot overlap",
+                        "message": "Milestones in the same note row cannot overlap",
                         "type": "overlap",
                         "milestoneIds": [first["id"], second["id"]],
                     })
@@ -766,7 +818,7 @@ def _assert_final_state_valid(con, before: dict, after: dict):
             second_before = current_ms[second_id]
             first_after = final_ms[first_id]
             second_after = final_ms[second_id]
-            if first_before["goalId"] != second_before["goalId"] or first_after["goalId"] != second_after["goalId"]:
+            if first_before["noteId"] != second_before["noteId"] or first_after["noteId"] != second_after["noteId"]:
                 continue
             before_relation = None
             if first_before["startCol"] + first_before["duration"] <= second_before["startCol"]:
@@ -780,14 +832,14 @@ def _assert_final_state_valid(con, before: dict, after: dict):
                 after_relation = "second-before-first"
             if before_relation and after_relation and before_relation != after_relation:
                 raise HTTPException(422, {
-                    "message": "Milestones in the same goal row cannot pass each other",
+                    "message": "Milestones in the same note row cannot pass each other",
                     "type": "overlap",
                     "milestoneIds": [first_id, second_id],
                 })
 
-    deadlines = {row["goal_id"]: row["col"] for row in con.execute("SELECT goal_id, col FROM deadlines").fetchall()}
+    deadlines = {row["note_id"]: row["col"] for row in con.execute("SELECT note_id, col FROM deadlines").fetchall()}
     for milestone in final_ms.values():
-        deadline = deadlines.get(milestone["goalId"])
+        deadline = deadlines.get(milestone["noteId"])
         if deadline is not None and milestone["startCol"] + milestone["duration"] > deadline:
             raise HTTPException(422, {"message": "Milestone exceeds hard deadline", "type": "deadline", "id": milestone["id"]})
 
@@ -843,13 +895,13 @@ def _apply_transaction_rows(con, before: dict, after: dict):
     for m in after_ms.values():
         if m["id"] in before_ms:
             con.execute(
-                "UPDATE milestones SET goal_id = ?, start_col = ?, duration = ?, title = ?, color = ? WHERE id = ?",
-                (m["goalId"], m["startCol"], m["duration"], m["title"], m["color"], m["id"]),
+                "UPDATE milestones SET note_id = ?, start_col = ?, duration = ?, title = ?, color = ? WHERE id = ?",
+                (m["noteId"], m["startCol"], m["duration"], m["title"], m["color"], m["id"]),
             )
         else:
             con.execute(
-                "INSERT INTO milestones (id, goal_id, start_col, duration, title, color) VALUES (?,?,?,?,?,?)",
-                (m["id"], m["goalId"], m["startCol"], m["duration"], m["title"], m["color"]),
+                "INSERT INTO milestones (id, note_id, start_col, duration, title, color) VALUES (?,?,?,?,?,?)",
+                (m["id"], m["noteId"], m["startCol"], m["duration"], m["title"], m["color"]),
             )
     for d in after_deps.values():
         if d["id"] in before_deps:
@@ -865,8 +917,8 @@ def _apply_transaction_rows(con, before: dict, after: dict):
 
 def _assert_transaction_project_scope(con, project_id: str, before: dict, after: dict):
     for milestone in before["milestones"] + after["milestones"]:
-        goal_id = milestone.get("goalId")
-        row = con.execute("SELECT project_id FROM pages WHERE id = ?", (goal_id,)).fetchone()
+        note_id = milestone.get("noteId")
+        row = con.execute("SELECT project_id FROM notes WHERE id = ?", (note_id,)).fetchone()
         if not row or row["project_id"] != project_id:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Transaction milestone is outside this project")
 
@@ -888,7 +940,7 @@ def _assert_transaction_project_scope(con, project_id: str, before: dict, after:
             milestone = after_ms.get(endpoint) or current_ms.get(endpoint)
             if not milestone:
                 continue
-            row = con.execute("SELECT project_id FROM pages WHERE id = ?", (milestone["goalId"],)).fetchone()
+            row = con.execute("SELECT project_id FROM notes WHERE id = ?", (milestone["noteId"],)).fetchone()
             if not row or row["project_id"] != project_id:
                 raise HTTPException(status.HTTP_403_FORBIDDEN, "Transaction dependency is outside this project")
 
@@ -1166,11 +1218,11 @@ def update_project(project_id: str, data: ProjectPatch, user: dict = Depends(cur
 def get_project_stats(project_id: str, user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     with _db() as con:
-        goals = con.execute(
-            "SELECT COUNT(*) FROM pages WHERE project_id = ?", (project_id,)
+        notes = con.execute(
+            "SELECT COUNT(*) FROM notes WHERE project_id = ?", (project_id,)
         ).fetchone()[0]
         milestones = con.execute(
-            "SELECT COUNT(*) FROM milestones WHERE goal_id IN (SELECT id FROM pages WHERE project_id = ?)",
+            "SELECT COUNT(*) FROM milestones WHERE note_id IN (SELECT id FROM notes WHERE project_id = ?)",
             (project_id,)
         ).fetchone()[0]
         dimensions = con.execute(
@@ -1183,7 +1235,7 @@ def get_project_stats(project_id: str, user: dict = Depends(current_user)):
         ).fetchone()[0]
         dependencies = con.execute(
             """SELECT COUNT(*) FROM dependencies WHERE from_id IN (
-                SELECT id FROM milestones WHERE goal_id IN (SELECT id FROM pages WHERE project_id = ?)
+                SELECT id FROM milestones WHERE note_id IN (SELECT id FROM notes WHERE project_id = ?)
             )""",
             (project_id,)
         ).fetchone()[0]
@@ -1194,7 +1246,7 @@ def get_project_stats(project_id: str, user: dict = Depends(current_user)):
             (project_id, project_id)
         ).fetchone()[0]
     return {
-        "goals": goals,
+        "notes": notes,
         "milestones": milestones,
         "dimensions": dimensions,
         "categories": categories,
@@ -1206,20 +1258,20 @@ def get_project_stats(project_id: str, user: dict = Depends(current_user)):
 def delete_project(project_id: str, user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     with _db() as con:
-        # Cascade: goals and their milestones/deadlines/assignments
-        goal_rows = con.execute("SELECT id FROM pages WHERE project_id = ?", (project_id,)).fetchall()
-        goal_ids = [r["id"] for r in goal_rows]
-        if goal_ids:
-            ph = ','.join('?' * len(goal_ids))
-            ms_rows = con.execute(f"SELECT id FROM milestones WHERE goal_id IN ({ph})", goal_ids).fetchall()
+        # Cascade: notes and their milestones/deadlines/assignments
+        note_rows = con.execute("SELECT id FROM notes WHERE project_id = ?", (project_id,)).fetchall()
+        note_ids = [r["id"] for r in note_rows]
+        if note_ids:
+            ph = ','.join('?' * len(note_ids))
+            ms_rows = con.execute(f"SELECT id FROM milestones WHERE note_id IN ({ph})", note_ids).fetchall()
             ms_ids = [r["id"] for r in ms_rows]
             if ms_ids:
                 mph = ','.join('?' * len(ms_ids))
                 con.execute(f"DELETE FROM dependencies WHERE from_id IN ({mph}) OR to_id IN ({mph})", ms_ids + ms_ids)
                 con.execute(f"DELETE FROM milestones WHERE id IN ({mph})", ms_ids)
-            con.execute(f"DELETE FROM deadlines WHERE goal_id IN ({ph})", goal_ids)
-            con.execute(f"DELETE FROM assignments WHERE goal_id IN ({ph})", goal_ids)
-            con.execute(f"DELETE FROM pages WHERE id IN ({ph})", goal_ids)
+            con.execute(f"DELETE FROM deadlines WHERE note_id IN ({ph})", note_ids)
+            con.execute(f"DELETE FROM assignments WHERE note_id IN ({ph})", note_ids)
+            con.execute(f"DELETE FROM notes WHERE id IN ({ph})", note_ids)
         # Cascade: dimensions → categories → assignments
         dim_rows = con.execute("SELECT id FROM dimensions WHERE project_id = ?", (project_id,)).fetchall()
         dim_ids = [r["id"] for r in dim_rows]
@@ -1235,64 +1287,64 @@ def delete_project(project_id: str, user: dict = Depends(current_user)):
         con.execute("DELETE FROM projects WHERE id = ?", (project_id,))
 
 
-# ── Pages (goals) ─────────────────────────────────────────────────────────────
-@app.get("/pages")
-def list_pages(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+# ── Notes (notes) ─────────────────────────────────────────────────────────────
+@app.get("/notes")
+def list_notes(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     with _db() as con:
         rows = con.execute(
-            "SELECT * FROM pages WHERE project_id = ? ORDER BY order_idx", (project_id,)
+            "SELECT * FROM notes WHERE project_id = ? ORDER BY order_idx", (project_id,)
         ).fetchall()
-    return [_page(r) for r in rows]
+    return [_note(r) for r in rows]
 
-@app.post("/pages", status_code=201)
-def create_page(data: PageIn, project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+@app.post("/notes", status_code=201)
+def create_note(data: NoteIn, project_id: str = Query(default='default'), user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     pid = data.id or str(uuid.uuid4())
     with _db() as con:
-        if con.execute("SELECT id FROM pages WHERE id = ?", (pid,)).fetchone():
-            raise HTTPException(409, "Page already exists")
+        if con.execute("SELECT id FROM notes WHERE id = ?", (pid,)).fetchone():
+            raise HTTPException(409, "Note already exists")
         max_ord = con.execute(
-            "SELECT COALESCE(MAX(order_idx), -1) FROM pages WHERE project_id = ?", (project_id,)
+            "SELECT COALESCE(MAX(order_idx), -1) FROM notes WHERE project_id = ?", (project_id,)
         ).fetchone()[0]
         con.execute(
-            "INSERT INTO pages (id, project_id, html, title, collapsed, order_idx) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO notes (id, project_id, html, title, collapsed, order_idx) VALUES (?, ?, ?, ?, ?, ?)",
             (pid, project_id, data.html, data.title, int(data.collapsed), max_ord + 1),
         )
     return {"id": pid, "html": data.html, "title": data.title, "collapsed": data.collapsed}
 
-@app.patch("/pages/{page_id}")
-def update_page(page_id: str, data: PagePatch, user: dict = Depends(current_user)):
+@app.patch("/notes/{note_id}")
+def update_note(note_id: str, data: NotePatch, user: dict = Depends(current_user)):
     with _db() as con:
-        assert_project_access(_project_id_for_page(con, page_id), user)
+        assert_project_access(_project_id_for_note(con, note_id), user)
         fields, values = [], []
         if data.html is not None:      fields.append("html = ?");      values.append(data.html)
         if data.title is not None:     fields.append("title = ?");     values.append(data.title)
         if data.collapsed is not None: fields.append("collapsed = ?"); values.append(int(data.collapsed))
         if fields:
-            con.execute(f"UPDATE pages SET {', '.join(fields)} WHERE id = ?", (*values, page_id))
-        row = con.execute("SELECT * FROM pages WHERE id = ?", (page_id,)).fetchone()
-    return _page(row)
+            con.execute(f"UPDATE notes SET {', '.join(fields)} WHERE id = ?", (*values, note_id))
+        row = con.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
+    return _note(row)
 
-@app.delete("/pages/{page_id}", status_code=204)
-def delete_page(page_id: str, user: dict = Depends(current_user)):
+@app.delete("/notes/{note_id}", status_code=204)
+def delete_note(note_id: str, user: dict = Depends(current_user)):
     with _db() as con:
-        assert_project_access(_project_id_for_page(con, page_id), user)
-        con.execute("DELETE FROM pages WHERE id = ?", (page_id,))
+        assert_project_access(_project_id_for_note(con, note_id), user)
+        con.execute("DELETE FROM notes WHERE id = ?", (note_id,))
 
-@app.put("/pages/order")
-def reorder_pages(data: OrderIn, user: dict = Depends(current_user)):
+@app.put("/notes/order")
+def reorder_notes(data: OrderIn, user: dict = Depends(current_user)):
     with _db() as con:
         project_ids = set()
         for i, pid in enumerate(data.ids):
-            row = con.execute("SELECT project_id FROM pages WHERE id = ?", (pid,)).fetchone()
+            row = con.execute("SELECT project_id FROM notes WHERE id = ?", (pid,)).fetchone()
             if not row:
-                raise HTTPException(404, f"Page {pid} not found")
+                raise HTTPException(404, f"Note {pid} not found")
             project_ids.add(row["project_id"])
             assert_project_access(row["project_id"], user)
-            con.execute("UPDATE pages SET order_idx = ? WHERE id = ?", (i, pid))
+            con.execute("UPDATE notes SET order_idx = ? WHERE id = ?", (i, pid))
         if len(project_ids) > 1:
-            raise HTTPException(400, "Cannot reorder pages across projects")
+            raise HTTPException(400, "Cannot reorder notes across projects")
     return {"ok": True}
 
 
@@ -1409,24 +1461,24 @@ def list_assignments(project_id: str = Query(default='default'), user: dict = De
     with _db() as con:
         rows = con.execute(
             """SELECT * FROM assignments
-            WHERE goal_id IN (SELECT id FROM pages WHERE project_id = ?)
+            WHERE note_id IN (SELECT id FROM notes WHERE project_id = ?)
             ORDER BY dimension_id, category_id, order_idx""",
             (project_id,)
         ).fetchall()
     return [_assign(r) for r in rows]
 
-@app.put("/goals/{goal_id}/assign/{dim_id}")
-def assign_category(goal_id: str, dim_id: str, data: AssignIn, user: dict = Depends(current_user)):
+@app.put("/notes/{note_id}/assign/{dim_id}")
+def assign_category(note_id: str, dim_id: str, data: AssignIn, user: dict = Depends(current_user)):
     with _db() as con:
-        goal_project_id = _project_id_for_page(con, goal_id)
+        note_project_id = _project_id_for_note(con, note_id)
         dim_project_id = _project_id_for_dimension(con, dim_id)
         cat_project_id = _project_id_for_category(con, data.categoryId)
-        if len({goal_project_id, dim_project_id, cat_project_id}) != 1:
+        if len({note_project_id, dim_project_id, cat_project_id}) != 1:
             raise HTTPException(400, "Assignment resources must belong to the same project")
-        assert_project_access(goal_project_id, user)
+        assert_project_access(note_project_id, user)
         existing = con.execute(
-            "SELECT category_id, order_idx FROM assignments WHERE goal_id = ? AND dimension_id = ?",
-            (goal_id, dim_id),
+            "SELECT category_id, order_idx FROM assignments WHERE note_id = ? AND dimension_id = ?",
+            (note_id, dim_id),
         ).fetchone()
         if existing and existing["category_id"] == data.categoryId:
             order_idx = existing["order_idx"]
@@ -1436,16 +1488,16 @@ def assign_category(goal_id: str, dim_id: str, data: AssignIn, user: dict = Depe
                 (dim_id, data.categoryId),
             ).fetchone()[0]
         con.execute(
-            "INSERT OR REPLACE INTO assignments (goal_id, dimension_id, category_id, order_idx) VALUES (?, ?, ?, ?)",
-            (goal_id, dim_id, data.categoryId, order_idx),
+            "INSERT OR REPLACE INTO assignments (note_id, dimension_id, category_id, order_idx) VALUES (?, ?, ?, ?)",
+            (note_id, dim_id, data.categoryId, order_idx),
         )
-    return {"goalId": goal_id, "dimensionId": dim_id, "categoryId": data.categoryId, "orderIdx": order_idx}
+    return {"noteId": note_id, "dimensionId": dim_id, "categoryId": data.categoryId, "orderIdx": order_idx}
 
 @app.put("/assignments/order")
 def reorder_assignments(data: dict, user: dict = Depends(current_user)):
     dim_id = data.get("dimensionId")
     cat_id = data.get("categoryId")
-    goal_ids = data.get("goalIds", [])
+    note_ids = data.get("noteIds", [])
     if not dim_id:
         raise HTTPException(400, "dimensionId is required")
     with _db() as con:
@@ -1453,33 +1505,33 @@ def reorder_assignments(data: dict, user: dict = Depends(current_user)):
         assert_project_access(project_id, user)
         if cat_id is not None and _project_id_for_category(con, cat_id) != project_id:
             raise HTTPException(400, "Category does not belong to dimension project")
-        for goal_id in goal_ids:
-            if _project_id_for_page(con, goal_id) != project_id:
-                raise HTTPException(400, "Goal does not belong to dimension project")
+        for note_id in note_ids:
+            if _project_id_for_note(con, note_id) != project_id:
+                raise HTTPException(400, "Note does not belong to dimension project")
         if cat_id is None:
             return {"ok": True}
-        for i, goal_id in enumerate(goal_ids):
+        for i, note_id in enumerate(note_ids):
             con.execute(
                 """
                 UPDATE assignments
                 SET order_idx = ?
-                WHERE goal_id = ? AND dimension_id = ? AND category_id = ?
+                WHERE note_id = ? AND dimension_id = ? AND category_id = ?
                 """,
-                (i, goal_id, dim_id, cat_id),
+                (i, note_id, dim_id, cat_id),
             )
     return {"ok": True}
 
-@app.delete("/goals/{goal_id}/assign/{dim_id}", status_code=204)
-def unassign_category(goal_id: str, dim_id: str, user: dict = Depends(current_user)):
+@app.delete("/notes/{note_id}/assign/{dim_id}", status_code=204)
+def unassign_category(note_id: str, dim_id: str, user: dict = Depends(current_user)):
     with _db() as con:
-        goal_project_id = _project_id_for_page(con, goal_id)
+        note_project_id = _project_id_for_note(con, note_id)
         dim_project_id = _project_id_for_dimension(con, dim_id)
-        if goal_project_id != dim_project_id:
-            raise HTTPException(400, "Goal and dimension must belong to the same project")
-        assert_project_access(goal_project_id, user)
+        if note_project_id != dim_project_id:
+            raise HTTPException(400, "Note and dimension must belong to the same project")
+        assert_project_access(note_project_id, user)
         con.execute(
-            "DELETE FROM assignments WHERE goal_id = ? AND dimension_id = ?",
-            (goal_id, dim_id),
+            "DELETE FROM assignments WHERE note_id = ? AND dimension_id = ?",
+            (note_id, dim_id),
         )
 
 
@@ -1718,7 +1770,7 @@ def list_milestones(project_id: str = Query(default='default'), user: dict = Dep
     with _db() as con:
         rows = con.execute(
             """SELECT * FROM milestones
-            WHERE goal_id IN (SELECT id FROM pages WHERE project_id = ?)
+            WHERE note_id IN (SELECT id FROM notes WHERE project_id = ?)
             ORDER BY start_col""",
             (project_id,)
         ).fetchall()
@@ -1728,12 +1780,12 @@ def list_milestones(project_id: str = Query(default='default'), user: dict = Dep
 def create_milestone(data: MilestoneIn, user: dict = Depends(current_user)):
     mid = data.id or str(uuid.uuid4())
     with _db() as con:
-        assert_project_access(_project_id_for_page(con, data.goal_id), user)
+        assert_project_access(_project_id_for_note(con, data.noteId), user)
         con.execute(
-            "INSERT INTO milestones (id, goal_id, start_col, duration, title, color) VALUES (?,?,?,?,?,?)",
-            (mid, data.goal_id, data.start_col, max(1, data.duration), data.title, data.color),
+            "INSERT INTO milestones (id, note_id, start_col, duration, title, color) VALUES (?,?,?,?,?,?)",
+            (mid, data.noteId, data.startCol, max(1, data.duration), data.title, data.color),
         )
-    return _ms({"id": mid, "goal_id": data.goal_id, "start_col": data.start_col,
+    return _ms({"id": mid, "note_id": data.noteId, "start_col": data.startCol,
                 "duration": max(1, data.duration), "title": data.title, "color": data.color})
 
 # Registered before /{ms_id} so "batch" is not captured as a path param
@@ -1759,7 +1811,7 @@ def update_milestone(ms_id: str, data: MilestonePatch, user: dict = Depends(curr
     with _db() as con:
         assert_project_access(_project_id_for_milestone(con, ms_id), user)
         fields, values = [], []
-        if data.start_col is not None: fields.append("start_col = ?"); values.append(data.start_col)
+        if data.startCol is not None: fields.append("start_col = ?"); values.append(data.startCol)
         if data.duration  is not None: fields.append("duration = ?");  values.append(max(1, data.duration))
         if data.title     is not None: fields.append("title = ?");     values.append(data.title)
         if data.color     is not None: fields.append("color = ?");     values.append(data.color)
@@ -1782,7 +1834,7 @@ def list_dependencies(project_id: str = Query(default='default'), user: dict = D
     with _db() as con:
         rows = con.execute(
             """SELECT * FROM dependencies WHERE from_id IN (
-                SELECT id FROM milestones WHERE goal_id IN (SELECT id FROM pages WHERE project_id = ?)
+                SELECT id FROM milestones WHERE note_id IN (SELECT id FROM notes WHERE project_id = ?)
             )""",
             (project_id,)
         ).fetchall()
@@ -1793,17 +1845,17 @@ def create_dependency(data: DependencyIn, user: dict = Depends(current_user)):
     did = data.id or str(uuid.uuid4())
     reason = data.reason or ''
     with _db() as con:
-        from_project_id = _project_id_for_milestone(con, data.from_id)
-        to_project_id = _project_id_for_milestone(con, data.to_id)
+        from_project_id = _project_id_for_milestone(con, data.fromId)
+        to_project_id = _project_id_for_milestone(con, data.toId)
         if from_project_id != to_project_id:
             raise HTTPException(400, "Dependency endpoints must belong to the same project")
         assert_project_access(from_project_id, user)
         try:
             con.execute("INSERT INTO dependencies (id, from_id, to_id, reason) VALUES (?, ?, ?, ?)",
-                        (did, data.from_id, data.to_id, reason))
+                        (did, data.fromId, data.toId, reason))
         except sqlite3.IntegrityError:
             raise HTTPException(409, "Dependency already exists")
-    return _dep({"id": did, "from_id": data.from_id, "to_id": data.to_id, "reason": reason})
+    return _dep({"id": did, "from_id": data.fromId, "to_id": data.toId, "reason": reason})
 
 @app.patch("/dependencies/{dep_id}")
 def update_dependency(dep_id: str, data: DependencyPatchIn, user: dict = Depends(current_user)):
@@ -1828,29 +1880,29 @@ def list_deadlines(project_id: str = Query(default='default'), user: dict = Depe
     assert_project_access(project_id, user)
     with _db() as con:
         rows = con.execute(
-            "SELECT * FROM deadlines WHERE goal_id IN (SELECT id FROM pages WHERE project_id = ?)",
+            "SELECT * FROM deadlines WHERE note_id IN (SELECT id FROM notes WHERE project_id = ?)",
             (project_id,)
         ).fetchall()
     return [_dl(r) for r in rows]
 
-@app.put("/deadlines/{goal_id}")
-def set_deadline(goal_id: str, data: DeadlineColIn, user: dict = Depends(current_user)):
+@app.put("/deadlines/{note_id}")
+def set_deadline(note_id: str, data: DeadlineColIn, user: dict = Depends(current_user)):
     with _db() as con:
-        assert_project_access(_project_id_for_page(con, goal_id), user)
-        existing = con.execute("SELECT id FROM deadlines WHERE goal_id = ?", (goal_id,)).fetchone()
+        assert_project_access(_project_id_for_note(con, note_id), user)
+        existing = con.execute("SELECT id FROM deadlines WHERE note_id = ?", (note_id,)).fetchone()
         if existing:
-            con.execute("UPDATE deadlines SET col = ? WHERE goal_id = ?", (data.col, goal_id))
+            con.execute("UPDATE deadlines SET col = ? WHERE note_id = ?", (data.col, note_id))
         else:
             did = str(uuid.uuid4())
-            con.execute("INSERT INTO deadlines (id, goal_id, col) VALUES (?, ?, ?)", (did, goal_id, data.col))
-        row = con.execute("SELECT * FROM deadlines WHERE goal_id = ?", (goal_id,)).fetchone()
+            con.execute("INSERT INTO deadlines (id, note_id, col) VALUES (?, ?, ?)", (did, note_id, data.col))
+        row = con.execute("SELECT * FROM deadlines WHERE note_id = ?", (note_id,)).fetchone()
     return _dl(row)
 
-@app.delete("/deadlines/{goal_id}", status_code=204)
-def remove_deadline(goal_id: str, user: dict = Depends(current_user)):
+@app.delete("/deadlines/{note_id}", status_code=204)
+def remove_deadline(note_id: str, user: dict = Depends(current_user)):
     with _db() as con:
-        assert_project_access(_project_id_for_page(con, goal_id), user)
-        con.execute("DELETE FROM deadlines WHERE goal_id = ?", (goal_id,))
+        assert_project_access(_project_id_for_note(con, note_id), user)
+        con.execute("DELETE FROM deadlines WHERE note_id = ?", (note_id,))
 
 
 # ── Project export ─────────────────────────────────────────────────────────────
@@ -1877,16 +1929,16 @@ def export_database(project_id: str = Query(...), user: dict = Depends(current_u
         project_ids = [row["id"] for row in projects]
         if project_ids:
             project_ph = ','.join('?' for _ in project_ids)
-            pages = con.execute(f"SELECT * FROM pages WHERE project_id IN ({project_ph})", project_ids).fetchall()
+            notes = con.execute(f"SELECT * FROM notes WHERE project_id IN ({project_ph})", project_ids).fetchall()
             dimensions = con.execute(f"SELECT * FROM dimensions WHERE project_id IN ({project_ph})", project_ids).fetchall()
             saved_filters = con.execute(f"SELECT * FROM saved_filters WHERE project_id IN ({project_ph})", project_ids).fetchall()
             schedule_perspectives = con.execute(f"SELECT * FROM schedule_perspectives WHERE project_id IN ({project_ph})", project_ids).fetchall()
             classification_perspectives = con.execute(f"SELECT * FROM classification_perspectives WHERE project_id IN ({project_ph})", project_ids).fetchall()
             transaction_history = con.execute(f"SELECT * FROM transaction_history WHERE project_id IN ({project_ph})", project_ids).fetchall()
         else:
-            pages = dimensions = saved_filters = schedule_perspectives = classification_perspectives = transaction_history = []
+            notes = dimensions = saved_filters = schedule_perspectives = classification_perspectives = transaction_history = []
 
-        page_ids = [row["id"] for row in pages]
+        note_ids = [row["id"] for row in notes]
         dim_ids = [row["id"] for row in dimensions]
 
         if dim_ids:
@@ -1896,10 +1948,10 @@ def export_database(project_id: str = Query(...), user: dict = Depends(current_u
         else:
             categories = assignments = []
 
-        if page_ids:
-            page_ph = ','.join('?' for _ in page_ids)
-            milestones = con.execute(f"SELECT * FROM milestones WHERE goal_id IN ({page_ph})", page_ids).fetchall()
-            deadlines = con.execute(f"SELECT * FROM deadlines WHERE goal_id IN ({page_ph})", page_ids).fetchall()
+        if note_ids:
+            note_ph = ','.join('?' for _ in note_ids)
+            milestones = con.execute(f"SELECT * FROM milestones WHERE note_id IN ({note_ph})", note_ids).fetchall()
+            deadlines = con.execute(f"SELECT * FROM deadlines WHERE note_id IN ({note_ph})", note_ids).fetchall()
         else:
             milestones = deadlines = []
 
@@ -1919,7 +1971,7 @@ def export_database(project_id: str = Query(...), user: dict = Depends(current_u
             "tables": {
                 "users":                      exported_users,
                 "projects":                   rows(projects),
-                "pages":                      rows(pages),
+                "notes":                      rows(notes),
                 "dimensions":                 rows(dimensions),
                 "categories":                 rows(categories),
                 "assignments":                rows(assignments),

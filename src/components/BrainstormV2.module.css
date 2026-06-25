@@ -1,5 +1,5 @@
 /* ── Page ────────────────────────────────────────────────────────────────── */
-.page {
+.note {
   position: relative;
   width: 100%;
   height: 100%;
@@ -14,7 +14,7 @@
   justify-content: center;
 }
 
-/* ── Floating goals layer ────────────────────────────────────────────────── */
+/* ── Floating notes layer ────────────────────────────────────────────────── */
 .floatingLayer {
   position: absolute;
   inset: 0;
@@ -22,7 +22,7 @@
   user-select: none;
 }
 
-.floatingGoal {
+.floatingNote {
   position: absolute;
   color: #1a1a1a;
   font-family: Arial, sans-serif;

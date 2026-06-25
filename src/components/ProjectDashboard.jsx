@@ -10,7 +10,7 @@ const PROJECT_METRICS = [
 ]
 
 const STAT_LABELS = {
-  goals:        'Goals',
+  notes:        'Notes',
   milestones:   'Milestones',
   dimensions:   'Dimensions',
   categories:   'Categories',
@@ -115,7 +115,7 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
   }
 
   return (
-    <div className={styles.page}>
+    <div className={styles.note}>
       <div className={styles.content}>
 
         {/* Project name */}

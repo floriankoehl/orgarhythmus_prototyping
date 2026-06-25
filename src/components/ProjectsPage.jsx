@@ -178,7 +178,7 @@ export default function ProjectsPage({ onOpenProject, currentUser, onLogout }) {
   }
 
   return (
-    <div className={styles.page}>
+    <div className={styles.note}>
       <div className={styles.header}>
         <div className={styles.headerLeft}>
           <span className={styles.logo}>◆</span>
@@ -225,7 +225,7 @@ export default function ProjectsPage({ onOpenProject, currentUser, onLogout }) {
           <div className={styles.modal}>
             <h2 className={styles.modalTitle}>Delete project?</h2>
             <p className={styles.modalText}>
-              "{deleteConfirm.name}" and all its goals, milestones, dimensions, and perspectives will be permanently deleted.
+              "{deleteConfirm.name}" and all its notes, milestones, dimensions, and perspectives will be permanently deleted.
             </p>
             <div className={styles.modalActions}>
               <button className={styles.modalCancel} onClick={() => setDeleteConfirm(null)}>Cancel</button>

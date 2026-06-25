@@ -1,5 +1,5 @@
 /* ── Page ────────────────────────────────────────────────────────────────── */
-.page {
+.note {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -894,8 +894,8 @@
   cursor: inherit !important;
 }
 
-.paintMode .goalRow:hover,
-.paintMode .goalRowLane:hover,
+.paintMode .noteRow:hover,
+.paintMode .noteRowLane:hover,
 .paintMode .milestone:hover {
   filter: brightness(0.98);
 }
@@ -1198,8 +1198,8 @@
   will-change: transform;
 }
 
-/* Base goal row (no-lane mode) */
-.goalRow {
+/* Base note row (no-lane mode) */
+.noteRow {
   position: absolute;
   left: 0; right: 0;
   display: flex;
@@ -1209,8 +1209,8 @@
   box-sizing: border-box;
 }
 
-/* Goal row in lane mode — indented with colored left border */
-.goalRowLane {
+/* Note row in lane mode — indented with colored left border */
+.noteRowLane {
   position: absolute;
   left: 0; right: 0;
   display: flex;
@@ -1221,24 +1221,24 @@
   box-sizing: border-box;
 }
 
-.goalRowLane[draggable="true"] {
+.noteRowLane[draggable="true"] {
   cursor: grab;
 }
 
-.goalRowLane[draggable="true"]:active {
+.noteRowLane[draggable="true"]:active {
   cursor: grabbing;
 }
 
-.goalRowDropTarget {
+.noteRowDropTarget {
   background: rgba(26,115,232,0.08);
   box-shadow: inset 0 2px 0 #1a73e8;
 }
 
-.goalRowHighlight {
+.noteRowHighlight {
   background: rgba(0, 0, 0, 0.05) !important;
 }
 
-.goalTitle {
+.noteTitle {
   flex: 1;
   min-width: 0;
   font-size: 12px;
@@ -1249,7 +1249,7 @@
   user-select: none;
 }
 
-.goalEyeBtn {
+.noteEyeBtn {
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -1267,17 +1267,17 @@
   transition: opacity 0.12s, color 0.12s;
 }
 
-.goalRow:hover .goalEyeBtn,
-.goalRowLane:hover .goalEyeBtn {
+.noteRow:hover .noteEyeBtn,
+.noteRowLane:hover .noteEyeBtn {
   opacity: 0.45;
 }
 
-.goalEyeBtn:hover {
+.noteEyeBtn:hover {
   opacity: 1 !important;
   color: #555;
 }
 
-.goalColorCorner {
+.noteColorCorner {
   position: absolute;
   top: 0;
   right: 0;
@@ -1296,8 +1296,8 @@
   transition: background 0.12s, box-shadow 0.12s;
 }
 
-.paintMode .goalRow:hover .paintTarget,
-.paintMode .goalRowLane:hover .paintTarget {
+.paintMode .noteRow:hover .paintTarget,
+.paintMode .noteRowLane:hover .paintTarget {
   background: rgba(0,0,0,0.085);
   box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
 }
@@ -1637,7 +1637,7 @@
   box-sizing: border-box;
 }
 
-.gridGoalRow {
+.gridNoteRow {
   position: absolute;
   left: 0; right: 0;
   border-bottom: 1px solid #f0f0f0;
@@ -1645,7 +1645,7 @@
   box-sizing: border-box;
 }
 
-.gridGoalRowHighlight {
+.gridNoteRowHighlight {
   background: rgba(0, 0, 0, 0.04);
 }
 

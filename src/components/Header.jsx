@@ -4,7 +4,7 @@ import { api } from '../api'
 import CategoryAssignmentPicker from './CategoryAssignmentPicker'
 
 const PAGES = [
-  { name: 'Goals', view: 1 },
+  { name: 'Notes', view: 1 },
   { name: 'Classification', view: 2 },
   { name: 'Schedule', view: 3 },
 ]
@@ -130,17 +130,17 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
       )}
 
       <nav className={styles.nav}>
-        {PAGES.map(page => (
-          <button key={page.view}
-            className={`${styles.navItem} ${view === page.view ? styles.active : ''}`}
-            onClick={() => onNavigate(page.view)}>
-            {page.name}
+        {PAGES.map(note => (
+          <button key={note.view}
+            className={`${styles.navItem} ${view === note.view ? styles.active : ''}`}
+            onClick={() => onNavigate(note.view)}>
+            {note.name}
           </button>
         ))}
       </nav>
 
       <div ref={wrapRef} className={styles.quickAddWrap}>
-        <button className={styles.quickAddBtn} onClick={() => setOpen(o => !o)} title="Quick add goal">
+        <button className={styles.quickAddBtn} onClick={() => setOpen(o => !o)} title="Quick add note">
           <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
             <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.5"/>
             <path d="M5 8h6M5 5.5h4M5 10.5h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
@@ -151,7 +151,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
         {open && (
           <div className={styles.quickAddPopup}>
             <div className={styles.quickAddTopRow}>
-              <span className={styles.quickAddLabel}>Quick add goal</span>
+              <span className={styles.quickAddLabel}>Quick add note</span>
               <button
                 className={`${styles.quickAddHdrBtn} ${headlineMode ? styles.quickAddHdrBtnActive : ''}`}
                 onClick={toggleHeadline}>
@@ -179,7 +179,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
                 className={styles.quickAddEditor}
                 contentEditable={!headlineMode}
                 suppressContentEditableWarning
-                data-placeholder="Describe your goal…"
+                data-placeholder="Describe your note…"
                 onInput={handleDescInput}
                 onKeyDown={handleKey}
               />

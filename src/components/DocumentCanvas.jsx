@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import styles from './DocumentCanvas.module.css'
 import { api } from '../api'
 
-const mkGoal = (overrides = {}) => ({
+const mkNote = (overrides = {}) => ({
   id: crypto.randomUUID(),
   html: '',
   title: 'Untitled',
@@ -65,13 +65,13 @@ function computeWordRects(editorEl, pageEl) {
   return result
 }
 
-// ── Gap between goals ─────────────────────────────────────────────────────────
-function GoalGap({ onMerge, disabled }) {
+// ── Gap between notes ─────────────────────────────────────────────────────────
+function NoteGap({ onMerge, disabled }) {
   const [hot, setHot] = useState(false)
   return (
     <div className={styles.gap} onMouseEnter={() => setHot(true)} onMouseLeave={() => setHot(false)}>
       {hot && !disabled && (
-        <button className={styles.mergeBtn} onClick={onMerge} title="Merge goals">
+        <button className={styles.mergeBtn} onClick={onMerge} title="Merge notes">
           <MergeIcon /> merge
         </button>
       )}
@@ -79,9 +79,9 @@ function GoalGap({ onMerge, disabled }) {
   )
 }
 
-// ── Single goal card ──────────────────────────────────────────────────────────
-function Goal({ goal, hoverY, onUpdate, onZoneMove, onZoneLeave, onZoneClick, onRegister, onEmpty }) {
-  const [titleIsCustom, setTitleIsCustom] = useState(goal.title !== 'Untitled')
+// ── Single note card ──────────────────────────────────────────────────────────
+function Note({ note, hoverY, onUpdate, onZoneMove, onZoneLeave, onZoneClick, onRegister, onEmpty }) {
+  const [titleIsCustom, setTitleIsCustom] = useState(note.title !== 'Untitled')
   const [editingTitle, setEditingTitle] = useState(false)
   const [headlineMode, setHeadlineMode] = useState(false)
   const [wordRects, setWordRects] = useState([])
@@ -112,7 +112,7 @@ function Goal({ goal, hoverY, onUpdate, onZoneMove, onZoneLeave, onZoneClick, on
   }
 
   const handleWordClick = word => {
-    const next = headlineStarted ? goal.title + ' ' + word : word
+    const next = headlineStarted ? note.title + ' ' + word : word
     if (!headlineStarted) setHeadlineStarted(true)
     setTitleIsCustom(true)
     onUpdate({ title: next })
@@ -125,23 +125,23 @@ function Goal({ goal, hoverY, onUpdate, onZoneMove, onZoneLeave, onZoneClick, on
   }
 
   return (
-    <div className={styles.goalContainer} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+    <div className={styles.noteContainer} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <div className={styles.titleRow}>
-        <button className={styles.collapseBtn} onClick={() => onUpdate({ collapsed: !goal.collapsed })} title={goal.collapsed ? 'Expand' : 'Collapse'}>
-          <ChevronIcon collapsed={goal.collapsed} />
+        <button className={styles.collapseBtn} onClick={() => onUpdate({ collapsed: !note.collapsed })} title={note.collapsed ? 'Expand' : 'Collapse'}>
+          <ChevronIcon collapsed={note.collapsed} />
         </button>
         {editingTitle ? (
           <input
             className={styles.titleInput}
-            defaultValue={goal.title}
+            defaultValue={note.title}
             autoFocus
             onFocus={e => e.target.select()}
             onBlur={e => commitTitle(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') e.target.blur() }}
           />
         ) : (
-          <span className={styles.goalTitle} onDoubleClick={() => setEditingTitle(true)} title="Double-click to edit">
-            {goal.title}
+          <span className={styles.noteTitle} onDoubleClick={() => setEditingTitle(true)} title="Double-click to edit">
+            {note.title}
           </span>
         )}
         {(hovered || headlineMode) && !editingTitle && (
@@ -155,8 +155,8 @@ function Goal({ goal, hoverY, onUpdate, onZoneMove, onZoneLeave, onZoneClick, on
         )}
       </div>
 
-      {!goal.collapsed && (
-        <div ref={el => { onRegister(goal.id, 'page', el); pageElRef.current = el }} className={styles.goal}>
+      {!note.collapsed && (
+        <div ref={el => { onRegister(note.id, 'note', el); pageElRef.current = el }} className={styles.note}>
           {!headlineMode && (
             <div className={styles.leftZone} onMouseMove={onZoneMove} onMouseLeave={onZoneLeave} onClick={onZoneClick} />
           )}
@@ -175,8 +175,8 @@ function Goal({ goal, hoverY, onUpdate, onZoneMove, onZoneLeave, onZoneClick, on
           )}
           <div
             ref={el => {
-              onRegister(goal.id, 'editor', el)
-              if (el && !el._ready) { el.innerHTML = goal.html; el._ready = true; editorElRef.current = el }
+              onRegister(note.id, 'editor', el)
+              if (el && !el._ready) { el.innerHTML = note.html; el._ready = true; editorElRef.current = el }
             }}
             className={styles.editor}
             contentEditable={!headlineMode}
@@ -204,109 +204,109 @@ function Goal({ goal, hoverY, onUpdate, onZoneMove, onZoneLeave, onZoneClick, on
 }
 
 // ── Canvas ────────────────────────────────────────────────────────────────────
-export default function DocumentCanvas({ onGoalsChange, refreshKey }) {
-  const initialGoal = useRef(mkGoal())
-  const [goals, setGoals] = useState([initialGoal.current])
+export default function DocumentCanvas({ onNotesChange, refreshKey }) {
+  const initialNote = useRef(mkNote())
+  const [notes, setNotes] = useState([initialNote.current])
   const [hoverInfo, setHoverInfo] = useState(null)
   const refs = useRef({})
   const htmlSaveTimers = useRef({})
 
-  // Notify parent whenever goals change (for Classification page)
+  // Notify parent whenever notes change (for Classification note)
   useEffect(() => {
-    onGoalsChange?.(goals)
-  }, [goals]) // eslint-disable-line react-hooks/exhaustive-deps
+    onNotesChange?.(notes)
+  }, [notes]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Load from backend on mount ─────────────────────────────────────────────
   useEffect(() => {
-    api.getPages()
+    api.getNotes()
       .then(data => {
         if (data.length > 0) {
-          setGoals(data)
+          setNotes(data)
         } else {
-          api.createPage(initialGoal.current).catch(console.error)
+          api.createNote(initialNote.current).catch(console.error)
         }
       })
       .catch(() => {})
   }, [])
 
-  // ── Re-fetch when a goal is added externally (e.g. quick-add in header) ────
+  // ── Re-fetch when a note is added externally (e.g. quick-add in header) ────
   useEffect(() => {
     if (!refreshKey) return
-    api.getPages().then(data => { if (data.length > 0) setGoals(data) }).catch(console.error)
+    api.getNotes().then(data => { if (data.length > 0) setNotes(data) }).catch(console.error)
   }, [refreshKey])
 
-  const register = (goalId, type, el) => {
-    if (!refs.current[goalId]) refs.current[goalId] = {}
-    refs.current[goalId][type] = el
+  const register = (noteId, type, el) => {
+    if (!refs.current[noteId]) refs.current[noteId] = {}
+    refs.current[noteId][type] = el
   }
 
-  const updateGoal = (id, patch) => {
-    setGoals(prev => prev.map(g => g.id === id ? { ...g, ...patch } : g))
+  const updateNote = (id, patch) => {
+    setNotes(prev => prev.map(g => g.id === id ? { ...g, ...patch } : g))
 
     if (patch.html !== undefined) {
       clearTimeout(htmlSaveTimers.current[id])
       htmlSaveTimers.current[id] = setTimeout(() => {
-        api.updatePage(id, { html: patch.html }).catch(console.error)
+        api.updateNote(id, { html: patch.html }).catch(console.error)
       }, 800)
       const { html, ...rest } = patch
       if (Object.keys(rest).length > 0)
-        api.updatePage(id, rest).catch(console.error)
+        api.updateNote(id, rest).catch(console.error)
     } else {
-      api.updatePage(id, patch).catch(console.error)
+      api.updateNote(id, patch).catch(console.error)
     }
   }
 
   // ── Structural operations ──────────────────────────────────────────────────
-  const addGoalAtTop = async () => {
-    const goal = mkGoal()
+  const addNoteAtTop = async () => {
+    const note = mkNote()
     try {
-      await api.createPage(goal)
-      setGoals(prev => {
-        const next = [goal, ...prev]
-        api.reorderPages(next.map(g => g.id)).catch(console.error)
+      await api.createNote(note)
+      setNotes(prev => {
+        const next = [note, ...prev]
+        api.reorderNotes(next.map(g => g.id)).catch(console.error)
         return next
       })
     } catch (e) { console.error(e) }
   }
 
   const handleEmpty = id => {
-    setGoals(prev => {
+    setNotes(prev => {
       if (prev.length <= 1) return prev
       const next = prev.filter(g => g.id !== id)
-      api.deletePage(id).catch(console.error)
+      api.deleteNote(id).catch(console.error)
       return next
     })
   }
 
   const handleMerge = async i => {
-    const a = goals[i], b = goals[i + 1]
+    const a = notes[i], b = notes[i + 1]
     const htmlA = refs.current[a.id]?.editor?.innerHTML ?? a.html
     const htmlB = refs.current[b.id]?.editor?.innerHTML ?? b.html
-    const merged = mkGoal({ html: htmlA + htmlB, title: a.title })
+    const merged = mkNote({ html: htmlA + htmlB, title: a.title })
     try {
-      await Promise.all([api.deletePage(a.id), api.deletePage(b.id)])
-      await api.createPage(merged)
-      setGoals(prev => {
+      await Promise.all([api.deleteNote(a.id), api.deleteNote(b.id)])
+      await api.createNote(merged)
+      setNotes(prev => {
         const next = [...prev]; next.splice(i, 2, merged)
-        api.reorderPages(next.map(g => g.id)).catch(console.error)
+        api.reorderNotes(next.map(g => g.id)).catch(console.error)
         return next
       })
     } catch (e) { console.error(e) }
   }
 
   // ── Cut ────────────────────────────────────────────────────────────────────
-  const handleZoneMove = (goalId, e) => {
-    const pageEl = refs.current[goalId]?.page
+  const handleZoneMove = (noteId, e) => {
+    const pageEl = refs.current[noteId]?.note
     if (!pageEl) return
-    setHoverInfo({ goalId, snapY: snapToLineTop(pageEl, e.clientY) })
+    setHoverInfo({ noteId, snapY: snapToLineTop(pageEl, e.clientY) })
   }
 
   const handleZoneLeave = () => setHoverInfo(null)
 
-  const handleZoneClick = async goalId => {
+  const handleZoneClick = async noteId => {
     const info = hoverInfo
-    if (!info || info.goalId !== goalId) return
-    const { page: pageEl, editor: editorEl } = refs.current[goalId] || {}
+    if (!info || info.noteId !== noteId) return
+    const { note: pageEl, editor: editorEl } = refs.current[noteId] || {}
     if (!pageEl || !editorEl) return
 
     const pageRect = pageEl.getBoundingClientRect()
@@ -316,21 +316,21 @@ export default function DocumentCanvas({ onGoalsChange, refreshKey }) {
     const [html1, html2] = splitAt(editorEl, cutRange)
     const isEmpty = html => { const d = document.createElement('div'); d.innerHTML = html; return d.innerText.trim() === '' }
 
-    const original = goals.find(g => g.id === goalId)
-    const idx = goals.findIndex(g => g.id === goalId)
+    const original = notes.find(g => g.id === noteId)
+    const idx = notes.findIndex(g => g.id === noteId)
     const halves = [
-      mkGoal({ html: html1, title: original?.title ?? 'Untitled' }),
-      mkGoal({ html: html2 }),
+      mkNote({ html: html1, title: original?.title ?? 'Untitled' }),
+      mkNote({ html: html2 }),
     ].filter(g => !isEmpty(g.html))
     if (!halves.length) return
 
     setHoverInfo(null)
     try {
-      await api.deletePage(goalId)
-      await Promise.all(halves.map(g => api.createPage(g)))
-      setGoals(prev => {
+      await api.deleteNote(noteId)
+      await Promise.all(halves.map(g => api.createNote(g)))
+      setNotes(prev => {
         const next = [...prev]; next.splice(idx, 1, ...halves)
-        api.reorderPages(next.map(g => g.id)).catch(console.error)
+        api.reorderNotes(next.map(g => g.id)).catch(console.error)
         return next
       })
     } catch (e) { console.error(e) }
@@ -338,28 +338,28 @@ export default function DocumentCanvas({ onGoalsChange, refreshKey }) {
 
   return (
     <div className={styles.canvas}>
-      <button className={styles.addBtn} onClick={addGoalAtTop} title="New goal">
+      <button className={styles.addBtn} onClick={addNoteAtTop} title="New note">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
           <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
         </svg>
       </button>
-      {goals.flatMap((goal, i) => {
+      {notes.flatMap((note, i) => {
         const elements = [
-          <Goal
-            key={goal.id}
-            goal={goal}
-            hoverY={hoverInfo?.goalId === goal.id ? hoverInfo.snapY : null}
-            onUpdate={patch => updateGoal(goal.id, patch)}
+          <Note
+            key={note.id}
+            note={note}
+            hoverY={hoverInfo?.noteId === note.id ? hoverInfo.snapY : null}
+            onUpdate={patch => updateNote(note.id, patch)}
             onRegister={register}
-            onZoneMove={e => handleZoneMove(goal.id, e)}
+            onZoneMove={e => handleZoneMove(note.id, e)}
             onZoneLeave={handleZoneLeave}
-            onZoneClick={() => handleZoneClick(goal.id)}
-            onEmpty={() => handleEmpty(goal.id)}
+            onZoneClick={() => handleZoneClick(note.id)}
+            onEmpty={() => handleEmpty(note.id)}
           />
         ]
-        if (i < goals.length - 1) {
-          const mergeDisabled = goals[i].collapsed || goals[i + 1].collapsed
-          elements.push(<GoalGap key={`gap-${i}`} onMerge={() => handleMerge(i)} disabled={mergeDisabled} />)
+        if (i < notes.length - 1) {
+          const mergeDisabled = notes[i].collapsed || notes[i + 1].collapsed
+          elements.push(<NoteGap key={`gap-${i}`} onMerge={() => handleMerge(i)} disabled={mergeDisabled} />)
         }
         return elements
       })}

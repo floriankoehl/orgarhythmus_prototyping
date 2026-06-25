@@ -37,7 +37,7 @@
 .canvas::-webkit-scrollbar-thumb:hover { background: #999; }
 
 /* ── Page container (title + card) ──────────────────────── */
-.goalContainer {
+.noteContainer {
   display: flex;
   flex-direction: column;
   width: 816px;
@@ -72,7 +72,7 @@
   color: #666;
 }
 
-.goalTitle {
+.noteTitle {
   font-size: 12px;
   font-weight: 600;
   color: #666;
@@ -125,7 +125,7 @@
   color: #1a73e8;
 }
 
-/* Full-page overlay in headline mode */
+/* Full-note overlay in headline mode */
 .headlineOverlay {
   position: absolute;
   inset: 0;
@@ -151,8 +151,8 @@
   outline-offset: 1px;
 }
 
-/* ── Goal card ───────────────────────────────────────────── */
-.goal {
+/* ── Note card ───────────────────────────────────────────── */
+.note {
   width: 816px;
   background: #fff;
   box-shadow: 0 1px 3px rgba(0,0,0,.18), 0 4px 12px rgba(0,0,0,.09);
@@ -162,7 +162,7 @@
 }
 
 /* ── Left zone overlay (captures cut hover/click) ────────── */
-/* Covers the left ~72px which is fully inside the page margin */
+/* Covers the left ~72px which is fully inside the note margin */
 .leftZone {
   position: absolute;
   left: 0;
@@ -194,7 +194,7 @@
   border-top: 1.5px dashed rgba(26, 115, 232, 0.55);
 }
 
-/* ── Gap between pages ───────────────────────────────────── */
+/* ── Gap between notes ───────────────────────────────────── */
 .gap {
   width: 816px;
   height: 28px;

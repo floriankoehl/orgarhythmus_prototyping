@@ -120,12 +120,12 @@ export const projectsApi = {
 }
 
 export const api = {
-  // Goals (pages)
-  getPages:     ()            => req('GET',    '/pages'),
-  createPage:   (page)        => req('POST',   '/pages', page),
-  updatePage:   (id, patch)   => req('PATCH',  `/pages/${id}`, patch),
-  deletePage:   (id)          => req('DELETE', `/pages/${id}`),
-  reorderPages: (ids)         => req('PUT',    '/pages/order', { ids }),
+  // Notes
+  getNotes:     ()            => req('GET',    '/notes'),
+  createNote:   (note)        => req('POST',   '/notes', note),
+  updateNote:   (id, patch)   => req('PATCH',  `/notes/${id}`, patch),
+  deleteNote:   (id)          => req('DELETE', `/notes/${id}`),
+  reorderNotes: (ids)         => req('PUT',    '/notes/order', { ids }),
 
   // Dimensions
   getDimensions:   ()         => req('GET',    '/dimensions'),
@@ -142,9 +142,9 @@ export const api = {
 
   // Assignments
   getAssignments: ()                      => req('GET',    '/assignments'),
-  assign:         (goalId, dimId, catId)  => req('PUT',    `/goals/${goalId}/assign/${dimId}`, { categoryId: catId }),
-  unassign:       (goalId, dimId)         => req('DELETE', `/goals/${goalId}/assign/${dimId}`),
-  reorderAssignments: (dimId, catId, goalIds) => req('PUT', '/assignments/order', { dimensionId: dimId, categoryId: catId, goalIds }),
+  assign:         (noteId, dimId, catId)  => req('PUT',    `/notes/${noteId}/assign/${dimId}`, { categoryId: catId }),
+  unassign:       (noteId, dimId)         => req('DELETE', `/notes/${noteId}/assign/${dimId}`),
+  reorderAssignments: (dimId, catId, noteIds) => req('PUT', '/assignments/order', { dimensionId: dimId, categoryId: catId, noteIds }),
 
   // Saved filters
   getFilters:    ()           => req('GET',    '/filters'),
@@ -185,6 +185,6 @@ export const api = {
 
   // Deadlines
   getDeadlines:   ()               => req('GET',    '/deadlines'),
-  setDeadline:    (goalId, col)    => req('PUT',    `/deadlines/${goalId}`, { col }),
-  removeDeadline: (goalId)         => req('DELETE', `/deadlines/${goalId}`),
+  setDeadline:    (noteId, col)    => req('PUT',    `/deadlines/${noteId}`, { col }),
+  removeDeadline: (noteId)         => req('DELETE', `/deadlines/${noteId}`),
 }

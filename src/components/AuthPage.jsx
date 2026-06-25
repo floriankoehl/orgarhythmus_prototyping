@@ -37,7 +37,7 @@ export default function AuthPage({ onAuthenticated }) {
   }
 
   return (
-    <div className={styles.page}>
+    <div className={styles.note}>
       <main className={styles.panel}>
         <div className={styles.header}>
           <div className={styles.mark}>O</div>

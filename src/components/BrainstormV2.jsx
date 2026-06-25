@@ -28,7 +28,7 @@ function computeWordRects(el) {
   return result
 }
 
-export default function BrainstormV2({ goals, onGoalCreated }) {
+export default function BrainstormV2({ notes, onNoteCreated }) {
   const [titleVal, setTitleVal]   = useState('')
   const [titleManual, setTitleManual] = useState(false)
   const [editingTitle, setEditingTitle] = useState(false)
@@ -72,9 +72,9 @@ export default function BrainstormV2({ goals, onGoalCreated }) {
     return () => document.removeEventListener('keydown', h)
   }, [headlineMode, editingTitle])
 
-  const getPos = (goalId) => {
-    if (!positionsRef.current[goalId]) {
-      positionsRef.current[goalId] = {
+  const getPos = (noteId) => {
+    if (!positionsRef.current[noteId]) {
+      positionsRef.current[noteId] = {
         left:     3 + Math.random() * 87,
         top:      4 + Math.random() * 82,
         variant:  Math.floor(Math.random() * DRIFT_VARIANTS),
@@ -84,7 +84,7 @@ export default function BrainstormV2({ goals, onGoalCreated }) {
         opacity:  0.06 + Math.random() * 0.09,
       }
     }
-    return positionsRef.current[goalId]
+    return positionsRef.current[noteId]
   }
 
   // Live-derive title from first 7 words while user types
@@ -130,26 +130,26 @@ export default function BrainstormV2({ goals, onGoalCreated }) {
     const selections = categorySelections
     setCategorySelections({})
 
-    const newGoal = { id: crypto.randomUUID(), html, title: finalTitle, collapsed: false }
-    api.createPage(newGoal)
+    const newNote = { id: crypto.randomUUID(), html, title: finalTitle, collapsed: false }
+    api.createNote(newNote)
       .then(() => Promise.all(Object.entries(selections)
         .filter(([, catId]) => Boolean(catId))
-        .map(([dimId, catId]) => api.assign(newGoal.id, dimId, catId))))
-      .then(() => onGoalCreated?.(newGoal))
+        .map(([dimId, catId]) => api.assign(newNote.id, dimId, catId))))
+      .then(() => onNoteCreated?.(newNote))
       .catch(console.error)
   }
 
   return (
-    <div className={styles.page}>
+    <div className={styles.note}>
 
-      {/* ── Floating background goals ─────────────────────────────────── */}
+      {/* ── Floating background notes ─────────────────────────────────── */}
       <div className={styles.floatingLayer} aria-hidden="true">
-        {goals.map(g => {
+        {notes.map(g => {
           const p = getPos(g.id)
           return (
             <span
               key={g.id}
-              className={`${styles.floatingGoal} ${styles[`drift${p.variant}`]}`}
+              className={`${styles.floatingNote} ${styles[`drift${p.variant}`]}`}
               style={{
                 left:              `${p.left}%`,
                 top:               `${p.top}%`,
@@ -201,7 +201,7 @@ export default function BrainstormV2({ goals, onGoalCreated }) {
             className={styles.editor}
             contentEditable={!headlineMode}
             suppressContentEditableWarning
-            data-placeholder="define goals…"
+            data-placeholder="define notes…"
             onInput={handleDescriptionInput}
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }

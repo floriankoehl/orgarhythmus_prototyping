@@ -1,4 +1,4 @@
-.page {
+.note {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -881,18 +881,18 @@
 /* ── Paint mode ──────────────────────────────────────────── */
 /* Override per-element cursors so the colored circle cursor shows everywhere */
 .paintMode * { cursor: inherit !important; }
-.paintMode .goalRow:hover .goalRowHeader { background: rgba(0,0,0,0.04); }
+.paintMode .noteRow:hover .noteRowHeader { background: rgba(0,0,0,0.04); }
 
-/* ── Goal row ────────────────────────────────────────────── */
-.goalRow { border-bottom: 1px solid #f4f4f4; cursor: grab; }
-.goalRow:last-child { border-bottom: none; }
+/* ── Note row ────────────────────────────────────────────── */
+.noteRow { border-bottom: 1px solid #f4f4f4; cursor: grab; }
+.noteRow:last-child { border-bottom: none; }
 .dragging { opacity: 0.5; }
 
-.goalRowHeader {
+.noteRowHeader {
   display: flex; align-items: center; gap: 6px;
   padding: 9px 12px 9px 8px;
 }
-.goalRowHeader:hover { background: #fafafa; }
+.noteRowHeader:hover { background: #fafafa; }
 
 .rowChevron {
   background: none; border: none; color: #bbb;
@@ -904,13 +904,13 @@
   font-family: Arial, sans-serif; flex: 1;
 }
 
-.goalContent {
+.noteContent {
   padding: 4px 12px 12px 26px;
   font-size: 11pt; font-family: Arial, sans-serif;
   line-height: 1.5; color: #666; background: #fafafa;
   border-top: 1px solid #f4f4f4; word-wrap: break-word;
 }
-.goalContent > * { margin: 4px 0 0; }
+.noteContent > * { margin: 4px 0 0; }
 
 /* ── Add category box (grid item) ────────────────────────── */
 .addCatBox {

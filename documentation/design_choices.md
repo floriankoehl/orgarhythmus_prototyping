@@ -20,18 +20,18 @@ Same reason. The Gantt's state (spacing, filters, perspectives, conflict state, 
 ## Why perspectives are opaque JSON blobs
 The frontend can add fields to perspective state without a DB migration — just include them in the capture and default-fallback on restore. Tradeoff: no versioning, so old perspectives can silently restore wrong state if the shape changes incompatibly.
 
-## Why `pages` and not `goals` in the database
-Naming artifact from early development when goals were document pages. All DB tables and API endpoints say `pages`; the UI says `goals`. Renaming would need a migration plus touching ~40 places in main.py — not worth it for a prototype.
+## Notes Naming
+The product language is now notes throughout the frontend, backend API, and database schema. `main.py` keeps a migration path for old local databases that still contain `pages` or `goal_id`.
 
 ---
 
 ## Things that caused problems
 
-**The `translateX` slider:** had all four views in a 400vw-wide strip, panned with `translateX(-view * 100vw)`. Caused misalignment on the Goals tab (gap on the left, content shifted right). Root issue: transforms create a new containing block for `position: fixed` children, making the BrainstormV2 float-ghost element behave differently depending on which tab was active. Replaced with `display: none` toggling — simpler and no geometry math.
+**The `translateX` slider:** had all four views in a 400vw-wide strip, panned with `translateX(-view * 100vw)`. Caused misalignment on the Notes tab (gap on the left, content shifted right). Root issue: transforms create a new containing block for `position: fixed` children, making the BrainstormV2 float-ghost element behave differently depending on which tab was active. Replaced with `display: none` toggling — simpler and no geometry math.
 
 **Dashboard having its own top bar:** when the dashboard was a standalone screen, it had its own back button and title bar. Moving it inside the workspace as view 0 created a double-header. Fixed by stripping its top bar — the main Header handles everything.
 
-**"pages" vs "goals" confusion:** every time we add a feature that touches both layers, the naming gap slows things down. Worth keeping in mind when reading backend code.
+**Legacy note naming:** old snapshots may still contain `pages` or `goal_id`; the backend migrates those names to `notes` and `note_id`.
 
 ---
 

@@ -1,6 +1,6 @@
 import sqlite3, uuid
 
-DB = "goals.db"
+DB = "notes.db"
 
 def uid(): return str(uuid.uuid4())
 
@@ -11,17 +11,19 @@ con.row_factory = sqlite3.Row
 con.execute("DELETE FROM assignments")
 con.execute("DELETE FROM categories")
 con.execute("DELETE FROM dimensions")
-con.execute("DELETE FROM pages")
+con.execute("DELETE FROM notes")
 
 # ── Dimensions ────────────────────────────────────────────────────────────────
 dim_phase    = uid()
 dim_priority = uid()
 dim_team     = uid()
+dim_type     = uid()
 
-con.executemany("INSERT INTO dimensions VALUES (?, ?)", [
+con.executemany("INSERT INTO dimensions (id, project_id, name) VALUES (?, 'default', ?)", [
     (dim_phase,    "Phase"),
     (dim_priority, "Priority"),
     (dim_team,     "Team"),
+    (dim_type,     "Type"),
 ])
 
 # ── Categories ────────────────────────────────────────────────────────────────
@@ -30,21 +32,26 @@ cat = {}
 phase_cats = [("Planning", "#3b82f6"), ("Execution", "#22c55e"), ("Wrap-up", "#f97316")]
 priority_cats = [("High", "#ef4444"), ("Medium", "#eab308"), ("Low", "#94a3b8")]
 team_cats = [("Logistics", "#8b5cf6"), ("Marketing", "#ec4899"), ("Tech", "#3b82f6"), ("Venue", "#f97316")]
+type_cats = [("Idea", "#8b5cf6"), ("Goal", "#22c55e"), ("Task", "#1a73e8")]
 
 for name, color in phase_cats:
     cid = uid(); cat[name] = cid
-    con.execute("INSERT INTO categories VALUES (?, ?, ?, ?)", (cid, dim_phase, name, color))
+    con.execute("INSERT INTO categories (id, dimension_id, name, color) VALUES (?, ?, ?, ?)", (cid, dim_phase, name, color))
 
 for name, color in priority_cats:
     cid = uid(); cat[name] = cid
-    con.execute("INSERT INTO categories VALUES (?, ?, ?, ?)", (cid, dim_priority, name, color))
+    con.execute("INSERT INTO categories (id, dimension_id, name, color) VALUES (?, ?, ?, ?)", (cid, dim_priority, name, color))
 
 for name, color in team_cats:
     cid = uid(); cat[name] = cid
-    con.execute("INSERT INTO categories VALUES (?, ?, ?, ?)", (cid, dim_team, name, color))
+    con.execute("INSERT INTO categories (id, dimension_id, name, color) VALUES (?, ?, ?, ?)", (cid, dim_team, name, color))
 
-# ── Goals (pages) ─────────────────────────────────────────────────────────────
-goals = [
+for name, color in type_cats:
+    cid = uid(); cat[name] = cid
+    con.execute("INSERT INTO categories (id, dimension_id, name, color) VALUES (?, ?, ?, ?)", (cid, dim_type, name, color))
+
+# ── Notes ─────────────────────────────────────────────────────────────────────
+notes = [
     ("Book the venue",
      "<p>Confirm the event space, check capacity, sign the contract, and arrange parking access for attendees.</p>",
      "Planning", "High", "Venue"),
@@ -94,16 +101,17 @@ goals = [
      "Wrap-up", "Low", "Logistics"),
 ]
 
-for i, (title, html, phase, priority, team) in enumerate(goals):
+for i, (title, html, phase, priority, team) in enumerate(notes):
     gid = uid()
     con.execute(
-        "INSERT INTO pages (id, html, title, collapsed, order_idx) VALUES (?, ?, ?, 0, ?)",
+        "INSERT INTO notes (id, project_id, html, title, collapsed, order_idx) VALUES (?, 'default', ?, ?, 0, ?)",
         (gid, html, title, i)
     )
-    con.execute("INSERT INTO assignments VALUES (?, ?, ?)", (gid, dim_phase,    cat[phase]))
-    con.execute("INSERT INTO assignments VALUES (?, ?, ?)", (gid, dim_priority, cat[priority]))
-    con.execute("INSERT INTO assignments VALUES (?, ?, ?)", (gid, dim_team,     cat[team]))
+    con.execute("INSERT INTO assignments (note_id, dimension_id, category_id) VALUES (?, ?, ?)", (gid, dim_phase,    cat[phase]))
+    con.execute("INSERT INTO assignments (note_id, dimension_id, category_id) VALUES (?, ?, ?)", (gid, dim_priority, cat[priority]))
+    con.execute("INSERT INTO assignments (note_id, dimension_id, category_id) VALUES (?, ?, ?)", (gid, dim_team,     cat[team]))
+    con.execute("INSERT INTO assignments (note_id, dimension_id, category_id) VALUES (?, ?, ?)", (gid, dim_type,     cat["Task"]))
 
 con.commit()
 con.close()
-print(f"Seeded {len(goals)} goals, 3 dimensions, {len(cat)} categories.")
+print(f"Seeded {len(notes)} notes, 4 dimensions, {len(cat)} categories.")

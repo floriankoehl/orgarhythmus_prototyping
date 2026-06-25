@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import styles from './GoalPopup.module.css'
+import styles from './NotePopup.module.css'
 import { api } from '../api'
 
 // ── Headline-mode helpers ─────────────────────────────────────────────────────
@@ -48,14 +48,14 @@ function ChevronIcon({ down }) {
 }
 
 // ── Main popup ────────────────────────────────────────────────────────────────
-export default function GoalPopup({ goal, onClose, onGoalUpdated, onGoalDeleted }) {
+export default function NotePopup({ note, onClose, onNoteUpdated, onNoteDeleted }) {
   const [expanded, setExpanded]           = useState(false)
   const [editingCategories, setEditingCategories] = useState(false)
   const [headlineMode, setHeadlineMode]   = useState(false)
   const [wordRects, setWordRects]         = useState([])
   const [headlineStarted, setHeadlineStarted] = useState(false)
   const [editingTitle, setEditingTitle]   = useState(false)
-  const [titleVal, setTitleVal]           = useState(goal.title)
+  const [titleVal, setTitleVal]           = useState(note.title)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   // expanded data
@@ -68,12 +68,12 @@ export default function GoalPopup({ goal, onClose, onGoalUpdated, onGoalDeleted 
   const titleInputRef  = useRef(null)
   const saveTimerRef   = useRef(null)
 
-  // Keep goal title in sync if parent updates goal
-  useEffect(() => { setTitleVal(goal.title) }, [goal.title])
+  // Keep note title in sync if parent updates note
+  useEffect(() => { setTitleVal(note.title) }, [note.title])
 
   useEffect(() => {
     setEditingCategories(false)
-  }, [expanded, goal.id])
+  }, [expanded, note.id])
 
   // Focus title input when editing starts
   useEffect(() => {
@@ -100,14 +100,14 @@ export default function GoalPopup({ goal, onClose, onGoalUpdated, onGoalDeleted 
       .then(([dims, cats, asns]) => {
         setDimensions(dims)
         setCategories(cats)
-        // asns is array of { goalId, dimensionId, categoryId }
-        const myAsns = asns.filter(a => a.goalId === goal.id)
+        // asns is array of { noteId, dimensionId, categoryId }
+        const myAsns = asns.filter(a => a.noteId === note.id)
         const map = {}
         myAsns.forEach(a => { map[a.dimensionId] = a.categoryId })
         setAssignments(map)
       })
       .catch(console.error)
-  }, [expanded, goal.id])
+  }, [expanded, note.id])
 
   // ── Title commit ──────────────────────────────────────────────────────────
   const commitTitle = useCallback(async (val) => {
@@ -115,21 +115,21 @@ export default function GoalPopup({ goal, onClose, onGoalUpdated, onGoalDeleted 
     setTitleVal(trimmed)
     setEditingTitle(false)
     try {
-      await api.updatePage(goal.id, { title: trimmed })
-      onGoalUpdated?.(goal.id, { title: trimmed })
+      await api.updateNote(note.id, { title: trimmed })
+      onNoteUpdated?.(note.id, { title: trimmed })
     } catch (e) { console.error(e) }
-  }, [goal.id, onGoalUpdated])
+  }, [note.id, onNoteUpdated])
 
   // ── Description save (debounced 600ms) ───────────────────────────────────
   const saveHtml = useCallback((html) => {
     clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(async () => {
       try {
-        await api.updatePage(goal.id, { html })
-        onGoalUpdated?.(goal.id, { html })
+        await api.updateNote(note.id, { html })
+        onNoteUpdated?.(note.id, { html })
       } catch (e) { console.error(e) }
     }, 600)
-  }, [goal.id, onGoalUpdated])
+  }, [note.id, onNoteUpdated])
 
   // ── Headline mode ─────────────────────────────────────────────────────────
   const enterHeadlineMode = () => {
@@ -144,16 +144,16 @@ export default function GoalPopup({ goal, onClose, onGoalUpdated, onGoalDeleted 
     if (!headlineStarted) setHeadlineStarted(true)
     setTitleVal(next)
     try {
-      await api.updatePage(goal.id, { title: next })
-      onGoalUpdated?.(goal.id, { title: next })
+      await api.updateNote(note.id, { title: next })
+      onNoteUpdated?.(note.id, { title: next })
     } catch (e) { console.error(e) }
   }
 
   // ── Delete ────────────────────────────────────────────────────────────────
   const confirmAndDelete = async () => {
     try {
-      await api.deletePage(goal.id)
-      onGoalDeleted?.(goal.id)
+      await api.deleteNote(note.id)
+      onNoteDeleted?.(note.id)
       onClose()
     } catch (e) { console.error(e) }
   }
@@ -171,8 +171,8 @@ export default function GoalPopup({ goal, onClose, onGoalUpdated, onGoalDeleted 
     else next[dimId] = catId
     setAssignments(next)
     try {
-      if (currentCatId === catId) await api.unassign(goal.id, dimId)
-      else await api.assign(goal.id, dimId, catId)
+      if (currentCatId === catId) await api.unassign(note.id, dimId)
+      else await api.assign(note.id, dimId, catId)
     } catch (e) {
       console.error(e)
       setAssignments(assignments)
@@ -195,7 +195,7 @@ export default function GoalPopup({ goal, onClose, onGoalUpdated, onGoalDeleted 
                 onBlur={e => commitTitle(e.target.value)}
                 onKeyDown={e => {
                   if (e.key === 'Enter') e.target.blur()
-                  if (e.key === 'Escape') { setTitleVal(goal.title); setEditingTitle(false) }
+                  if (e.key === 'Escape') { setTitleVal(note.title); setEditingTitle(false) }
                 }}
               />
             ) : (
@@ -217,7 +217,7 @@ export default function GoalPopup({ goal, onClose, onGoalUpdated, onGoalDeleted 
               <ChevronIcon down={expanded} />
               {expanded ? 'Less' : 'More'}
             </button>
-            <button className={styles.deleteBtn} onClick={() => setConfirmDelete(true)} title="Delete goal">
+            <button className={styles.deleteBtn} onClick={() => setConfirmDelete(true)} title="Delete note">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>
               </svg>
@@ -247,7 +247,7 @@ export default function GoalPopup({ goal, onClose, onGoalUpdated, onGoalDeleted 
             <div
               ref={el => {
                 editorRef.current = el
-                if (el && !el._ready) { el.innerHTML = goal.html || ''; el._ready = true }
+                if (el && !el._ready) { el.innerHTML = note.html || ''; el._ready = true }
               }}
               className={styles.editor}
               contentEditable={!headlineMode}
