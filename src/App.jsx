@@ -51,6 +51,7 @@ export default function App() {
   const [appScreen, setAppScreen]     = useState('home') // 'home' | 'workspace'
   const [goals, setGoals]             = useState([])
   const [refreshKey, setRefreshKey]   = useState(0)
+  const [goalDataVersion, setGoalDataVersion] = useState(0)
   const [popupGoalId, setPopupGoalId] = useState(null)
   const [toast, setToast]             = useState(null)
 
@@ -83,6 +84,7 @@ export default function App() {
     setPopupGoalId(null)
     setView(0)
     setRefreshKey(0)
+    setGoalDataVersion(0)
     setAppScreen('home')
     setAuthState('authenticated')
   }
@@ -96,6 +98,7 @@ export default function App() {
     setPopupGoalId(null)
     setView(0)
     setRefreshKey(0)
+    setGoalDataVersion(0)
     setAppScreen('home')
     setAuthState('anonymous')
   }
@@ -108,6 +111,7 @@ export default function App() {
     setPopupGoalId(null)
     setView(0)
     setRefreshKey(0)
+    setGoalDataVersion(0)
     setAppScreen('workspace')
   }
 
@@ -118,6 +122,7 @@ export default function App() {
     setGoals([])
     setToast(null)
     setPopupGoalId(null)
+    setGoalDataVersion(0)
     setAppScreen('home')
   }
 
@@ -133,11 +138,14 @@ export default function App() {
     const html = text.replace(/\n/g, '<br>')
     const newGoal = { id: crypto.randomUUID(), html, title, collapsed: false }
     try {
-      await api.createPage(newGoal)
+      const savedGoal = await api.createPage(newGoal)
       await assignGoalCategories(newGoal.id, categorySelections)
-      const orderedIds = [newGoal.id, ...goals.map(g => g.id)]
-      api.reorderPages(orderedIds).catch(console.error)
-      setGoals(prev => [newGoal, ...prev])
+      setGoals(prev => {
+        const next = [savedGoal, ...prev.filter(g => g.id !== savedGoal.id)]
+        api.reorderPages(next.map(g => g.id)).catch(console.error)
+        return next
+      })
+      setGoalDataVersion(v => v + 1)
       setRefreshKey(k => k + 1)
       setToast({ goalId: newGoal.id, title })
     } catch (e) {
@@ -158,9 +166,12 @@ export default function App() {
   }
 
   const handleGoalCreated = (newGoal) => {
-    const orderedIds = [newGoal.id, ...goals.map(g => g.id)]
-    api.reorderPages(orderedIds).catch(console.error)
-    setGoals(prev => [newGoal, ...prev])
+    setGoals(prev => {
+      const next = [newGoal, ...prev.filter(g => g.id !== newGoal.id)]
+      api.reorderPages(next.map(g => g.id)).catch(console.error)
+      return next
+    })
+    setGoalDataVersion(v => v + 1)
     setRefreshKey(k => k + 1)
     setToast({ goalId: newGoal.id, title: newGoal.title })
   }
@@ -217,7 +228,7 @@ export default function App() {
           <BrainstormV2 goals={goals} onGoalCreated={handleGoalCreated} />
         </div>
         <div className={styles.view} style={{ display: view === 2 ? 'flex' : 'none' }}>
-          <ClassificationPage goals={goals} isActive={view === 2} onGoalOpen={openGoalPopup} />
+          <ClassificationPage goals={goals} isActive={view === 2} onGoalOpen={openGoalPopup} refreshKey={goalDataVersion} />
         </div>
         <div className={styles.view} style={{ display: view === 3 ? 'flex' : 'none' }}>
           <SchedulePage
@@ -225,6 +236,7 @@ export default function App() {
             isActive={view === 3}
             onGoalOpen={openGoalPopup}
             defaultMetric={activeProject?.metric ?? 'days'}
+            refreshKey={goalDataVersion}
           />
         </div>
       </div>

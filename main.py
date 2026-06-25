@@ -1853,9 +1853,9 @@ def remove_deadline(goal_id: str, user: dict = Depends(current_user)):
         con.execute("DELETE FROM deadlines WHERE goal_id = ?", (goal_id,))
 
 
-# ── Full database export ───────────────────────────────────────────────────────
+# ── Project export ─────────────────────────────────────────────────────────────
 @app.get("/export/db")
-def export_database(user: dict = Depends(current_user)):
+def export_database(project_id: str = Query(...), user: dict = Depends(current_user)):
     def rows(query_rows, json_cols=()):
         out = []
         for row in query_rows:
@@ -1870,12 +1870,10 @@ def export_database(user: dict = Depends(current_user)):
         return out
 
     with _db() as con:
-        if user.get("isSuperuser"):
-            projects = con.execute("SELECT * FROM projects").fetchall()
-            exported_users = [_user(row) for row in con.execute("SELECT * FROM users").fetchall()]
-        else:
-            projects = con.execute("SELECT * FROM projects WHERE user_id = ?", (user["id"],)).fetchall()
-            exported_users = [user]
+        project = assert_project_access(project_id, user)
+        projects = con.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchall()
+        owner = con.execute("SELECT * FROM users WHERE id = ?", (project["userId"],)).fetchone()
+        exported_users = [_user(owner)] if owner else []
         project_ids = [row["id"] for row in projects]
         if project_ids:
             project_ph = ','.join('?' for _ in project_ids)

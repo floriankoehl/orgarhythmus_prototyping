@@ -1058,7 +1058,7 @@ function LegendWidget({
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ClassificationPage({ goals = [], isActive = false, onGoalOpen }) {
+export default function ClassificationPage({ goals = [], isActive = false, onGoalOpen, refreshKey = 0 }) {
   const [dimensions, setDimensions]         = useState([])
   const [categories, setCategories]         = useState([])
   const [assignments, setAssignments]       = useState({})
@@ -1088,6 +1088,19 @@ export default function ClassificationPage({ goals = [], isActive = false, onGoa
   const [unassignedCollapsed, setUnassignedCollapsed] = useState(false)
   const [floatingPanel, setFloatingPanel] = useState(null)
 
+  const applyAssignments = assigns => {
+    const map = {}
+    const orderMap = {}
+    assigns.forEach(a => {
+      if (!map[a.goalId]) map[a.goalId] = {}
+      if (!orderMap[a.goalId]) orderMap[a.goalId] = {}
+      map[a.goalId][a.dimensionId] = a.categoryId
+      orderMap[a.goalId][a.dimensionId] = a.orderIdx ?? 0
+    })
+    setAssignments(map)
+    setAssignmentOrders(orderMap)
+  }
+
   useEffect(() => {
     Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getFilters(), api.getClassificationPerspectives()])
       .then(([dims, cats, assigns, filters, loadedPerspectives]) => {
@@ -1095,16 +1108,7 @@ export default function ClassificationPage({ goals = [], isActive = false, onGoa
         setCategories(cats)
         setNamedFilters(filters.map(normalizeFilter))
         setPerspectives(loadedPerspectives.map(normalizePerspective))
-        const map = {}
-        const orderMap = {}
-        assigns.forEach(a => {
-          if (!map[a.goalId]) map[a.goalId] = {}
-          if (!orderMap[a.goalId]) orderMap[a.goalId] = {}
-          map[a.goalId][a.dimensionId] = a.categoryId
-          orderMap[a.goalId][a.dimensionId] = a.orderIdx ?? 0
-        })
-        setAssignments(map)
-        setAssignmentOrders(orderMap)
+        applyAssignments(assigns)
         const groupDim    = dims.find(d => d.name === 'Group')
         const priorityDim = dims.find(d => d.name === 'Priority')
         if (groupDim)    setContainerDimId(groupDim.id)
@@ -1112,6 +1116,11 @@ export default function ClassificationPage({ goals = [], isActive = false, onGoa
       })
       .catch(console.error)
   }, [])
+
+  useEffect(() => {
+    if (!refreshKey) return
+    api.getAssignments().then(applyAssignments).catch(console.error)
+  }, [refreshKey])
 
   useEffect(() => {
     setPaintCat(null)

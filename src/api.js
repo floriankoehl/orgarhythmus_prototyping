@@ -116,7 +116,7 @@ export const projectsApi = {
   updateProject:    (id, patch) => baseReq('PATCH',  `/projects/${id}`, patch),
   deleteProject:    (id)        => baseReq('DELETE', `/projects/${id}`),
   getProjectStats:  (id)        => baseReq('GET',    `/projects/${id}/stats`),
-  exportDatabase:   ()          => baseReq('GET',    '/export/db'),
+  exportDatabase:   (id)        => baseReq('GET',    `/export/db?project_id=${encodeURIComponent(id)}`),
 }
 
 export const api = {

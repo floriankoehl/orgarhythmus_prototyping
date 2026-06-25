@@ -96,7 +96,7 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
   const handleExport = async () => {
     setExporting(true)
     try {
-      const data = await projectsApi.exportDatabase()
+      const data = await projectsApi.exportDatabase(project.id)
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -198,7 +198,7 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
             className={styles.exportBtn}
             onClick={handleExport}
             disabled={exporting}
-            title="Download a JSON snapshot of all projects and data"
+            title="Download a JSON snapshot of this project"
           >
             {exporting ? 'Saving…' : 'Save snapshot'}
           </button>

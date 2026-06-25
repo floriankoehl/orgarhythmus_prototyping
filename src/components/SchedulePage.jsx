@@ -1141,7 +1141,7 @@ function ScheduleColorLegendWidget({
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function SchedulePage({ goals = [], isActive = false, onGoalOpen, defaultMetric = 'days' }) {
+export default function SchedulePage({ goals = [], isActive = false, onGoalOpen, defaultMetric = 'days', refreshKey = 0 }) {
   // ── API data ───────────────────────────────────────────────────────────────
   const [dimensions,   setDimensions]   = useState([])
   const [categories,   setCategories]   = useState([])
@@ -1162,6 +1162,19 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
   const [editingFilter, setEditingFilter] = useState(null)
   const [drawingState, setDrawingState] = useState(null)  // { fromId } while drawing
 
+  const applyAssignments = assigns => {
+    const map = {}
+    const orderMap = {}
+    assigns.forEach(a => {
+      if (!map[a.goalId]) map[a.goalId] = {}
+      if (!orderMap[a.goalId]) orderMap[a.goalId] = {}
+      map[a.goalId][a.dimensionId] = a.categoryId
+      orderMap[a.goalId][a.dimensionId] = a.orderIdx ?? 0
+    })
+    setAssignments(map)
+    setAssignmentOrders(orderMap)
+  }
+
   useEffect(() => {
     if (!isActive) return
     Promise.all([
@@ -1172,22 +1185,18 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
       setDimensions(dims); setCategories(cats)
       setSavedFilters(filters)
       setPerspectives(loadedPerspectives.map(normalizePerspective))
-      const map = {}
-      const orderMap = {}
-      assigns.forEach(a => {
-        if (!map[a.goalId]) map[a.goalId] = {}
-        if (!orderMap[a.goalId]) orderMap[a.goalId] = {}
-        map[a.goalId][a.dimensionId] = a.categoryId
-        orderMap[a.goalId][a.dimensionId] = a.orderIdx ?? 0
-      })
-      setAssignments(map)
-      setAssignmentOrders(orderMap)
+      applyAssignments(assigns)
       setMilestones(mss)
       setDependencies(deps)
       setDeadlines(dls)
       setTransactionHistory(history)
     }).catch(console.error)
   }, [isActive])
+
+  useEffect(() => {
+    if (!refreshKey) return
+    api.getAssignments().then(applyAssignments).catch(console.error)
+  }, [refreshKey])
 
   // ── Toolbar / mode state ───────────────────────────────────────────────────
   const [mode,              setMode]              = useState('milestone')
