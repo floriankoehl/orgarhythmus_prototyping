@@ -1,50 +1,113 @@
 const BASE = 'http://localhost:8000'
+const ACCESS_KEY = 'orgarhythmus.accessToken'
+const REFRESH_KEY = 'orgarhythmus.refreshToken'
 
 let _projectId = 'default'
 export function setProjectId(id) { _projectId = id }
 
-async function req(method, path, body) {
-  const sep = path.includes('?') ? '&' : '?'
-  const url = `${BASE}${path}${sep}project_id=${encodeURIComponent(_projectId)}`
-  const res = await fetch(url, {
-    method,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+function getStoredAccessToken() {
+  return localStorage.getItem(ACCESS_KEY) || ''
+}
+
+function getStoredRefreshToken() {
+  return localStorage.getItem(REFRESH_KEY) || ''
+}
+
+export function hasAuthSession() {
+  return Boolean(getStoredAccessToken() || getStoredRefreshToken())
+}
+
+export function setAuthTokens(tokens = {}) {
+  if (tokens.accessToken) localStorage.setItem(ACCESS_KEY, tokens.accessToken)
+  if (tokens.refreshToken) localStorage.setItem(REFRESH_KEY, tokens.refreshToken)
+}
+
+export function clearAuthTokens() {
+  localStorage.removeItem(ACCESS_KEY)
+  localStorage.removeItem(REFRESH_KEY)
+}
+
+function authHeaders(body) {
+  const headers = body !== undefined ? { 'Content-Type': 'application/json' } : {}
+  const token = getStoredAccessToken()
+  if (token) headers.Authorization = `Bearer ${token}`
+  return headers
+}
+
+async function parseError(res, method, path) {
+  let detail = ''
+  let rawDetail = null
+  try {
+    const data = await res.json()
+    rawDetail = data.detail
+    detail = typeof data.detail === 'string'
+      ? data.detail
+      : data.detail?.message || JSON.stringify(data.detail)
+  } catch {}
+  const err = new Error(detail || `${method} ${path} -> ${res.status}`)
+  err.detail = rawDetail
+  err.status = res.status
+  throw err
+}
+
+async function refreshAccessToken() {
+  const refreshToken = getStoredRefreshToken()
+  if (!refreshToken) return false
+  const res = await fetch(`${BASE}/auth/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refreshToken }),
   })
   if (!res.ok) {
-    let detail = ''
-    let rawDetail = null
-    try {
-      const data = await res.json()
-      rawDetail = data.detail
-      detail = typeof data.detail === 'string'
-        ? data.detail
-        : data.detail?.message || JSON.stringify(data.detail)
-    } catch {}
-    const err = new Error(detail || `${method} ${path} → ${res.status}`)
-    err.detail = rawDetail
-    throw err
+    clearAuthTokens()
+    return false
   }
+  const data = await res.json()
+  setAuthTokens(data)
+  return true
+}
+
+async function fetchJson(method, url, body, { retryAuth = true } = {}) {
+  let res = await fetch(url, {
+    method,
+    headers: authHeaders(body),
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+  if (res.status === 401 && retryAuth && await refreshAccessToken()) {
+    res = await fetch(url, {
+      method,
+      headers: authHeaders(body),
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    })
+  }
+  if (!res.ok) await parseError(res, method, url.replace(BASE, ''))
   if (res.status === 204) return null
   return res.json()
 }
 
+async function req(method, path, body) {
+  const sep = path.includes('?') ? '&' : '?'
+  const url = `${BASE}${path}${sep}project_id=${encodeURIComponent(_projectId)}`
+  return fetchJson(method, url, body)
+}
+
 async function baseReq(method, path, body) {
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  })
-  if (!res.ok) {
-    let detail = ''
-    try {
-      const data = await res.json()
-      detail = typeof data.detail === 'string' ? data.detail : data.detail?.message || JSON.stringify(data.detail)
-    } catch {}
-    throw new Error(detail || `${method} ${path} → ${res.status}`)
-  }
-  if (res.status === 204) return null
-  return res.json()
+  return fetchJson(method, `${BASE}${path}`, body)
+}
+
+export const authApi = {
+  register: async ({ email, displayName, password }) => {
+    const tokens = await fetchJson('POST', `${BASE}/auth/register`, { email, displayName, password }, { retryAuth: false })
+    setAuthTokens(tokens)
+    return tokens
+  },
+  login: async ({ email, password }) => {
+    const tokens = await fetchJson('POST', `${BASE}/auth/login`, { email, password }, { retryAuth: false })
+    setAuthTokens(tokens)
+    return tokens
+  },
+  me: () => baseReq('GET', '/auth/me'),
+  logout: () => clearAuthTokens(),
 }
 
 export const projectsApi = {

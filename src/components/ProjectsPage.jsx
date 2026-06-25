@@ -110,7 +110,49 @@ function ProjectCard({ project, onOpen, onDelete }) {
   )
 }
 
-export default function ProjectsPage({ onOpenProject }) {
+function ProfileMenu({ user, onLogout }) {
+  const [open, setOpen] = useState(false)
+  const menuRef = useRef()
+  const name = user?.displayName || user?.email || 'Profile'
+  const initial = name.trim().charAt(0).toUpperCase() || 'U'
+
+  useEffect(() => {
+    if (!open) return
+    const handler = e => { if (!menuRef.current?.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div className={styles.profile} ref={menuRef}>
+      <button
+        className={styles.profileButton}
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        title="Profile"
+        aria-label="Profile"
+        aria-expanded={open}
+      >
+        <span className={styles.profileAvatar}>{initial}</span>
+      </button>
+
+      {open && (
+        <div className={styles.profilePanel}>
+          <div className={styles.profileInfo}>
+            <span className={styles.profileName}>{name}</span>
+            <span className={styles.profileEmail}>{user?.email}</span>
+            {user?.isSuperuser && <span className={styles.profileBadge}>Superuser</span>}
+          </div>
+          <button className={styles.profileAction} type="button" onClick={onLogout}>
+            Logout
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function ProjectsPage({ onOpenProject, currentUser, onLogout }) {
   const [projects, setProjects] = useState([])
   const [loading, setLoading]   = useState(true)
   const [creating, setCreating] = useState(false)
@@ -142,9 +184,7 @@ export default function ProjectsPage({ onOpenProject }) {
           <span className={styles.logo}>◆</span>
           <span className={styles.appName}>Orgarythmus</span>
         </div>
-        <button className={styles.newBtn} onClick={() => setCreating(true)}>
-          + New project
-        </button>
+        <ProfileMenu user={currentUser} onLogout={onLogout} />
       </div>
 
       <div className={styles.content}>

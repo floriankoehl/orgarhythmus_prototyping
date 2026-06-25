@@ -20,6 +20,9 @@ ACCESS_TOKEN_MINUTES = 30
 REFRESH_TOKEN_DAYS = 30
 LOGIN_REGISTER_LIMIT = 10
 RATE_LIMIT_WINDOW_SECONDS = 60
+SUPERUSER_EMAIL = "florian"
+SUPERUSER_DISPLAY_NAME = "florian"
+SUPERUSER_PASSWORD = "TestPassword123"
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
 _rate_limit_lock = Lock()
@@ -29,10 +32,30 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5174"],
+    allow_origins=["http://localhost:5173", "http://localhost:5174"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _load_local_env(path: str | None = None):
+    if path is None:
+        path = os.path.join(os.path.dirname(__file__), ".env")
+    if not os.path.exists(path):
+        return
+    with open(path, "r", encoding="utf-8") as env_file:
+        for line in env_file:
+            raw = line.strip()
+            if not raw or raw.startswith("#") or "=" not in raw:
+                continue
+            key, value = raw.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+_load_local_env()
 
 
 # ── DB setup ──────────────────────────────────────────────────────────────────
@@ -55,12 +78,14 @@ def _init_db():
                 display_name        TEXT NOT NULL,
                 hashed_password     TEXT,
                 created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                google_oauth        INTEGER NOT NULL DEFAULT 0
+                google_oauth        INTEGER NOT NULL DEFAULT 0,
+                is_superuser        INTEGER NOT NULL DEFAULT 0
             )
         """)
         con.execute("""
             CREATE TABLE IF NOT EXISTS projects (
                 id          TEXT PRIMARY KEY,
+                user_id     TEXT NOT NULL REFERENCES users(id),
                 name        TEXT NOT NULL DEFAULT 'Untitled',
                 description TEXT NOT NULL DEFAULT '',
                 metric      TEXT NOT NULL DEFAULT 'days',
@@ -180,9 +205,14 @@ def _migrate():
                 display_name        TEXT NOT NULL,
                 hashed_password     TEXT,
                 created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                google_oauth        INTEGER NOT NULL DEFAULT 0
+                google_oauth        INTEGER NOT NULL DEFAULT 0,
+                is_superuser        INTEGER NOT NULL DEFAULT 0
             )
         """)
+
+        user_cols = [r[1] for r in con.execute("PRAGMA table_info(users)").fetchall()]
+        if 'is_superuser' not in user_cols:
+            con.execute("ALTER TABLE users ADD COLUMN is_superuser INTEGER NOT NULL DEFAULT 0")
 
         # Add project_id to tables that need it
         for table in ['pages', 'dimensions', 'saved_filters', 'schedule_perspectives', 'classification_perspectives']:
@@ -236,6 +266,34 @@ def _migrate():
 
         # Migrate projects table columns
         proj_cols = [r[1] for r in con.execute("PRAGMA table_info(projects)").fetchall()]
+        proj_fks = con.execute("PRAGMA foreign_key_list(projects)").fetchall()
+        has_user_fk = any(row[2] == "users" and row[3] == "user_id" for row in proj_fks)
+        if 'user_id' not in proj_cols or not has_user_fk:
+            con.execute("DELETE FROM dependencies")
+            con.execute("DELETE FROM milestones")
+            con.execute("DELETE FROM deadlines")
+            con.execute("DELETE FROM assignments")
+            con.execute("DELETE FROM categories")
+            con.execute("DELETE FROM dimensions")
+            con.execute("DELETE FROM pages")
+            con.execute("DELETE FROM saved_filters")
+            con.execute("DELETE FROM schedule_perspectives")
+            con.execute("DELETE FROM classification_perspectives")
+            con.execute("DELETE FROM transaction_history")
+            con.execute("DELETE FROM projects")
+            con.execute("ALTER TABLE projects RENAME TO projects_old")
+            con.execute("""
+                CREATE TABLE projects (
+                    id          TEXT PRIMARY KEY,
+                    user_id     TEXT NOT NULL REFERENCES users(id),
+                    name        TEXT NOT NULL DEFAULT 'Untitled',
+                    description TEXT NOT NULL DEFAULT '',
+                    metric      TEXT NOT NULL DEFAULT 'days',
+                    created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            con.execute("DROP TABLE projects_old")
+            proj_cols = [r[1] for r in con.execute("PRAGMA table_info(projects)").fetchall()]
         if 'description' not in proj_cols:
             con.execute("ALTER TABLE projects ADD COLUMN description TEXT NOT NULL DEFAULT ''")
         if 'metric' not in proj_cols:
@@ -243,13 +301,33 @@ def _migrate():
         if 'color' in proj_cols:
             pass  # keep for compat, just don't use in UI
 
-        # Seed default project if missing
-        if not con.execute("SELECT id FROM projects WHERE id = 'default'").fetchone():
-            con.execute(
-                "INSERT INTO projects (id, name, description, metric) VALUES ('default', 'My Project', '', 'days')"
-            )
-
 _migrate()
+
+
+def _ensure_superuser():
+    hashed_password = pwd_context.hash(SUPERUSER_PASSWORD)
+    with _db() as con:
+        row = con.execute("SELECT id FROM users WHERE email = ?", (SUPERUSER_EMAIL,)).fetchone()
+        if row:
+            con.execute(
+                """
+                UPDATE users
+                SET display_name = ?, hashed_password = ?, google_oauth = 0, is_superuser = 1
+                WHERE id = ?
+                """,
+                (SUPERUSER_DISPLAY_NAME, hashed_password, row["id"]),
+            )
+            return
+        con.execute(
+            """
+            INSERT INTO users (id, email, display_name, hashed_password, google_oauth, is_superuser)
+            VALUES (?, ?, ?, ?, 0, 1)
+            """,
+            (str(uuid.uuid4()), SUPERUSER_EMAIL, SUPERUSER_DISPLAY_NAME, hashed_password),
+        )
+
+
+_ensure_superuser()
 
 
 def _seed_defaults(project_id: str = 'default'):
@@ -258,6 +336,8 @@ def _seed_defaults(project_id: str = 'default'):
         ("Priority", [("High",   "#ef4444"), ("Medium", "#eab308"), ("Low", "#94a3b8")]),
     ]
     with _db() as con:
+        if not con.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone():
+            return
         for dim_name, cats in defaults:
             if con.execute(
                 "SELECT id FROM dimensions WHERE name = ? AND project_id = ?", (dim_name, project_id)
@@ -420,6 +500,7 @@ def _project(row) -> dict:
     d = dict(row)
     return {
         "id": d["id"],
+        "userId": d.get("user_id", ""),
         "name": d["name"],
         "description": d.get("description", ""),
         "metric": d.get("metric", "days"),
@@ -494,6 +575,81 @@ def _normalize_filter_payload(data) -> tuple[str, str, str | None]:
         if ids:
             selections[dim_id] = ids
     return gate, json.dumps(selections), data.quickKey
+
+def assert_project_access(project_id: str, user: dict):
+    with _db() as con:
+        row = con.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Project not found")
+    if user.get("isSuperuser"):
+        return _project(row)
+    if row["user_id"] != user["id"]:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Project access denied")
+    return _project(row)
+
+def _project_id_for_page(con, page_id: str) -> str:
+    row = con.execute("SELECT project_id FROM pages WHERE id = ?", (page_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Page not found")
+    return row["project_id"]
+
+def _project_id_for_dimension(con, dim_id: str) -> str:
+    row = con.execute("SELECT project_id FROM dimensions WHERE id = ?", (dim_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Dimension not found")
+    return row["project_id"]
+
+def _project_id_for_category(con, cat_id: str) -> str:
+    row = con.execute(
+        """SELECT d.project_id FROM categories c
+        JOIN dimensions d ON d.id = c.dimension_id
+        WHERE c.id = ?""",
+        (cat_id,),
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Category not found")
+    return row["project_id"]
+
+def _project_id_for_milestone(con, ms_id: str) -> str:
+    row = con.execute(
+        """SELECT p.project_id FROM milestones m
+        JOIN pages p ON p.id = m.goal_id
+        WHERE m.id = ?""",
+        (ms_id,),
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Milestone not found")
+    return row["project_id"]
+
+def _project_id_for_dependency(con, dep_id: str) -> str:
+    row = con.execute(
+        """SELECT p.project_id FROM dependencies d
+        JOIN milestones m ON m.id = d.from_id
+        JOIN pages p ON p.id = m.goal_id
+        WHERE d.id = ?""",
+        (dep_id,),
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Dependency not found")
+    return row["project_id"]
+
+def _project_id_for_filter(con, filter_id: str) -> str:
+    row = con.execute("SELECT project_id FROM saved_filters WHERE id = ?", (filter_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Filter not found")
+    return row["project_id"]
+
+def _project_id_for_schedule_perspective(con, perspective_id: str) -> str:
+    row = con.execute("SELECT project_id FROM schedule_perspectives WHERE id = ?", (perspective_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Perspective not found")
+    return row["project_id"]
+
+def _project_id_for_classification_perspective(con, perspective_id: str) -> str:
+    row = con.execute("SELECT project_id FROM classification_perspectives WHERE id = ?", (perspective_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Perspective not found")
+    return row["project_id"]
 
 HISTORY_LIMIT = 20
 
@@ -707,6 +863,35 @@ def _apply_transaction_rows(con, before: dict, after: dict):
                 (d["id"], d["fromId"], d["toId"], d["reason"]),
             )
 
+def _assert_transaction_project_scope(con, project_id: str, before: dict, after: dict):
+    for milestone in before["milestones"] + after["milestones"]:
+        goal_id = milestone.get("goalId")
+        row = con.execute("SELECT project_id FROM pages WHERE id = ?", (goal_id,)).fetchone()
+        if not row or row["project_id"] != project_id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Transaction milestone is outside this project")
+
+    milestone_ids = {
+        m["id"]
+        for m in before["milestones"] + after["milestones"]
+        if m.get("id")
+    }
+    dep_endpoint_ids = {
+        endpoint
+        for dep in before["dependencies"] + after["dependencies"]
+        for endpoint in (dep.get("fromId"), dep.get("toId"))
+        if endpoint
+    }
+    current_ms = _ms_by_id(con, milestone_ids | dep_endpoint_ids)
+    after_ms = {m["id"]: m for m in after["milestones"] if m.get("id")}
+    for dep in before["dependencies"] + after["dependencies"]:
+        for endpoint in (dep.get("fromId"), dep.get("toId")):
+            milestone = after_ms.get(endpoint) or current_ms.get(endpoint)
+            if not milestone:
+                continue
+            row = con.execute("SELECT project_id FROM pages WHERE id = ?", (milestone["goalId"],)).fetchone()
+            if not row or row["project_id"] != project_id:
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "Transaction dependency is outside this project")
+
 def _push_history(con, project_id: str, transaction: dict, before: dict, after: dict):
     con.execute(
         "DELETE FROM transaction_history WHERE project_id = ? AND stack = 'redo'",
@@ -769,6 +954,7 @@ def _apply_transaction(con, project_id: str, transaction: TransactionPayload, re
     tx["id"] = tx.get("id") or str(uuid.uuid4())
     before = _normalize_tx_state(tx.get("before") or {})
     after = _normalize_tx_state(tx.get("after") or {})
+    _assert_transaction_project_scope(con, project_id, before, after)
     _assert_before_matches(con, before, after)
     _assert_final_state_valid(con, before, after)
     _apply_transaction_rows(con, before, after)
@@ -800,6 +986,7 @@ def _user(row) -> dict:
         "displayName": d["display_name"],
         "createdAt": d["created_at"],
         "googleOauth": bool(d["google_oauth"]),
+        "isSuperuser": bool(d.get("is_superuser", 0)),
     }
 
 def _hash_password(password: str) -> str:
@@ -934,13 +1121,16 @@ def me(user: dict = Depends(current_user)):
 
 # ── Projects ──────────────────────────────────────────────────────────────────
 @app.get("/projects")
-def list_projects():
+def list_projects(user: dict = Depends(current_user)):
     with _db() as con:
-        rows = con.execute("SELECT * FROM projects ORDER BY created_at").fetchall()
+        if user.get("isSuperuser"):
+            rows = con.execute("SELECT * FROM projects ORDER BY created_at").fetchall()
+        else:
+            rows = con.execute("SELECT * FROM projects WHERE user_id = ? ORDER BY created_at", (user["id"],)).fetchall()
     return [_project(r) for r in rows]
 
 @app.post("/projects", status_code=201)
-def create_project(data: ProjectIn):
+def create_project(data: ProjectIn, user: dict = Depends(current_user)):
     pid = data.id or str(uuid.uuid4())
     name = data.name.strip() or 'Untitled'
     metric = data.metric if data.metric in ('days', 'weeks', 'months', 'hours', 'order') else 'days'
@@ -948,17 +1138,17 @@ def create_project(data: ProjectIn):
         if con.execute("SELECT id FROM projects WHERE id = ?", (pid,)).fetchone():
             raise HTTPException(409, "Project already exists")
         con.execute(
-            "INSERT INTO projects (id, name, description, metric) VALUES (?, ?, ?, ?)",
-            (pid, name, data.description or '', metric),
+            "INSERT INTO projects (id, user_id, name, description, metric) VALUES (?, ?, ?, ?, ?)",
+            (pid, user["id"], name, data.description or '', metric),
         )
         row = con.execute("SELECT * FROM projects WHERE id = ?", (pid,)).fetchone()
+    _seed_defaults(pid)
     return _project(row)
 
 @app.patch("/projects/{project_id}")
-def update_project(project_id: str, data: ProjectPatch):
+def update_project(project_id: str, data: ProjectPatch, user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     with _db() as con:
-        if not con.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone():
-            raise HTTPException(404, "Project not found")
         fields, values = [], []
         if data.name is not None:
             fields.append("name = ?");  values.append(data.name.strip() or 'Untitled')
@@ -973,10 +1163,9 @@ def update_project(project_id: str, data: ProjectPatch):
     return _project(row)
 
 @app.get("/projects/{project_id}/stats")
-def get_project_stats(project_id: str):
+def get_project_stats(project_id: str, user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     with _db() as con:
-        if not con.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone():
-            raise HTTPException(404, "Project not found")
         goals = con.execute(
             "SELECT COUNT(*) FROM pages WHERE project_id = ?", (project_id,)
         ).fetchone()[0]
@@ -1014,10 +1203,9 @@ def get_project_stats(project_id: str):
     }
 
 @app.delete("/projects/{project_id}", status_code=204)
-def delete_project(project_id: str):
+def delete_project(project_id: str, user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     with _db() as con:
-        if not con.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone():
-            raise HTTPException(404, "Project not found")
         # Cascade: goals and their milestones/deadlines/assignments
         goal_rows = con.execute("SELECT id FROM pages WHERE project_id = ?", (project_id,)).fetchall()
         goal_ids = [r["id"] for r in goal_rows]
@@ -1049,7 +1237,8 @@ def delete_project(project_id: str):
 
 # ── Pages (goals) ─────────────────────────────────────────────────────────────
 @app.get("/pages")
-def list_pages(project_id: str = Query(default='default')):
+def list_pages(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     with _db() as con:
         rows = con.execute(
             "SELECT * FROM pages WHERE project_id = ? ORDER BY order_idx", (project_id,)
@@ -1057,7 +1246,8 @@ def list_pages(project_id: str = Query(default='default')):
     return [_page(r) for r in rows]
 
 @app.post("/pages", status_code=201)
-def create_page(data: PageIn, project_id: str = Query(default='default')):
+def create_page(data: PageIn, project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     pid = data.id or str(uuid.uuid4())
     with _db() as con:
         if con.execute("SELECT id FROM pages WHERE id = ?", (pid,)).fetchone():
@@ -1072,10 +1262,9 @@ def create_page(data: PageIn, project_id: str = Query(default='default')):
     return {"id": pid, "html": data.html, "title": data.title, "collapsed": data.collapsed}
 
 @app.patch("/pages/{page_id}")
-def update_page(page_id: str, data: PagePatch):
+def update_page(page_id: str, data: PagePatch, user: dict = Depends(current_user)):
     with _db() as con:
-        if not con.execute("SELECT id FROM pages WHERE id = ?", (page_id,)).fetchone():
-            raise HTTPException(404, "Page not found")
+        assert_project_access(_project_id_for_page(con, page_id), user)
         fields, values = [], []
         if data.html is not None:      fields.append("html = ?");      values.append(data.html)
         if data.title is not None:     fields.append("title = ?");     values.append(data.title)
@@ -1086,25 +1275,31 @@ def update_page(page_id: str, data: PagePatch):
     return _page(row)
 
 @app.delete("/pages/{page_id}", status_code=204)
-def delete_page(page_id: str):
+def delete_page(page_id: str, user: dict = Depends(current_user)):
     with _db() as con:
-        if not con.execute("SELECT id FROM pages WHERE id = ?", (page_id,)).fetchone():
-            raise HTTPException(404, "Page not found")
+        assert_project_access(_project_id_for_page(con, page_id), user)
         con.execute("DELETE FROM pages WHERE id = ?", (page_id,))
 
 @app.put("/pages/order")
-def reorder_pages(data: OrderIn):
+def reorder_pages(data: OrderIn, user: dict = Depends(current_user)):
     with _db() as con:
+        project_ids = set()
         for i, pid in enumerate(data.ids):
-            if not con.execute("SELECT id FROM pages WHERE id = ?", (pid,)).fetchone():
+            row = con.execute("SELECT project_id FROM pages WHERE id = ?", (pid,)).fetchone()
+            if not row:
                 raise HTTPException(404, f"Page {pid} not found")
+            project_ids.add(row["project_id"])
+            assert_project_access(row["project_id"], user)
             con.execute("UPDATE pages SET order_idx = ? WHERE id = ?", (i, pid))
+        if len(project_ids) > 1:
+            raise HTTPException(400, "Cannot reorder pages across projects")
     return {"ok": True}
 
 
 # ── Dimensions ────────────────────────────────────────────────────────────────
 @app.get("/dimensions")
-def list_dimensions(project_id: str = Query(default='default')):
+def list_dimensions(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     with _db() as con:
         rows = con.execute(
             "SELECT * FROM dimensions WHERE project_id = ?", (project_id,)
@@ -1112,7 +1307,8 @@ def list_dimensions(project_id: str = Query(default='default')):
     return [dict(r) for r in rows]
 
 @app.post("/dimensions", status_code=201)
-def create_dimension(data: DimensionIn, project_id: str = Query(default='default')):
+def create_dimension(data: DimensionIn, project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     did = data.id or str(uuid.uuid4())
     with _db() as con:
         if con.execute("SELECT id FROM dimensions WHERE id = ?", (did,)).fetchone():
@@ -1121,10 +1317,9 @@ def create_dimension(data: DimensionIn, project_id: str = Query(default='default
     return {"id": did, "name": data.name, "project_id": project_id}
 
 @app.patch("/dimensions/{dim_id}")
-def update_dimension(dim_id: str, data: DimensionPatch):
+def update_dimension(dim_id: str, data: DimensionPatch, user: dict = Depends(current_user)):
     with _db() as con:
-        if not con.execute("SELECT id FROM dimensions WHERE id = ?", (dim_id,)).fetchone():
-            raise HTTPException(404, "Dimension not found")
+        assert_project_access(_project_id_for_dimension(con, dim_id), user)
         fields, values = [], []
         if data.name is not None:
             fields.append("name = ?")
@@ -1135,10 +1330,9 @@ def update_dimension(dim_id: str, data: DimensionPatch):
     return dict(row)
 
 @app.delete("/dimensions/{dim_id}", status_code=204)
-def delete_dimension(dim_id: str):
+def delete_dimension(dim_id: str, user: dict = Depends(current_user)):
     with _db() as con:
-        if not con.execute("SELECT id FROM dimensions WHERE id = ?", (dim_id,)).fetchone():
-            raise HTTPException(404, "Dimension not found")
+        assert_project_access(_project_id_for_dimension(con, dim_id), user)
         con.execute("DELETE FROM assignments WHERE dimension_id = ?", (dim_id,))
         con.execute("DELETE FROM categories WHERE dimension_id = ?", (dim_id,))
         con.execute("DELETE FROM dimensions WHERE id = ?", (dim_id,))
@@ -1146,7 +1340,8 @@ def delete_dimension(dim_id: str):
 
 # ── Categories ────────────────────────────────────────────────────────────────
 @app.get("/categories")
-def list_all_categories(project_id: str = Query(default='default')):
+def list_all_categories(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     with _db() as con:
         rows = con.execute(
             """SELECT * FROM categories
@@ -1157,13 +1352,12 @@ def list_all_categories(project_id: str = Query(default='default')):
     return [_cat(r) for r in rows]
 
 @app.post("/dimensions/{dim_id}/categories", status_code=201)
-def create_category(dim_id: str, data: CategoryIn):
+def create_category(dim_id: str, data: CategoryIn, user: dict = Depends(current_user)):
     if not data.name.strip():
         raise HTTPException(400, "Category name required")
     cid = data.id or str(uuid.uuid4())
     with _db() as con:
-        if not con.execute("SELECT id FROM dimensions WHERE id = ?", (dim_id,)).fetchone():
-            raise HTTPException(404, "Dimension not found")
+        assert_project_access(_project_id_for_dimension(con, dim_id), user)
         max_ord = con.execute(
             "SELECT COALESCE(MAX(order_idx), -1) FROM categories WHERE dimension_id = ?", (dim_id,)
         ).fetchone()[0]
@@ -1175,20 +1369,23 @@ def create_category(dim_id: str, data: CategoryIn):
 
 
 @app.put("/categories/order")
-def reorder_categories(data: dict):
+def reorder_categories(data: dict, user: dict = Depends(current_user)):
     ids = data.get("ids", [])
     with _db() as con:
+        project_ids = set()
         for i, cid in enumerate(ids):
-            if not con.execute("SELECT id FROM categories WHERE id = ?", (cid,)).fetchone():
-                raise HTTPException(404, f"Category {cid} not found")
+            project_id = _project_id_for_category(con, cid)
+            project_ids.add(project_id)
+            assert_project_access(project_id, user)
             con.execute("UPDATE categories SET order_idx = ? WHERE id = ?", (i, cid))
+        if len(project_ids) > 1:
+            raise HTTPException(400, "Cannot reorder categories across projects")
     return {"ok": True}
 
 @app.patch("/categories/{cat_id}")
-def update_category(cat_id: str, data: CategoryPatch):
+def update_category(cat_id: str, data: CategoryPatch, user: dict = Depends(current_user)):
     with _db() as con:
-        if not con.execute("SELECT id FROM categories WHERE id = ?", (cat_id,)).fetchone():
-            raise HTTPException(404, "Category not found")
+        assert_project_access(_project_id_for_category(con, cat_id), user)
         fields, values = [], []
         if data.name is not None:  fields.append("name = ?");  values.append(data.name.strip())
         if data.color is not None: fields.append("color = ?"); values.append(data.color)
@@ -1198,17 +1395,17 @@ def update_category(cat_id: str, data: CategoryPatch):
     return _cat(row)
 
 @app.delete("/categories/{cat_id}", status_code=204)
-def delete_category(cat_id: str):
+def delete_category(cat_id: str, user: dict = Depends(current_user)):
     with _db() as con:
-        if not con.execute("SELECT id FROM categories WHERE id = ?", (cat_id,)).fetchone():
-            raise HTTPException(404, "Category not found")
+        assert_project_access(_project_id_for_category(con, cat_id), user)
         con.execute("DELETE FROM assignments WHERE category_id = ?", (cat_id,))
         con.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
 
 
 # ── Assignments ───────────────────────────────────────────────────────────────
 @app.get("/assignments")
-def list_assignments(project_id: str = Query(default='default')):
+def list_assignments(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     with _db() as con:
         rows = con.execute(
             """SELECT * FROM assignments
@@ -1219,8 +1416,14 @@ def list_assignments(project_id: str = Query(default='default')):
     return [_assign(r) for r in rows]
 
 @app.put("/goals/{goal_id}/assign/{dim_id}")
-def assign_category(goal_id: str, dim_id: str, data: AssignIn):
+def assign_category(goal_id: str, dim_id: str, data: AssignIn, user: dict = Depends(current_user)):
     with _db() as con:
+        goal_project_id = _project_id_for_page(con, goal_id)
+        dim_project_id = _project_id_for_dimension(con, dim_id)
+        cat_project_id = _project_id_for_category(con, data.categoryId)
+        if len({goal_project_id, dim_project_id, cat_project_id}) != 1:
+            raise HTTPException(400, "Assignment resources must belong to the same project")
+        assert_project_access(goal_project_id, user)
         existing = con.execute(
             "SELECT category_id, order_idx FROM assignments WHERE goal_id = ? AND dimension_id = ?",
             (goal_id, dim_id),
@@ -1239,13 +1442,20 @@ def assign_category(goal_id: str, dim_id: str, data: AssignIn):
     return {"goalId": goal_id, "dimensionId": dim_id, "categoryId": data.categoryId, "orderIdx": order_idx}
 
 @app.put("/assignments/order")
-def reorder_assignments(data: dict):
+def reorder_assignments(data: dict, user: dict = Depends(current_user)):
     dim_id = data.get("dimensionId")
     cat_id = data.get("categoryId")
     goal_ids = data.get("goalIds", [])
     if not dim_id:
         raise HTTPException(400, "dimensionId is required")
     with _db() as con:
+        project_id = _project_id_for_dimension(con, dim_id)
+        assert_project_access(project_id, user)
+        if cat_id is not None and _project_id_for_category(con, cat_id) != project_id:
+            raise HTTPException(400, "Category does not belong to dimension project")
+        for goal_id in goal_ids:
+            if _project_id_for_page(con, goal_id) != project_id:
+                raise HTTPException(400, "Goal does not belong to dimension project")
         if cat_id is None:
             return {"ok": True}
         for i, goal_id in enumerate(goal_ids):
@@ -1260,8 +1470,13 @@ def reorder_assignments(data: dict):
     return {"ok": True}
 
 @app.delete("/goals/{goal_id}/assign/{dim_id}", status_code=204)
-def unassign_category(goal_id: str, dim_id: str):
+def unassign_category(goal_id: str, dim_id: str, user: dict = Depends(current_user)):
     with _db() as con:
+        goal_project_id = _project_id_for_page(con, goal_id)
+        dim_project_id = _project_id_for_dimension(con, dim_id)
+        if goal_project_id != dim_project_id:
+            raise HTTPException(400, "Goal and dimension must belong to the same project")
+        assert_project_access(goal_project_id, user)
         con.execute(
             "DELETE FROM assignments WHERE goal_id = ? AND dimension_id = ?",
             (goal_id, dim_id),
@@ -1270,7 +1485,8 @@ def unassign_category(goal_id: str, dim_id: str):
 
 # ── Saved filters ─────────────────────────────────────────────────────────────
 @app.get("/filters")
-def list_filters(project_id: str = Query(default='default')):
+def list_filters(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     with _db() as con:
         rows = con.execute(
             "SELECT * FROM saved_filters WHERE project_id = ? ORDER BY name COLLATE NOCASE", (project_id,)
@@ -1278,7 +1494,8 @@ def list_filters(project_id: str = Query(default='default')):
     return [_filter(r) for r in rows]
 
 @app.post("/filters", status_code=201)
-def create_filter(data: SavedFilterIn, project_id: str = Query(default='default')):
+def create_filter(data: SavedFilterIn, project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     fid = data.id or str(uuid.uuid4())
     name = data.name.strip() or "Untitled filter"
     gate, selections_json, quick_key = _normalize_filter_payload(data)
@@ -1297,10 +1514,9 @@ def create_filter(data: SavedFilterIn, project_id: str = Query(default='default'
     return _filter(row)
 
 @app.patch("/filters/{filter_id}")
-def update_filter(filter_id: str, data: SavedFilterPatch):
+def update_filter(filter_id: str, data: SavedFilterPatch, user: dict = Depends(current_user)):
     with _db() as con:
-        if not con.execute("SELECT id FROM saved_filters WHERE id = ?", (filter_id,)).fetchone():
-            raise HTTPException(404, "Filter not found")
+        assert_project_access(_project_id_for_filter(con, filter_id), user)
         fields, values = [], []
         if data.name is not None:
             fields.append("name = ?")
@@ -1327,16 +1543,16 @@ def update_filter(filter_id: str, data: SavedFilterPatch):
     return _filter(row)
 
 @app.delete("/filters/{filter_id}", status_code=204)
-def delete_filter(filter_id: str):
+def delete_filter(filter_id: str, user: dict = Depends(current_user)):
     with _db() as con:
-        if not con.execute("SELECT id FROM saved_filters WHERE id = ?", (filter_id,)).fetchone():
-            raise HTTPException(404, "Filter not found")
+        assert_project_access(_project_id_for_filter(con, filter_id), user)
         con.execute("DELETE FROM saved_filters WHERE id = ?", (filter_id,))
 
 
 # ── Schedule perspectives ─────────────────────────────────────────────────────
 @app.get("/schedule-perspectives")
-def list_schedule_perspectives(project_id: str = Query(default='default')):
+def list_schedule_perspectives(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     with _db() as con:
         rows = con.execute(
             "SELECT * FROM schedule_perspectives WHERE project_id = ? ORDER BY name COLLATE NOCASE", (project_id,)
@@ -1344,7 +1560,8 @@ def list_schedule_perspectives(project_id: str = Query(default='default')):
     return [_schedule_perspective(r) for r in rows]
 
 @app.post("/schedule-perspectives", status_code=201)
-def create_schedule_perspective(data: SchedulePerspectiveIn, project_id: str = Query(default='default')):
+def create_schedule_perspective(data: SchedulePerspectiveIn, project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     pid = data.id or str(uuid.uuid4())
     name = data.name.strip() or "Untitled perspective"
     with _db() as con:
@@ -1358,10 +1575,9 @@ def create_schedule_perspective(data: SchedulePerspectiveIn, project_id: str = Q
     return _schedule_perspective(row)
 
 @app.patch("/schedule-perspectives/{perspective_id}")
-def update_schedule_perspective(perspective_id: str, data: SchedulePerspectivePatch):
+def update_schedule_perspective(perspective_id: str, data: SchedulePerspectivePatch, user: dict = Depends(current_user)):
     with _db() as con:
-        if not con.execute("SELECT id FROM schedule_perspectives WHERE id = ?", (perspective_id,)).fetchone():
-            raise HTTPException(404, "Perspective not found")
+        assert_project_access(_project_id_for_schedule_perspective(con, perspective_id), user)
         fields, values = [], []
         if data.name is not None:
             fields.append("name = ?")
@@ -1375,16 +1591,16 @@ def update_schedule_perspective(perspective_id: str, data: SchedulePerspectivePa
     return _schedule_perspective(row)
 
 @app.delete("/schedule-perspectives/{perspective_id}", status_code=204)
-def delete_schedule_perspective(perspective_id: str):
+def delete_schedule_perspective(perspective_id: str, user: dict = Depends(current_user)):
     with _db() as con:
-        if not con.execute("SELECT id FROM schedule_perspectives WHERE id = ?", (perspective_id,)).fetchone():
-            raise HTTPException(404, "Perspective not found")
+        assert_project_access(_project_id_for_schedule_perspective(con, perspective_id), user)
         con.execute("DELETE FROM schedule_perspectives WHERE id = ?", (perspective_id,))
 
 
 # ── Classification perspectives ───────────────────────────────────────────────
 @app.get("/classification-perspectives")
-def list_classification_perspectives(project_id: str = Query(default='default')):
+def list_classification_perspectives(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     with _db() as con:
         rows = con.execute(
             "SELECT * FROM classification_perspectives WHERE project_id = ? ORDER BY name COLLATE NOCASE", (project_id,)
@@ -1392,7 +1608,8 @@ def list_classification_perspectives(project_id: str = Query(default='default'))
     return [_classification_perspective(r) for r in rows]
 
 @app.post("/classification-perspectives", status_code=201)
-def create_classification_perspective(data: ClassificationPerspectiveIn, project_id: str = Query(default='default')):
+def create_classification_perspective(data: ClassificationPerspectiveIn, project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     pid = data.id or str(uuid.uuid4())
     name = data.name.strip() or "Untitled perspective"
     with _db() as con:
@@ -1406,10 +1623,9 @@ def create_classification_perspective(data: ClassificationPerspectiveIn, project
     return _classification_perspective(row)
 
 @app.patch("/classification-perspectives/{perspective_id}")
-def update_classification_perspective(perspective_id: str, data: ClassificationPerspectivePatch):
+def update_classification_perspective(perspective_id: str, data: ClassificationPerspectivePatch, user: dict = Depends(current_user)):
     with _db() as con:
-        if not con.execute("SELECT id FROM classification_perspectives WHERE id = ?", (perspective_id,)).fetchone():
-            raise HTTPException(404, "Perspective not found")
+        assert_project_access(_project_id_for_classification_perspective(con, perspective_id), user)
         fields, values = [], []
         if data.name is not None:
             fields.append("name = ?")
@@ -1423,26 +1639,28 @@ def update_classification_perspective(perspective_id: str, data: ClassificationP
     return _classification_perspective(row)
 
 @app.delete("/classification-perspectives/{perspective_id}", status_code=204)
-def delete_classification_perspective(perspective_id: str):
+def delete_classification_perspective(perspective_id: str, user: dict = Depends(current_user)):
     with _db() as con:
-        if not con.execute("SELECT id FROM classification_perspectives WHERE id = ?", (perspective_id,)).fetchone():
-            raise HTTPException(404, "Perspective not found")
+        assert_project_access(_project_id_for_classification_perspective(con, perspective_id), user)
         con.execute("DELETE FROM classification_perspectives WHERE id = ?", (perspective_id,))
 
 
 # ── Transactions ──────────────────────────────────────────────────────────────
 @app.get("/transactions/history")
-def get_transaction_history(project_id: str = Query(default='default')):
+def get_transaction_history(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     with _db() as con:
         return _history_summary(con, project_id)
 
 @app.post("/transactions")
-def apply_transaction(data: TransactionApplyIn, project_id: str = Query(default='default')):
+def apply_transaction(data: TransactionApplyIn, project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     with _db() as con:
         return _apply_transaction(con, project_id, data.transaction)
 
 @app.post("/transactions/undo")
-def undo_transaction(project_id: str = Query(default='default')):
+def undo_transaction(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     with _db() as con:
         row = con.execute(
             """
@@ -1467,7 +1685,8 @@ def undo_transaction(project_id: str = Query(default='default')):
         return {"ok": True, "transaction": transaction, "history": _history_summary(con, project_id)}
 
 @app.post("/transactions/redo")
-def redo_transaction(project_id: str = Query(default='default')):
+def redo_transaction(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     with _db() as con:
         row = con.execute(
             """
@@ -1494,7 +1713,8 @@ def redo_transaction(project_id: str = Query(default='default')):
 
 # ── Milestones ────────────────────────────────────────────────────────────────
 @app.get("/milestones")
-def list_milestones(project_id: str = Query(default='default')):
+def list_milestones(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     with _db() as con:
         rows = con.execute(
             """SELECT * FROM milestones
@@ -1505,9 +1725,10 @@ def list_milestones(project_id: str = Query(default='default')):
     return [_ms(r) for r in rows]
 
 @app.post("/milestones", status_code=201)
-def create_milestone(data: MilestoneIn):
+def create_milestone(data: MilestoneIn, user: dict = Depends(current_user)):
     mid = data.id or str(uuid.uuid4())
     with _db() as con:
+        assert_project_access(_project_id_for_page(con, data.goal_id), user)
         con.execute(
             "INSERT INTO milestones (id, goal_id, start_col, duration, title, color) VALUES (?,?,?,?,?,?)",
             (mid, data.goal_id, data.start_col, max(1, data.duration), data.title, data.color),
@@ -1517,12 +1738,13 @@ def create_milestone(data: MilestoneIn):
 
 # Registered before /{ms_id} so "batch" is not captured as a path param
 @app.put("/milestones/batch")
-def batch_update_milestones(data: MilestoneBatch):
+def batch_update_milestones(data: MilestoneBatch, user: dict = Depends(current_user)):
     with _db() as con:
         for u in data.updates:
             mid = u.get("id")
             if not mid:
                 continue
+            assert_project_access(_project_id_for_milestone(con, mid), user)
             fields, values = [], []
             if "startCol" in u: fields.append("start_col = ?"); values.append(u["startCol"])
             if "duration" in u: fields.append("duration = ?");  values.append(max(1, u["duration"]))
@@ -1533,10 +1755,9 @@ def batch_update_milestones(data: MilestoneBatch):
     return {"ok": True}
 
 @app.patch("/milestones/{ms_id}")
-def update_milestone(ms_id: str, data: MilestonePatch):
+def update_milestone(ms_id: str, data: MilestonePatch, user: dict = Depends(current_user)):
     with _db() as con:
-        if not con.execute("SELECT id FROM milestones WHERE id = ?", (ms_id,)).fetchone():
-            raise HTTPException(404, "Milestone not found")
+        assert_project_access(_project_id_for_milestone(con, ms_id), user)
         fields, values = [], []
         if data.start_col is not None: fields.append("start_col = ?"); values.append(data.start_col)
         if data.duration  is not None: fields.append("duration = ?");  values.append(max(1, data.duration))
@@ -1548,14 +1769,16 @@ def update_milestone(ms_id: str, data: MilestonePatch):
     return _ms(row)
 
 @app.delete("/milestones/{ms_id}", status_code=204)
-def delete_milestone(ms_id: str):
+def delete_milestone(ms_id: str, user: dict = Depends(current_user)):
     with _db() as con:
+        assert_project_access(_project_id_for_milestone(con, ms_id), user)
         con.execute("DELETE FROM milestones WHERE id = ?", (ms_id,))
 
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 @app.get("/dependencies")
-def list_dependencies(project_id: str = Query(default='default')):
+def list_dependencies(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     with _db() as con:
         rows = con.execute(
             """SELECT * FROM dependencies WHERE from_id IN (
@@ -1566,10 +1789,15 @@ def list_dependencies(project_id: str = Query(default='default')):
     return [_dep(r) for r in rows]
 
 @app.post("/dependencies", status_code=201)
-def create_dependency(data: DependencyIn):
+def create_dependency(data: DependencyIn, user: dict = Depends(current_user)):
     did = data.id or str(uuid.uuid4())
     reason = data.reason or ''
     with _db() as con:
+        from_project_id = _project_id_for_milestone(con, data.from_id)
+        to_project_id = _project_id_for_milestone(con, data.to_id)
+        if from_project_id != to_project_id:
+            raise HTTPException(400, "Dependency endpoints must belong to the same project")
+        assert_project_access(from_project_id, user)
         try:
             con.execute("INSERT INTO dependencies (id, from_id, to_id, reason) VALUES (?, ?, ?, ?)",
                         (did, data.from_id, data.to_id, reason))
@@ -1578,8 +1806,9 @@ def create_dependency(data: DependencyIn):
     return _dep({"id": did, "from_id": data.from_id, "to_id": data.to_id, "reason": reason})
 
 @app.patch("/dependencies/{dep_id}")
-def update_dependency(dep_id: str, data: DependencyPatchIn):
+def update_dependency(dep_id: str, data: DependencyPatchIn, user: dict = Depends(current_user)):
     with _db() as con:
+        assert_project_access(_project_id_for_dependency(con, dep_id), user)
         con.execute("UPDATE dependencies SET reason = ? WHERE id = ?", (data.reason, dep_id))
         row = con.execute("SELECT * FROM dependencies WHERE id = ?", (dep_id,)).fetchone()
     if not row:
@@ -1587,14 +1816,16 @@ def update_dependency(dep_id: str, data: DependencyPatchIn):
     return _dep(row)
 
 @app.delete("/dependencies/{dep_id}", status_code=204)
-def delete_dependency(dep_id: str):
+def delete_dependency(dep_id: str, user: dict = Depends(current_user)):
     with _db() as con:
+        assert_project_access(_project_id_for_dependency(con, dep_id), user)
         con.execute("DELETE FROM dependencies WHERE id = ?", (dep_id,))
 
 
 # ── Deadlines ─────────────────────────────────────────────────────────────────
 @app.get("/deadlines")
-def list_deadlines(project_id: str = Query(default='default')):
+def list_deadlines(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
     with _db() as con:
         rows = con.execute(
             "SELECT * FROM deadlines WHERE goal_id IN (SELECT id FROM pages WHERE project_id = ?)",
@@ -1603,8 +1834,9 @@ def list_deadlines(project_id: str = Query(default='default')):
     return [_dl(r) for r in rows]
 
 @app.put("/deadlines/{goal_id}")
-def set_deadline(goal_id: str, data: DeadlineColIn):
+def set_deadline(goal_id: str, data: DeadlineColIn, user: dict = Depends(current_user)):
     with _db() as con:
+        assert_project_access(_project_id_for_page(con, goal_id), user)
         existing = con.execute("SELECT id FROM deadlines WHERE goal_id = ?", (goal_id,)).fetchone()
         if existing:
             con.execute("UPDATE deadlines SET col = ? WHERE goal_id = ?", (data.col, goal_id))
@@ -1615,18 +1847,18 @@ def set_deadline(goal_id: str, data: DeadlineColIn):
     return _dl(row)
 
 @app.delete("/deadlines/{goal_id}", status_code=204)
-def remove_deadline(goal_id: str):
+def remove_deadline(goal_id: str, user: dict = Depends(current_user)):
     with _db() as con:
+        assert_project_access(_project_id_for_page(con, goal_id), user)
         con.execute("DELETE FROM deadlines WHERE goal_id = ?", (goal_id,))
 
 
 # ── Full database export ───────────────────────────────────────────────────────
 @app.get("/export/db")
-def export_database():
-    def rows(con, table, json_cols=()):
-        all_rows = con.execute(f"SELECT * FROM {table}").fetchall()
+def export_database(user: dict = Depends(current_user)):
+    def rows(query_rows, json_cols=()):
         out = []
-        for row in all_rows:
+        for row in query_rows:
             d = dict(row)
             for col in json_cols:
                 if col in d and d[col]:
@@ -1638,21 +1870,67 @@ def export_database():
         return out
 
     with _db() as con:
+        if user.get("isSuperuser"):
+            projects = con.execute("SELECT * FROM projects").fetchall()
+            exported_users = [_user(row) for row in con.execute("SELECT * FROM users").fetchall()]
+        else:
+            projects = con.execute("SELECT * FROM projects WHERE user_id = ?", (user["id"],)).fetchall()
+            exported_users = [user]
+        project_ids = [row["id"] for row in projects]
+        if project_ids:
+            project_ph = ','.join('?' for _ in project_ids)
+            pages = con.execute(f"SELECT * FROM pages WHERE project_id IN ({project_ph})", project_ids).fetchall()
+            dimensions = con.execute(f"SELECT * FROM dimensions WHERE project_id IN ({project_ph})", project_ids).fetchall()
+            saved_filters = con.execute(f"SELECT * FROM saved_filters WHERE project_id IN ({project_ph})", project_ids).fetchall()
+            schedule_perspectives = con.execute(f"SELECT * FROM schedule_perspectives WHERE project_id IN ({project_ph})", project_ids).fetchall()
+            classification_perspectives = con.execute(f"SELECT * FROM classification_perspectives WHERE project_id IN ({project_ph})", project_ids).fetchall()
+            transaction_history = con.execute(f"SELECT * FROM transaction_history WHERE project_id IN ({project_ph})", project_ids).fetchall()
+        else:
+            pages = dimensions = saved_filters = schedule_perspectives = classification_perspectives = transaction_history = []
+
+        page_ids = [row["id"] for row in pages]
+        dim_ids = [row["id"] for row in dimensions]
+
+        if dim_ids:
+            dim_ph = ','.join('?' for _ in dim_ids)
+            categories = con.execute(f"SELECT * FROM categories WHERE dimension_id IN ({dim_ph})", dim_ids).fetchall()
+            assignments = con.execute(f"SELECT * FROM assignments WHERE dimension_id IN ({dim_ph})", dim_ids).fetchall()
+        else:
+            categories = assignments = []
+
+        if page_ids:
+            page_ph = ','.join('?' for _ in page_ids)
+            milestones = con.execute(f"SELECT * FROM milestones WHERE goal_id IN ({page_ph})", page_ids).fetchall()
+            deadlines = con.execute(f"SELECT * FROM deadlines WHERE goal_id IN ({page_ph})", page_ids).fetchall()
+        else:
+            milestones = deadlines = []
+
+        milestone_ids = [row["id"] for row in milestones]
+        if milestone_ids:
+            ms_ph = ','.join('?' for _ in milestone_ids)
+            dependencies = con.execute(
+                f"SELECT * FROM dependencies WHERE from_id IN ({ms_ph}) OR to_id IN ({ms_ph})",
+                milestone_ids + milestone_ids,
+            ).fetchall()
+        else:
+            dependencies = []
+
         return {
             "exported_at": con.execute("SELECT datetime('now')").fetchone()[0] + "Z",
             "version": 1,
             "tables": {
-                "projects":                   rows(con, "projects"),
-                "pages":                      rows(con, "pages"),
-                "dimensions":                 rows(con, "dimensions"),
-                "categories":                 rows(con, "categories"),
-                "assignments":                rows(con, "assignments"),
-                "milestones":                 rows(con, "milestones"),
-                "dependencies":               rows(con, "dependencies"),
-                "deadlines":                  rows(con, "deadlines"),
-                "saved_filters":              rows(con, "saved_filters",              ("selections_json",)),
-                "schedule_perspectives":      rows(con, "schedule_perspectives",      ("state_json",)),
-                "classification_perspectives": rows(con, "classification_perspectives", ("state_json",)),
-                "transaction_history":        rows(con, "transaction_history",        ("transaction_json", "before_json", "after_json")),
+                "users":                      exported_users,
+                "projects":                   rows(projects),
+                "pages":                      rows(pages),
+                "dimensions":                 rows(dimensions),
+                "categories":                 rows(categories),
+                "assignments":                rows(assignments),
+                "milestones":                 rows(milestones),
+                "dependencies":               rows(dependencies),
+                "deadlines":                  rows(deadlines),
+                "saved_filters":              rows(saved_filters,              ("selections_json",)),
+                "schedule_perspectives":      rows(schedule_perspectives,      ("state_json",)),
+                "classification_perspectives": rows(classification_perspectives, ("state_json",)),
+                "transaction_history":        rows(transaction_history,        ("transaction_json", "before_json", "after_json")),
             },
         }

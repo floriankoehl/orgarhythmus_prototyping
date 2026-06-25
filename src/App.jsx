@@ -7,7 +7,8 @@ import BrainstormV2 from './components/BrainstormV2'
 import GoalPopup from './components/GoalPopup'
 import ProjectsPage from './components/ProjectsPage'
 import ProjectDashboard from './components/ProjectDashboard'
-import { api, setProjectId } from './api'
+import AuthPage from './components/AuthPage'
+import { api, authApi, hasAuthSession, setProjectId } from './api'
 import styles from './App.module.css'
 
 // ── Success toast ─────────────────────────────────────────────────────────────
@@ -43,6 +44,8 @@ function Toast({ toast, onOpen, onDismiss }) {
 
 // ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
+  const [authState, setAuthState]     = useState(hasAuthSession() ? 'loading' : 'anonymous')
+  const [currentUser, setCurrentUser] = useState(null)
   const [view, setView]               = useState(0)
   const [activeProject, setActiveProject] = useState(null)
   const [appScreen, setAppScreen]     = useState('home') // 'home' | 'workspace'
@@ -50,6 +53,52 @@ export default function App() {
   const [refreshKey, setRefreshKey]   = useState(0)
   const [popupGoalId, setPopupGoalId] = useState(null)
   const [toast, setToast]             = useState(null)
+
+  useEffect(() => {
+    let alive = true
+    if (!hasAuthSession()) {
+      setAuthState('anonymous')
+      return () => { alive = false }
+    }
+    authApi.me()
+      .then(user => {
+        if (!alive) return
+        setCurrentUser(user)
+        setAuthState('authenticated')
+      })
+      .catch(() => {
+        authApi.logout()
+        if (!alive) return
+        setCurrentUser(null)
+        setAuthState('anonymous')
+      })
+    return () => { alive = false }
+  }, [])
+
+  const handleAuthenticated = (user) => {
+    setCurrentUser(user)
+    setActiveProject(null)
+    setGoals([])
+    setToast(null)
+    setPopupGoalId(null)
+    setView(0)
+    setRefreshKey(0)
+    setAppScreen('home')
+    setAuthState('authenticated')
+  }
+
+  const handleLogout = () => {
+    authApi.logout()
+    setCurrentUser(null)
+    setActiveProject(null)
+    setGoals([])
+    setToast(null)
+    setPopupGoalId(null)
+    setView(0)
+    setRefreshKey(0)
+    setAppScreen('home')
+    setAuthState('anonymous')
+  }
 
   const openProject = (project) => {
     setProjectId(project.id)
@@ -128,10 +177,26 @@ export default function App() {
 
   const popupGoal = goals.find(g => g.id === popupGoalId)
 
+  if (authState === 'loading') {
+    return (
+      <div className={styles.app}>
+        <div className={styles.loading}>Loading...</div>
+      </div>
+    )
+  }
+
+  if (authState !== 'authenticated') {
+    return (
+      <div className={styles.app}>
+        <AuthPage onAuthenticated={handleAuthenticated} />
+      </div>
+    )
+  }
+
   if (appScreen === 'home') {
     return (
       <div className={styles.app}>
-        <ProjectsPage onOpenProject={openProject} />
+        <ProjectsPage onOpenProject={openProject} currentUser={currentUser} onLogout={handleLogout} />
       </div>
     )
   }
