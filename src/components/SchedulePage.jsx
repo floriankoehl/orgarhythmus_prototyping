@@ -177,6 +177,11 @@ function getOverlapViolation(msList, movedIds = new Set()) {
   return null
 }
 
+function getBlockingMilestoneIds(ids, movedIds = new Set()) {
+  const blockers = ids.filter(id => !movedIds.has(id))
+  return blockers.length > 0 ? blockers : ids
+}
+
 function getMilestoneOrderViolation(beforeList, afterList, movedIds = new Set()) {
   const beforeById = Object.fromEntries(beforeList.map(m => [m.id, m]))
   const afterById = Object.fromEntries(afterList.map(m => [m.id, m]))
@@ -1138,8 +1143,6 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       setDependencies(deps)
       setDeadlines(dls)
       setTransactionHistory(history)
-      const priorityDim = dims.find(d => d.name === 'Priority')
-      if (priorityDim) setColorDimId(priorityDim.id)
     }).catch(console.error)
   }, [isActive])
 
@@ -1164,15 +1167,14 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const [spacing,     setSpacing]     = useState(DEFAULT_SPACING)
   const [hiddenCatIds, setHiddenCatIds] = useState(new Set())
   const [hiddenGoalsByLane, setHiddenGoalsByLane] = useState({})
+  const [revealedConflictGoalIds, setRevealedConflictGoalIds] = useState(new Set())
+  const [pendingConflictMilestoneIds, setPendingConflictMilestoneIds] = useState(new Set())
   const [warningPrompt, setWarningPrompt] = useState(null)
   const [blinkingDepIds, setBlinkingDepIds] = useState(new Set())
   const [blinkingMilestoneIds, setBlinkingMilestoneIds] = useState(new Set())
   const [autoSelectConflicts, setAutoSelectConflicts] = useState(true)
   const autoSelectConflictsRef = useRef(true)
   const [deleteDraft, setDeleteDraft] = useState(null)
-  const capturePerspectiveStateRef = useRef(null)
-  const restorePerspectiveStateRef = useRef(null)
-  const conflictRestoreTimerRef = useRef(null)
   const warningPromptTimerRef = useRef(null)
   const [dragOverGoalId, setDragOverGoalId] = useState(null)
   const [dragOverLaneCatId, setDragOverLaneCatId] = useState(null)
@@ -1180,7 +1182,6 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const [dragOverCatReorderId, setDragOverCatReorderId] = useState(null)
 
   useEffect(() => () => {
-    if (conflictRestoreTimerRef.current) window.clearTimeout(conflictRestoreTimerRef.current)
     if (warningPromptTimerRef.current) window.clearTimeout(warningPromptTimerRef.current)
   }, [])
 
@@ -1306,25 +1307,28 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   const showAllCategories = useCallback(() => setHiddenCatIds(new Set()), [])
 
-  const getConflictLaneKey = useCallback(goalId => {
-    if (activeLaneFilter) {
-      return filterMatchesGoal(activeLaneFilter, goalId, assignments) ? activeLaneFilter.id : UNASSIGNED_LANE
-    }
-    if (activeDimId) return assignments[goalId]?.[activeDimId] ?? UNASSIGNED_LANE
-    return null
-  }, [activeDimId, activeLaneFilter, assignments])
-
-  const presentConflictMilestones = useCallback(ids => {
+  const presentConflictMilestones = useCallback((ids, revealIds = ids) => {
     const idSet = new Set(ids)
-    const goalIds = milestonesRef.current.filter(m => idSet.has(m.id)).map(m => m.goalId)
-    if (goalIds.length === 0) return
-    const snapshot = capturePerspectiveStateRef.current?.()
-    if (conflictRestoreTimerRef.current) window.clearTimeout(conflictRestoreTimerRef.current)
+    const revealSet = new Set(revealIds)
+    const conflictMilestones = milestonesRef.current.filter(m => idSet.has(m.id))
+    const revealMilestones = milestonesRef.current.filter(m => revealSet.has(m.id))
+    const selectedRevealMilestones = revealMilestones.length ? revealMilestones : conflictMilestones
+    const goalIds = selectedRevealMilestones.map(m => m.goalId)
+    if (conflictMilestones.length === 0 || goalIds.length === 0) return
+    const hiddenMilestoneIds = conflictMilestones
+      .filter(m => !goalRowMapRef.current[m.goalId])
+      .map(m => m.id)
+    setPendingConflictMilestoneIds(new Set(hiddenMilestoneIds.length ? hiddenMilestoneIds : selectedRevealMilestones.map(m => m.id)))
+    setRevealedConflictGoalIds(prev => new Set([...prev, ...goalIds]))
     setHiddenCatIds(prev => {
       const next = new Set(prev)
       goalIds.forEach(goalId => {
-        const laneKey = getConflictLaneKey(goalId)
-        if (laneKey) next.delete(laneKey)
+        if (activeLaneFilter) {
+          next.delete(filterMatchesGoal(activeLaneFilter, goalId, assignments) ? activeLaneFilter.id : UNASSIGNED_LANE)
+        } else if (activeDimId) {
+          const catId = assignments[goalId]?.[activeDimId]
+          next.delete(catId ?? UNASSIGNED_LANE)
+        }
       })
       return next
     })
@@ -1349,12 +1353,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     }
     setSelectedIds(new Set())
     setSelectedDepIds(new Set())
-    if (snapshot) {
-      conflictRestoreTimerRef.current = window.setTimeout(() => {
-        restorePerspectiveStateRef.current?.(snapshot)
-      }, 3000)
-    }
-  }, [getConflictLaneKey])
+  }, [activeDimId, activeLaneFilter, assignments])
 
   const toggleSavedFilter = useCallback(filterId => {
     setActiveFilterIds(prev => prev.includes(filterId) ? prev.filter(id => id !== filterId) : [...prev, filterId])
@@ -1507,7 +1506,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       applyTransactionState(before, after)
       const detail = err?.detail
       if (detail?.type === 'overlap' && Array.isArray(detail.milestoneIds)) {
-        presentConflictMilestones(detail.milestoneIds)
+        const movedIds = new Set([...before.milestones, ...after.milestones].map(m => m.id))
+        presentConflictMilestones(detail.milestoneIds, getBlockingMilestoneIds(detail.milestoneIds, movedIds))
         showWarningPrompt({ title: 'Milestone overlap', message: detail.message, actions: 'close' })
       } else if (detail?.type === 'deadline') {
         showWarningPrompt({ title: 'Hard deadline', message: detail.message, actions: 'close' })
@@ -1518,7 +1518,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
           const dep = dependenciesRef.current.find(d => d.id === depId)
           if (dep) { milestoneIds.add(dep.fromId); milestoneIds.add(dep.toId) }
         })
-        presentConflictMilestones(milestoneIds)
+        const movedIds = new Set([...before.milestones, ...after.milestones].map(m => m.id))
+        presentConflictMilestones(milestoneIds, getBlockingMilestoneIds([...milestoneIds], movedIds))
         setBlinkingDepIds(new Set(depIds))
         window.setTimeout(() => setBlinkingDepIds(new Set()), 3000)
         showWarningPrompt({ title: 'Dependency violation', message: detail.message, actions: 'dependency', dependencyIds: depIds })
@@ -1582,11 +1583,12 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       const hasActiveFiltering = activeSavedFilters.length > 0 || quickFilters.length > 0
       if (!hasActiveFiltering) return goals
       return goals.filter(goal =>
+        revealedConflictGoalIds.has(goal.id) ||
         activeSavedFilters.some(filter => filterMatchesGoal(filter, goal.id, assignments)) ||
         quickFilters.some(filter => assignments[goal.id]?.[filter.dimId] === filter.catId)
       )
     },
-    [activeFilterIds, assignments, goals, quickFilters, savedFilters]
+    [activeFilterIds, assignments, goals, quickFilters, revealedConflictGoalIds, savedFilters]
   )
 
   // ── Row model ──────────────────────────────────────────────────────────────
@@ -1604,6 +1606,24 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   }, [rowItems])
   const goalRowMapRef = useRef({})
   goalRowMapRef.current = goalRowMap
+
+  useEffect(() => {
+    if (pendingConflictMilestoneIds.size === 0) return
+    const target = milestones.find(m => pendingConflictMilestoneIds.has(m.id) && goalRowMap[m.goalId])
+    if (!target) return
+    const row = goalRowMap[target.goalId]
+    requestAnimationFrame(() => {
+      const el = gridBodyRef.current
+      if (!el) return
+      const inset = Math.max(40, Math.floor(vpRef.current.h * 0.25))
+      const nextTop = Math.max(0, row.top - inset)
+      el.scrollTop = nextTop
+      scrollTopRef.current = el.scrollTop
+      if (leftBodyInnerRef.current) leftBodyInnerRef.current.style.transform = `translateY(${-el.scrollTop}px)`
+      setScrollTop(el.scrollTop)
+      setPendingConflictMilestoneIds(new Set())
+    })
+  }, [goalRowMap, milestones, pendingConflictMilestoneIds])
 
   const selectedGoalIds = useMemo(() => {
     const set = new Set()
@@ -1776,8 +1796,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const violationIds = useMemo(() => computeViolations(milestones, dependencies), [milestones, dependencies])
   const crucialDependencyIds = useMemo(() => getCrucialDependencyIds(dependencies), [dependencies])
 
-  const reportOverlapViolation = useCallback(ids => {
-    presentConflictMilestones(ids)
+  const reportOverlapViolation = useCallback((ids, revealIds = ids) => {
+    presentConflictMilestones(ids, revealIds)
     showWarningPrompt({
       title: 'Milestone overlap',
       message: 'Milestones in the same goal row cannot overlap or pass each other.',
@@ -1793,14 +1813,23 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     })
   }, [showWarningPrompt])
 
-  const reportDependencyViolations = useCallback(violations => {
+  const reportDependencyViolations = useCallback((violations, movedIds = new Set()) => {
     const depIds = violations.map(v => v.dep.id).filter(Boolean)
     const milestoneIds = new Set()
+    const revealIds = new Set()
     violations.forEach(v => {
       milestoneIds.add(v.from.id)
       milestoneIds.add(v.to.id)
+      const fromMoved = movedIds.has(v.from.id)
+      const toMoved = movedIds.has(v.to.id)
+      if (fromMoved && !toMoved) revealIds.add(v.to.id)
+      else if (toMoved && !fromMoved) revealIds.add(v.from.id)
+      else {
+        revealIds.add(v.from.id)
+        revealIds.add(v.to.id)
+      }
     })
-    presentConflictMilestones(milestoneIds)
+    presentConflictMilestones(milestoneIds, revealIds)
     setBlinkingDepIds(new Set(depIds))
     window.setTimeout(() => setBlinkingDepIds(new Set()), 3000)
     showWarningPrompt({
@@ -1813,30 +1842,51 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     })
   }, [presentConflictMilestones, showWarningPrompt])
 
-  const maybeBlockDependencyWarning = useCallback((nextMilestones, nextDependencies) => {
+  const maybeBlockDependencyWarning = useCallback((nextMilestones, nextDependencies, movedIds = new Set()) => {
     const violations = getDependencyViolations(nextMilestones, nextDependencies)
     if (violations.length === 0) return false
-    reportDependencyViolations(violations)
+    reportDependencyViolations(violations, movedIds)
     return true
   }, [reportDependencyViolations])
 
   // ── Measure + ensure grid covers viewport ─────────────────────────────────
+  const ensureGridCoversVp = useCallback((w, h) => {
+    if (w <= 0) return
+    vpRef.current = { w, h }
+    setVpSize({ w, h })
+    const needed = Math.ceil(w / spacingRef.current.colW) + COL_BUF + EDGE_COLS + 1
+    if (needed > totalDaysRef.current) {
+      totalDaysRef.current = needed
+      setTotalDays(needed)
+    }
+  }, [])
+
   useEffect(() => {
     const el = gridBodyRef.current; if (!el) return
+    // Seed immediately from current layout so the very first render has correct
+    // column counts (ResizeObserver fires asynchronously on the next frame).
+    const init = el.getBoundingClientRect()
+    ensureGridCoversVp(init.width, init.height)
     const obs = new ResizeObserver(([e]) => {
       const { width, height } = e.contentRect
-      vpRef.current = { w: width, h: height }
-      setVpSize({ w: width, h: height })
-      // Ensure grid is always wide enough to have a scrollbar
-      const needed = Math.ceil(width / spacingRef.current.colW) + COL_BUF + EDGE_COLS + 1
-      if (needed > totalDaysRef.current) {
-        totalDaysRef.current = needed
-        setTotalDays(needed)
-      }
+      ensureGridCoversVp(width, height)
     })
     obs.observe(el)
     return () => obs.disconnect()
-  }, [])
+  }, [ensureGridCoversVp])
+
+  // When colW changes (via slider or perspective restore), re-check totalDays.
+  // applyPerspective calls setSpacing directly, bypassing handleSpacingChange,
+  // so totalDays can fall short of what's needed to cover the viewport.
+  useEffect(() => {
+    const w = vpRef.current.w
+    if (w <= 0) return
+    const needed = Math.ceil(w / spacing.colW) + COL_BUF + EDGE_COLS + 1
+    if (needed > totalDaysRef.current) {
+      totalDaysRef.current = needed
+      setTotalDays(needed)
+    }
+  }, [spacing.colW])
 
   // ── Scroll ────────────────────────────────────────────────────────────────
   // DOM mutations (left-panel sync) are immediate.
@@ -2021,10 +2071,11 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       }
       const nextMilestones = milestonesRef.current.map(m => after.find(candidate => candidate.id === m.id) ?? m)
       const overlap = getOverlapViolation(nextMilestones, new Set(before.map(m => m.id)))
-      if (overlap) { reportOverlapViolation(overlap); return }
+      const movedIds = new Set(before.map(m => m.id))
+      if (overlap) { reportOverlapViolation(overlap, getBlockingMilestoneIds(overlap, movedIds)); return }
       const order = getMilestoneOrderViolation(milestonesRef.current, nextMilestones, new Set(before.map(m => m.id)))
-      if (order) { reportOverlapViolation(order); return }
-      if (maybeBlockDependencyWarning(nextMilestones, dependenciesRef.current)) return
+      if (order) { reportOverlapViolation(order, getBlockingMilestoneIds(order, movedIds)); return }
+      if (maybeBlockDependencyWarning(nextMilestones, dependenciesRef.current, movedIds)) return
       await commitTransaction(tx)
     }
   }, [commitTransaction, maybeBlockDependencyWarning, reportOverlapViolation])
@@ -2054,10 +2105,11 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         after: { milestones: after, dependencies: [] },
       }
       const overlap = getOverlapViolation(updated, new Set(before.map(m => m.id)))
-      if (overlap) { reportOverlapViolation(overlap); return }
+      const movedIds = new Set(before.map(m => m.id))
+      if (overlap) { reportOverlapViolation(overlap, getBlockingMilestoneIds(overlap, movedIds)); return }
       const order = getMilestoneOrderViolation(milestonesRef.current, updated, new Set(before.map(m => m.id)))
-      if (order) { reportOverlapViolation(order); return }
-      if (maybeBlockDependencyWarning(updated, dependenciesRef.current)) return
+      if (order) { reportOverlapViolation(order, getBlockingMilestoneIds(order, movedIds)); return }
+      if (maybeBlockDependencyWarning(updated, dependenciesRef.current, movedIds)) return
       await commitTransaction(tx)
     }
   }, [commitTransaction, maybeBlockDependencyWarning, reportOverlapViolation])
@@ -2673,7 +2725,6 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     colorDependencyDirection, hiddenCatIds, hiddenGoalsByLane, hideCrossCatDeps,
     leftPanelWidth, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps, spacing,
   ])
-  capturePerspectiveStateRef.current = capturePerspectiveState
 
   const applyPerspective = useCallback(perspective => {
     const state = perspective?.state ?? {}
@@ -2703,6 +2754,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     setActiveFilterIds(Array.isArray(state.color?.activeFilterIds) ? state.color.activeFilterIds : [])
     setQuickFilters(Array.isArray(state.color?.quickFilters) ? state.color.quickFilters : [])
     setPaintCat(null)
+    setRevealedConflictGoalIds(new Set())
     setActivePerspectiveId(perspective?.id ?? NONE_PERSPECTIVE_ID)
 
     requestAnimationFrame(() => {
@@ -2712,13 +2764,6 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       setScrollLeft(scrollLeftRef.current)
     })
   }, [activeDimId, activeLaneFilterId, colorDimId])
-  restorePerspectiveStateRef.current = state => {
-    applyPerspective({
-      id: activePerspectiveId,
-      name: 'Temporary conflict snapshot',
-      state,
-    })
-  }
 
   const createPerspective = useCallback(async name => {
     try {
