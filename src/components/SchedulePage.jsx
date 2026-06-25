@@ -1894,11 +1894,11 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     if (!colorDimId) return milestone.color
     if (colorDimId === FILTER_DIMENSION_ID) {
       const match = filterCategories.find(cat => filterMatchesGoal(savedFilters.find(f => f.id === cat.filterId), milestone.goalId, assignments))
-      return match?.color ?? milestone.color
+      return match?.color ?? null
     }
     const catId = assignments[milestone.goalId]?.[colorDimId]
-    if (!catId) return milestone.color
-    return categories.find(c => c.id === catId)?.color ?? milestone.color
+    if (!catId) return null
+    return categories.find(c => c.id === catId)?.color ?? null
   }, [assignments, categories, colorDimId, filterCategories, savedFilters])
 
   // Color for the goal row indicator dot — same logic as milestones but returns null when unassigned
@@ -2266,10 +2266,12 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   // ── Drag helpers ───────────────────────────────────────────────────────────
   function startMoveDrag(startMouseX, originals) {
+    if (Object.keys(originals).length === 0) return
     clearWarningPrompt()
     const sp = spacingRef.current
     dragRef.current = { type: 'move', hasMoved: false, originals, lastValidColDelta: 0, blockedOverlap: null, blockedBarrier: null, hitBoundary: false }
     document.body.style.cursor = 'grabbing'
+    document.body.style.userSelect = 'none'
 
     const getBounds = () => {
       let minDelta = -Infinity
@@ -2312,6 +2314,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     }
 
     const onMove = e => {
+      e.preventDefault()
       const dx = getLiveDx(e.clientX)
       if (Math.abs(dx) > 2) dragRef.current.hasMoved = true
       const overrides = {}
@@ -2329,6 +2332,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
       document.body.style.cursor = ''
+      document.body.style.userSelect = ''
       const { hasMoved, hitBoundary } = dragRef.current || {}
       dragRef.current = null
       const resetToOriginal = () => {
@@ -3029,10 +3033,10 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   // ── Milestone mouse-down (move / resize) ───────────────────────────────────
   const handleMilestoneMouseDown = useCallback((e, milestoneId, side) => {
-    e.stopPropagation()
     if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
     setContextMenu(null)
-    setSelectedDepIds(new Set())
     setSelectedDepIds(new Set())
     if (modeRef.current === 'dependency') return  // handled by dependency port dragging
 
@@ -3048,13 +3052,9 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       const next = new Set(selectedIdsRef.current)
       if (alreadySelected) next.delete(milestoneId)
       else next.add(milestoneId)
-      setSelectedIds(next)
       idsToMove = [...next]
     } else {
       idsToMove = alreadySelected ? [...selectedIdsRef.current] : [milestoneId]
-      // Always call setSelectedIds — this triggers a re-render that picks up dragRef.current.originals
-      // so dragged milestones are never culled from visMilestones during the drag.
-      setSelectedIds(new Set(idsToMove))
     }
 
     const originals = {}
@@ -3063,6 +3063,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       if (m) originals[id] = { startCol: m.startCol, duration: m.duration }
     })
     startMoveDrag(e.clientX, originals)
+    setSelectedIds(new Set(idsToMove))
   }, []) // eslint-disable-line
 
   // ── Grid mouse-down (marquee / deselect) ──────────────────────────────────
@@ -3490,28 +3491,31 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
             {/* Milestones */}
             {visMilestones.map(m => {
               const row = goalRowMap[m.goalId]; if (!row) return null
-              const isSelected  = selectedIds.has(m.id)
-              const isViolating = violationIds.has(m.id)
-              const isBlinking  = blinkingMilestoneIds.has(m.id)
-              const isDepMode   = mode === 'dependency'
-              const isSource    = drawingState?.fromId === m.id
+              const isSelected    = selectedIds.has(m.id)
+              const isViolating   = violationIds.has(m.id)
+              const isBlinking    = blinkingMilestoneIds.has(m.id)
+              const isDepMode     = mode === 'dependency'
+              const isSource      = drawingState?.fromId === m.id
+              const msColor       = getMilestoneColor(m)
+              const isUnassigned  = msColor === null
               return (
                 <div key={m.id}
                   data-ms-id={m.id}
                   ref={el => { el ? milestoneElsRef.current.set(m.id, el) : milestoneElsRef.current.delete(m.id) }}
                   className={[
                     styles.milestone,
-                    isSelected  && styles.milestoneSelected,
-                    isViolating && styles.milestoneViolation,
-                    isBlinking  && styles.milestoneBlink,
-                    isDepMode   && styles.milestoneDepMode,
+                    isSelected   && styles.milestoneSelected,
+                    isViolating  && styles.milestoneViolation,
+                    isBlinking   && styles.milestoneBlink,
+                    isDepMode    && styles.milestoneDepMode,
+                    isUnassigned && styles.milestoneUnassigned,
                   ].filter(Boolean).join(' ')}
                   style={{
                     left:       m.startCol * colW,
                     top:        HEADER_H + row.top + msY,
                     width:      m.duration * colW,
                     height:     msH,
-                    background: getMilestoneColor(m),
+                    background: msColor ?? '#fff',
                   }}
                   onMouseDown={e => {
                     if (paintCat) {

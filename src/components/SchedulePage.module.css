@@ -1670,6 +1670,14 @@
   box-shadow: 0 0 0 3px rgba(26,115,232,0.7), 0 1px 4px rgba(0,0,0,0.22);
 }
 
+.milestoneUnassigned {
+  border: 1.5px solid rgba(0, 0, 0, 0.28);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.14);
+}
+.milestoneUnassigned .msLabel {
+  color: rgba(0, 0, 0, 0.55);
+}
+
 .msHandle {
   position: absolute;
   left: 0; top: 0; bottom: 0;
