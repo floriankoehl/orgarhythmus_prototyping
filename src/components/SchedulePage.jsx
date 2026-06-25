@@ -300,7 +300,6 @@ function SpacingPanel({
   hideCrossCatDeps, onHideCrossCatDepsChange,
   showCrucialDepsOnly, onShowCrucialDepsOnlyChange,
   colorDependencyDirection, onColorDependencyDirectionChange,
-  autoSelectConflicts, onAutoSelectConflictsChange,
 }) {
   const panelRef = useRef()
   const closeRef = useRef(onClose)
@@ -370,15 +369,6 @@ function SpacingPanel({
           <label className={styles.depToggle} title="Show dependency labels">
             <input type="checkbox" checked={showDepLabels} onChange={e => onShowDepLabelsChange(e.target.checked)} />
             <span>Labels</span>
-          </label>
-        </div>
-      </div>
-      <div className={styles.axisModeRow}>
-        <span className={styles.spacingLabel}>Warnings</span>
-        <div className={styles.depToggles}>
-          <label className={styles.depToggle} title="Auto-select blocking milestones">
-            <input type="checkbox" checked={autoSelectConflicts} onChange={e => onAutoSelectConflictsChange(e.target.checked)} />
-            <span>Auto-select conflicts</span>
           </label>
         </div>
       </div>
@@ -586,8 +576,8 @@ function GanttToolbar({
   showDeps, onShowDepsChange, hideCrossCatDeps, onHideCrossCatDepsChange,
   showCrucialDepsOnly, onShowCrucialDepsOnlyChange,
   colorDependencyDirection, onColorDependencyDirectionChange,
-  autoSelectConflicts, onAutoSelectConflictsChange,
   canDeleteSelection, onDeleteSelection,
+  canFilterToSelection, onFilterToSelectedGoals, onExpandEverything,
   canUndo, canRedo, onUndo, onRedo,
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -610,6 +600,19 @@ function GanttToolbar({
           Redo
         </button>
       </div>
+      <button
+        className={styles.historyBtn}
+        disabled={!canFilterToSelection}
+        onClick={onFilterToSelectedGoals}
+        title="Show only goals that have selected milestones">
+        Only selected goals
+      </button>
+      <button
+        className={styles.historyBtn}
+        onClick={onExpandEverything}
+        title="Show all lane categories and goals">
+        Expand everything
+      </button>
       <div className={styles.modePills}>
         <button className={`${styles.modePill} ${mode === 'milestone' ? styles.modePillActive : ''}`}
           onClick={() => onModeChange('milestone')}>Milestone</button>
@@ -670,8 +673,7 @@ function GanttToolbar({
             showDeps={showDeps} onShowDepsChange={onShowDepsChange}
             hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={onHideCrossCatDepsChange}
             showCrucialDepsOnly={showCrucialDepsOnly} onShowCrucialDepsOnlyChange={onShowCrucialDepsOnlyChange}
-            colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={onColorDependencyDirectionChange}
-            autoSelectConflicts={autoSelectConflicts} onAutoSelectConflictsChange={onAutoSelectConflictsChange} />
+            colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={onColorDependencyDirectionChange} />
         )}
       </div>
     </div>
@@ -1163,14 +1165,16 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const [hiddenCatIds, setHiddenCatIds] = useState(new Set())
   const [hiddenGoalsByLane, setHiddenGoalsByLane] = useState({})
   const [revealedConflictGoalIds, setRevealedConflictGoalIds] = useState(new Set())
+  const [visibleGoalFilterIds, setVisibleGoalFilterIds] = useState(new Set())
   const [pendingConflictMilestoneIds, setPendingConflictMilestoneIds] = useState(new Set())
   const [warningPrompt, setWarningPrompt] = useState(null)
   const [blinkingDepIds, setBlinkingDepIds] = useState(new Set())
   const [blinkingMilestoneIds, setBlinkingMilestoneIds] = useState(new Set())
-  const [autoSelectConflicts, setAutoSelectConflicts] = useState(true)
-  const autoSelectConflictsRef = useRef(true)
+  const [pendingDependencyResolveIds, setPendingDependencyResolveIds] = useState(new Set())
+  const [dependencyResolveSnapshot, setDependencyResolveSnapshot] = useState(null)
   const [deleteDraft, setDeleteDraft] = useState(null)
   const warningPromptTimerRef = useRef(null)
+  const capturePerspectiveStateRef = useRef(null)
   const [dragOverGoalId, setDragOverGoalId] = useState(null)
   const [dragOverLaneCatId, setDragOverLaneCatId] = useState(null)
   const [draggingCatId, setDraggingCatId] = useState(null)
@@ -1195,11 +1199,6 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       setWarningPrompt(null)
       warningPromptTimerRef.current = null
     }, 4500)
-  }, [])
-
-  const handleAutoSelectConflictsChange = useCallback(enabled => {
-    autoSelectConflictsRef.current = enabled
-    setAutoSelectConflicts(enabled)
   }, [])
 
   const activeCategories = useMemo(
@@ -1355,14 +1354,21 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     })
     setBlinkingMilestoneIds(idSet)
     window.setTimeout(() => setBlinkingMilestoneIds(new Set()), 3000)
-    if (autoSelectConflictsRef.current) {
-      setSelectedDepIds(new Set())
-      setSelectedIds(idSet)
-      return
-    }
-    setSelectedIds(new Set())
     setSelectedDepIds(new Set())
+    setSelectedIds(idSet)
   }, [activeDimId, activeLaneFilter, assignments, colorDimId])
+
+  const presentDependencyConflictMilestones = useCallback(ids => {
+    const idSet = new Set(ids)
+    const conflictMilestones = milestonesRef.current.filter(m => idSet.has(m.id))
+    const goalIds = new Set(conflictMilestones.map(m => m.goalId))
+    if (conflictMilestones.length === 0 || goalIds.size === 0) return
+
+    setRevealedConflictGoalIds(new Set(goalIds))
+    setPendingConflictMilestoneIds(idSet)
+    setPendingDependencyResolveIds(prev => new Set([...prev, ...idSet]))
+    setSelectedDepIds(new Set())
+  }, [])
 
   const toggleSavedFilter = useCallback(filterId => {
     setActiveFilterIds(prev => prev.includes(filterId) ? prev.filter(id => id !== filterId) : [...prev, filterId])
@@ -1526,7 +1532,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
           const dep = dependenciesRef.current.find(d => d.id === depId)
           if (dep) { milestoneIds.add(dep.fromId); milestoneIds.add(dep.toId) }
         })
-        presentConflictMilestones(milestoneIds)
+        presentDependencyConflictMilestones(milestoneIds)
         setBlinkingDepIds(new Set(depIds))
         window.setTimeout(() => setBlinkingDepIds(new Set()), 3000)
         showWarningPrompt({ title: 'Dependency violation', message: detail.message, actions: 'dependency', dependencyIds: depIds })
@@ -1535,7 +1541,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       }
       return false
     }
-  }, [applyTransactionState, presentConflictMilestones, showTransactionFailure, showWarningPrompt])
+  }, [applyTransactionState, presentConflictMilestones, presentDependencyConflictMilestones, showTransactionFailure, showWarningPrompt])
 
   const undoGanttTransaction = useCallback(async () => {
     try {
@@ -1584,6 +1590,9 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   const visibleGoals = useMemo(
     () => {
+      if (visibleGoalFilterIds.size > 0) {
+        return goals.filter(goal => visibleGoalFilterIds.has(goal.id))
+      }
       const activeSavedFilters = activeFilterIds
         .map(id => savedFilters.find(filter => filter.id === id))
         .filter(Boolean)
@@ -1595,7 +1604,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         quickFilters.some(filter => assignments[goal.id]?.[filter.dimId] === filter.catId)
       )
     },
-    [activeFilterIds, assignments, goals, quickFilters, revealedConflictGoalIds, savedFilters]
+    [activeFilterIds, assignments, goals, quickFilters, revealedConflictGoalIds, savedFilters, visibleGoalFilterIds]
   )
 
   // ── Row model ──────────────────────────────────────────────────────────────
@@ -1613,6 +1622,22 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   }, [rowItems])
   const goalRowMapRef = useRef({})
   goalRowMapRef.current = goalRowMap
+
+  useEffect(() => {
+    if (selectedIds.size === 0) return
+    const milestoneById = new Map(milestones.map(m => [m.id, m]))
+    let changed = false
+    const next = new Set()
+    selectedIds.forEach(msId => {
+      const milestone = milestoneById.get(msId)
+      if (milestone && goalRowMap[milestone.goalId]) {
+        next.add(msId)
+      } else {
+        changed = true
+      }
+    })
+    if (changed) setSelectedIds(next)
+  }, [goalRowMap, milestones, selectedIds])
 
   useEffect(() => {
     if (pendingConflictMilestoneIds.size === 0) return
@@ -1640,6 +1665,101 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     })
     return set
   }, [selectedIds, milestones])
+
+  const applyGoalVisibilityFilter = useCallback(goalIds => {
+    if (goalIds.size === 0) return
+    setVisibleGoalFilterIds(new Set(goalIds))
+
+    if (activeLaneFilter) {
+      let hasMatch = false
+      let hasOther = false
+      goalIds.forEach(goalId => {
+        if (filterMatchesGoal(activeLaneFilter, goalId, assignments)) hasMatch = true
+        else hasOther = true
+      })
+      const nextHidden = new Set()
+      if (!hasMatch) nextHidden.add(activeLaneFilter.id)
+      if (!hasOther) nextHidden.add(UNASSIGNED_LANE)
+      setHiddenCatIds(nextHidden)
+      setHiddenGoalsByLane({
+        [activeLaneFilter.id]: new Set(goals.filter(goal => !goalIds.has(goal.id)).map(goal => goal.id)),
+        [UNASSIGNED_LANE]: new Set(goals.filter(goal => !goalIds.has(goal.id)).map(goal => goal.id)),
+      })
+      return
+    }
+
+    if (activeDimId) {
+      const selectedCatIds = new Set()
+      let hasUnassigned = false
+      goalIds.forEach(goalId => {
+        const catId = assignments[goalId]?.[activeDimId]
+        if (catId) selectedCatIds.add(catId)
+        else hasUnassigned = true
+      })
+      const nextHidden = new Set(
+        categories
+          .filter(cat => cat.dimensionId === activeDimId && !selectedCatIds.has(cat.id))
+          .map(cat => cat.id)
+      )
+      if (!hasUnassigned) nextHidden.add(UNASSIGNED_LANE)
+      setHiddenCatIds(nextHidden)
+      const nextHiddenGoalsByLane = {}
+      categories
+        .filter(cat => cat.dimensionId === activeDimId)
+        .forEach(cat => {
+          nextHiddenGoalsByLane[cat.id] = new Set(
+            goals
+              .filter(goal => assignments[goal.id]?.[activeDimId] === cat.id && !goalIds.has(goal.id))
+              .map(goal => goal.id)
+          )
+        })
+      nextHiddenGoalsByLane[UNASSIGNED_LANE] = new Set(
+        goals
+          .filter(goal => !assignments[goal.id]?.[activeDimId] && !goalIds.has(goal.id))
+          .map(goal => goal.id)
+      )
+      setHiddenGoalsByLane(nextHiddenGoalsByLane)
+      return
+    }
+
+    setHiddenCatIds(new Set())
+    setHiddenGoalsByLane({
+      [UNASSIGNED_LANE]: new Set(goals.filter(goal => !goalIds.has(goal.id)).map(goal => goal.id)),
+    })
+  }, [activeDimId, activeLaneFilter, assignments, categories, goals])
+
+  const filterToSelectedGoals = useCallback(() => {
+    applyGoalVisibilityFilter(selectedGoalIds)
+  }, [applyGoalVisibilityFilter, selectedGoalIds])
+
+  const expandEverything = useCallback(() => {
+    setVisibleGoalFilterIds(new Set())
+    setHiddenCatIds(new Set())
+    setHiddenGoalsByLane({})
+  }, [])
+
+  const resolveDependencySelection = useCallback(() => {
+    const idsToResolve = pendingDependencyResolveIds.size > 0
+      ? pendingDependencyResolveIds
+      : selectedIdsRef.current
+    const goalIds = new Set()
+    idsToResolve.forEach(msId => {
+      const milestone = milestonesRef.current.find(m => m.id === msId)
+      if (milestone) goalIds.add(milestone.goalId)
+    })
+    const snapshot = capturePerspectiveStateRef.current?.()
+    if (snapshot) setDependencyResolveSnapshot(prev => prev ?? snapshot)
+    setSelectedDepIds(new Set())
+    setSelectedIds(prev => new Set([...prev, ...idsToResolve]))
+    setActiveFilterIds([])
+    setQuickFilters([])
+    setPaintCat(null)
+    setHiddenCatIds(new Set())
+    setHiddenGoalsByLane({})
+    applyGoalVisibilityFilter(goalIds)
+    setPendingDependencyResolveIds(new Set())
+    clearWarningPrompt()
+  }, [applyGoalVisibilityFilter, clearWarningPrompt, pendingDependencyResolveIds])
 
   const isGoalHighlighted = goalId => selectedGoalIds.has(goalId) || goalId === clickedGoalId
 
@@ -1827,7 +1947,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       milestoneIds.add(v.from.id)
       milestoneIds.add(v.to.id)
     })
-    presentConflictMilestones(milestoneIds)
+    presentDependencyConflictMilestones(milestoneIds)
     setBlinkingDepIds(new Set(depIds))
     window.setTimeout(() => setBlinkingDepIds(new Set()), 3000)
     showWarningPrompt({
@@ -1838,7 +1958,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       actions: 'dependency',
       dependencyIds: depIds,
     })
-  }, [presentConflictMilestones, showWarningPrompt])
+  }, [presentDependencyConflictMilestones, showWarningPrompt])
 
   const maybeBlockDependencyWarning = useCallback((nextMilestones, nextDependencies) => {
     const violations = getDependencyViolations(nextMilestones, nextDependencies)
@@ -2531,28 +2651,6 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     setDeleteDraft({ items: [{ key: `dependency:${depId}`, type: 'dependency', id: depId, label, checked: true }] })
   }, [])
 
-  const handleDeleteWarningConstraint = useCallback(() => {
-    const dependencyIds = warningPrompt?.dependencyIds ?? []
-    const depsToDelete = dependenciesRef.current.filter(d => dependencyIds.includes(d.id))
-    clearWarningPrompt()
-    if (depsToDelete.length === 0) return
-    setDeleteDraft({
-      items: depsToDelete.map(dep => {
-        const from = milestonesRef.current.find(m => m.id === dep.fromId)
-        const to = milestonesRef.current.find(m => m.id === dep.toId)
-        const fromGoal = goals.find(g => g.id === from?.goalId)
-        const toGoal = goals.find(g => g.id === to?.goalId)
-        return {
-          key: `dependency:${dep.id}`,
-          type: 'dependency',
-          id: dep.id,
-          label: `${fromGoal?.title ?? 'Milestone'} -> ${toGoal?.title ?? 'Milestone'}`,
-          checked: true,
-        }
-      }),
-    })
-  }, [clearWarningPrompt, goals, warningPrompt])
-
   const handleEditDepReason = useCallback((depId, currentReason) => {
     setReasonDraft(currentReason || '')
     setReasonModal({ depId })
@@ -2694,6 +2792,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   leftPanelWidthRef.current = leftPanelWidth
 
   const capturePerspectiveState = useCallback(() => ({
+    activePerspectiveId,
     spacing,
     axisMode,
     showDepLabels,
@@ -2710,17 +2809,23 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     hiddenGoalsByLane: Object.fromEntries(
       Object.entries(hiddenGoalsByLane).map(([laneKey, ids]) => [laneKey, [...ids]])
     ),
+    visibleGoalFilterIds: [...visibleGoalFilterIds],
     scrollLeft: scrollLeftRef.current,
     color: {
       colorDimId,
       activeFilterIds,
       quickFilters,
     },
+    selection: {
+      milestoneIds: [...selectedIdsRef.current],
+      dependencyIds: [...selectedDepIdsRef.current],
+    },
   }), [
-    activeDimId, activeFilterIds, activeLaneFilterId, axisMode, colorDimId,
+    activeDimId, activeFilterIds, activeLaneFilterId, activePerspectiveId, axisMode, colorDimId,
     colorDependencyDirection, hiddenCatIds, hiddenGoalsByLane, hideCrossCatDeps,
-    leftPanelWidth, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps, spacing,
+    leftPanelWidth, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps, spacing, visibleGoalFilterIds,
   ])
+  capturePerspectiveStateRef.current = capturePerspectiveState
 
   const applyPerspective = useCallback(perspective => {
     const state = perspective?.state ?? {}
@@ -2745,12 +2850,14 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     setHiddenGoalsByLane(Object.fromEntries(
       Object.entries(state.hiddenGoalsByLane ?? {}).map(([laneKey, ids]) => [laneKey, new Set(Array.isArray(ids) ? ids : [])])
     ))
+    setVisibleGoalFilterIds(new Set(Array.isArray(state.visibleGoalFilterIds) ? state.visibleGoalFilterIds : []))
 
     setColorDimId(nextColorDimId)
     setActiveFilterIds(Array.isArray(state.color?.activeFilterIds) ? state.color.activeFilterIds : [])
     setQuickFilters(Array.isArray(state.color?.quickFilters) ? state.color.quickFilters : [])
     setPaintCat(null)
     setRevealedConflictGoalIds(new Set())
+    setDependencyResolveSnapshot(null)
     setActivePerspectiveId(perspective?.id ?? NONE_PERSPECTIVE_ID)
 
     requestAnimationFrame(() => {
@@ -2760,6 +2867,51 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       setScrollLeft(scrollLeftRef.current)
     })
   }, [activeDimId, activeLaneFilterId, colorDimId])
+
+  const returnToDependencyResolveSnapshot = useCallback(() => {
+    if (!dependencyResolveSnapshot) return
+    const state = dependencyResolveSnapshot
+    const nextActiveDimId = state.group?.activeDimId || ''
+    const nextActiveLaneFilterId = state.group?.activeLaneFilterId || ''
+    const nextColorDimId = state.color?.colorDimId || ''
+    restoringPerspectiveRef.current = nextActiveDimId !== activeDimId || nextActiveLaneFilterId !== activeLaneFilterId
+    restoringColorRef.current = nextColorDimId !== colorDimId
+
+    if (state.spacing) setSpacing({ ...DEFAULT_SPACING, ...state.spacing })
+    if (state.axisMode) setAxisMode(state.axisMode)
+    if (typeof state.showDepLabels === 'boolean') setShowDepLabels(state.showDepLabels)
+    if (typeof state.showDeps === 'boolean') setShowDeps(state.showDeps)
+    if (typeof state.hideCrossCatDeps === 'boolean') setHideCrossCatDeps(state.hideCrossCatDeps)
+    if (typeof state.showCrucialDepsOnly === 'boolean') setShowCrucialDepsOnly(state.showCrucialDepsOnly)
+    if (typeof state.colorDependencyDirection === 'boolean') setColorDependencyDirection(state.colorDependencyDirection)
+    if (typeof state.leftPanelWidth === 'number') setLeftPanelWidth(Math.max(120, Math.min(600, state.leftPanelWidth)))
+
+    setActiveDimId(nextActiveDimId)
+    setActiveLaneFilterId(nextActiveLaneFilterId)
+    setHiddenCatIds(new Set(Array.isArray(state.collapsedCategories) ? state.collapsedCategories : []))
+    setHiddenGoalsByLane(Object.fromEntries(
+      Object.entries(state.hiddenGoalsByLane ?? {}).map(([laneKey, ids]) => [laneKey, new Set(Array.isArray(ids) ? ids : [])])
+    ))
+    setVisibleGoalFilterIds(new Set(Array.isArray(state.visibleGoalFilterIds) ? state.visibleGoalFilterIds : []))
+
+    setColorDimId(nextColorDimId)
+    setActiveFilterIds(Array.isArray(state.color?.activeFilterIds) ? state.color.activeFilterIds : [])
+    setQuickFilters(Array.isArray(state.color?.quickFilters) ? state.color.quickFilters : [])
+    setPaintCat(null)
+    setRevealedConflictGoalIds(new Set())
+    setSelectedIds(new Set(Array.isArray(state.selection?.milestoneIds) ? state.selection.milestoneIds : []))
+    setSelectedDepIds(new Set(Array.isArray(state.selection?.dependencyIds) ? state.selection.dependencyIds : []))
+    setActivePerspectiveId(state.activePerspectiveId ?? activePerspectiveId)
+    setPendingDependencyResolveIds(new Set())
+    setDependencyResolveSnapshot(null)
+
+    requestAnimationFrame(() => {
+      const nextLeft = Math.max(0, Number(state.scrollLeft) || 0)
+      if (gridBodyRef.current) gridBodyRef.current.scrollLeft = nextLeft
+      scrollLeftRef.current = gridBodyRef.current?.scrollLeft ?? nextLeft
+      setScrollLeft(scrollLeftRef.current)
+    })
+  }, [activeDimId, activeLaneFilterId, activePerspectiveId, colorDimId, dependencyResolveSnapshot])
 
   const createPerspective = useCallback(async name => {
     try {
@@ -2978,6 +3130,9 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         onLaneGroupChange={handleLaneGroupChange}
         canDeleteSelection={selectedIds.size > 0 || selectedDepIds.size > 0}
         onDeleteSelection={handleRequestDeleteSelection}
+        canFilterToSelection={selectedIds.size > 0}
+        onFilterToSelectedGoals={filterToSelectedGoals}
+        onExpandEverything={expandEverything}
         canUndo={transactionHistory.undo.length > 0}
         canRedo={transactionHistory.redo.length > 0}
         onUndo={undoGanttTransaction}
@@ -2990,8 +3145,6 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={setHideCrossCatDeps}
         showCrucialDepsOnly={showCrucialDepsOnly} onShowCrucialDepsOnlyChange={setShowCrucialDepsOnly}
         colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={setColorDependencyDirection}
-        autoSelectConflicts={autoSelectConflicts}
-        onAutoSelectConflictsChange={handleAutoSelectConflictsChange}
       />
 
       <div className={styles.canvasRow}>
@@ -3487,6 +3640,16 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       </div>
 
       <div className={styles.floatingViewTools}>
+        {dependencyResolveSnapshot && (
+          <button
+            type="button"
+            className={styles.dependencyResolveReturnBtn}
+            onClick={returnToDependencyResolveSnapshot}
+          >
+            <strong>Dependency resolving</strong>
+            <span>Return to previous view</span>
+          </button>
+        )}
         <PerspectiveMenu
           perspectives={perspectiveOptions}
           activePerspectiveId={activePerspectiveId}
@@ -3536,17 +3699,11 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
           </div>
           <div className={styles.warningPromptActions}>
             <button className={styles.warningUndoBtn} onClick={() => {
-              clearWarningPrompt()
+              if (warningPrompt.actions === 'dependency') resolveDependencySelection()
+              else clearWarningPrompt()
             }}>
-              {warningPrompt.actions === 'dependency' ? 'Undo' : 'Close'}
+              {warningPrompt.actions === 'dependency' ? 'Resolve dependency' : 'Close'}
             </button>
-            {warningPrompt.actions === 'dependency' && (
-              <button
-                className={styles.warningIgnoreBtn}
-                onClick={handleDeleteWarningConstraint}>
-                Delete constraint
-              </button>
-            )}
           </div>
         </div>
       )}

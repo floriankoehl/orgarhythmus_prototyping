@@ -664,6 +664,38 @@
   gap: 8px;
 }
 
+.dependencyResolveReturnBtn {
+  min-height: 38px;
+  padding: 6px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+  color: #7c2d12;
+  background: #ffedd5;
+  border: 1px solid #fdba74;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+  cursor: pointer;
+  font-family: Arial, sans-serif;
+}
+
+.dependencyResolveReturnBtn:hover {
+  background: #fed7aa;
+  border-color: #fb923c;
+}
+
+.dependencyResolveReturnBtn strong {
+  font-size: 12px;
+  line-height: 1.1;
+}
+
+.dependencyResolveReturnBtn span {
+  font-size: 11px;
+  line-height: 1.1;
+}
+
 .legendWidget {
   position: relative;
   width: 38px;
