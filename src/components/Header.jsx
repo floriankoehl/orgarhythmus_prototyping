@@ -23,7 +23,7 @@ function computeWordRects(el) {
   return result
 }
 
-export default function Header({ view, onNavigate, onQuickAdd }) {
+export default function Header({ view, onNavigate, onQuickAdd, projectName, onBack }) {
   const [open, setOpen]               = useState(false)
   const [titleVal, setTitleVal]       = useState('')
   const [titleManual, setTitleManual] = useState(false)
@@ -108,6 +108,14 @@ export default function Header({ view, onNavigate, onQuickAdd }) {
 
   return (
     <header className={styles.header}>
+      {onBack && (
+        <button className={styles.backBtn} onClick={onBack} title="Back to projects">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M9 2L4 7l5 5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          {projectName && <span className={styles.projectName}>{projectName}</span>}
+        </button>
+      )}
       <div ref={wrapRef} className={styles.quickAddWrap}>
         <button className={styles.quickAddBtn} onClick={() => setOpen(o => !o)} title="Quick add goal">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">

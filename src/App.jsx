@@ -7,7 +7,8 @@ import ClassificationPage from './components/ClassificationPage'
 import SchedulePage from './components/SchedulePage'
 import BrainstormV2 from './components/BrainstormV2'
 import GoalPopup from './components/GoalPopup'
-import { api } from './api'
+import ProjectsPage from './components/ProjectsPage'
+import { api, setProjectId } from './api'
 import styles from './App.module.css'
 
 const PAGE_COUNT = 3
@@ -48,10 +49,28 @@ export default function App() {
   const [view, setView] = useState(0)
   const [navDragOffset, setNavDragOffset] = useState(0)
   const [navDragging, setNavDragging] = useState(false)
+  const [activeProject, setActiveProject] = useState(null)
   const [goals, setGoals] = useState([])
   const [refreshKey, setRefreshKey] = useState(0)
   const [popupGoalId, setPopupGoalId] = useState(null)
   const [toast, setToast] = useState(null) // { goalId, title }
+
+  const openProject = (project) => {
+    setProjectId(project.id)
+    setActiveProject(project)
+    setGoals([])
+    setView(0)
+    setToast(null)
+    setPopupGoalId(null)
+    setRefreshKey(0)
+  }
+
+  const closeProject = () => {
+    setActiveProject(null)
+    setGoals([])
+    setToast(null)
+    setPopupGoalId(null)
+  }
   const navGestureRef = useRef({ active: false, startX: 0, startView: 0, offset: 0, suppressContextUntil: 0 })
   const viewRef = useRef(view)
   viewRef.current = view
@@ -97,14 +116,15 @@ export default function App() {
     setRefreshKey(k => k + 1)
   }
 
-  // Load goals on mount (and on refresh) — independent of DocumentCanvas
+  // Load goals when project opens or refreshKey changes
   useEffect(() => {
-    api.getPages().then(data => { if (data.length > 0) setGoals(data) }).catch(console.error)
-  }, [])
+    if (!activeProject) return
+    api.getPages().then(setGoals).catch(console.error)
+  }, [activeProject?.id]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!refreshKey) return
+    if (!refreshKey || !activeProject) return
     api.getPages().then(data => { if (data.length > 0) setGoals(data) }).catch(console.error)
-  }, [refreshKey])
+  }, [refreshKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const swallowGestureEvent = e => {
@@ -204,9 +224,20 @@ export default function App() {
 
   const popupGoal = goals.find(g => g.id === popupGoalId)
 
+  if (!activeProject) {
+    return (
+      <div className={styles.app}>
+        <ProjectsPage onOpenProject={openProject} />
+      </div>
+    )
+  }
+
   return (
     <div className={styles.app}>
-      <Header view={view} onNavigate={setView} onQuickAdd={handleQuickAdd} />
+      <Header
+        view={view} onNavigate={setView} onQuickAdd={handleQuickAdd}
+        projectName={activeProject.name} onBack={closeProject}
+      />
       <div
         className={`${styles.slider} ${navDragging ? styles.sliderDragging : ''}`}
         style={{ transform: `translateX(calc(${-view * 100}vw + ${navDragOffset}px))` }}>

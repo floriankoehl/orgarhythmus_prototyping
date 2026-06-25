@@ -9,10 +9,10 @@ const LANE_HDR_H   = 30
 const MILESTONE_H  = 20   // block height in px
 const COL_BUF      = 8
 const ROW_BUF      = 3
-const EXTEND_DELTA = 365  // days added per extension
+const EXTEND_DELTA = 365  // extra columns added when scrolling to the right edge
 
 const DEFAULT_SPACING = { colW: 110, rowH: 36, rowGap: 0, laneGap: 28 }
-const INIT_TOTAL_DAYS = 60    // initial days; grows to cover viewport + buffer on mount
+const INIT_TOTAL_COLS = 60    // initial column count; grows to cover viewport + buffer on mount
 const EDGE_COLS       = 5     // columns from right edge before extending
 
 const MONTH_ABR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
@@ -20,6 +20,10 @@ const FILTER_DIMENSION_ID = '__filters__'
 const FILTER_CATEGORY_PREFIX = 'filter:'
 const NONE_PERSPECTIVE_ID = '__none__'
 const SCHEDULE_DEFAULT_PERSPECTIVE_KEY = 'schedule.defaultPerspectiveId'
+
+// Metric options: what each column index represents
+const METRICS = ['days', 'weeks', 'months', 'hours', 'order']
+const METRIC_LABELS = { days: 'Days', weeks: 'Weeks', months: 'Months', hours: 'Hours', order: 'Order' }
 
 function makeColorCursor(color) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="10" fill="${color}" stroke="white" stroke-width="2"/></svg>`
@@ -38,15 +42,13 @@ function filterCategoryId(filterId) {
   return `${FILTER_CATEGORY_PREFIX}${filterId}`
 }
 
-// col 0 = today; col N = N days from today
+// ── Axis / label helpers ───────────────────────────────────────────────────────
+
+// col 0 = today; col N = N calendar days from today (only used for 'days' metric)
 function colToDate(col) {
   const d = new Date(); d.setHours(0, 0, 0, 0)
   d.setDate(d.getDate() + col)
   return d
-}
-
-function dateFmt(col) {
-  return colToDate(col).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
 function isoWeekInfo(date) {
@@ -58,6 +60,18 @@ function isoWeekInfo(date) {
   return { week, year: d.getUTCFullYear() }
 }
 
+// Short label for a column index given the current metric (used in tooltips / context menus)
+function colToLabel(col, metric) {
+  switch (metric) {
+    case 'weeks':  return `Wk ${col + 1}`
+    case 'months': return `Mo ${col + 1}`
+    case 'hours':  return `h${col + 1}`
+    case 'order':  return `#${col + 1}`
+    default:       return colToDate(col).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  }
+}
+
+// Build axis band segments by grouping consecutive cols sharing the same key (date-based, for 'days')
 function buildAxisSegments(cols, getKey, getLabel) {
   const segments = []
   cols.forEach(col => {
@@ -68,6 +82,21 @@ function buildAxisSegments(cols, getKey, getLabel) {
       last.endCol = col + 1
     } else {
       segments.push({ key, label: getLabel(date), startCol: col, endCol: col + 1 })
+    }
+  })
+  return segments
+}
+
+// Build axis band segments by grouping consecutive cols by a numeric group (metric-based)
+function buildColSegments(cols, getGroup, getLabel) {
+  const segments = []
+  cols.forEach(col => {
+    const key = String(getGroup(col))
+    const last = segments[segments.length - 1]
+    if (last?.key === key) {
+      last.endCol = col + 1
+    } else {
+      segments.push({ key, label: getLabel(col), startCol: col, endCol: col + 1 })
     }
   })
   return segments
@@ -295,6 +324,7 @@ function buildRowItems(goals, categories, assignments, assignmentOrders, activeD
 // ── Visual settings panel ─────────────────────────────────────────────────────
 function SpacingPanel({
   spacing, onChange, onClose, anchorRef, axisMode, onAxisModeChange,
+  metric, onMetricChange,
   showDepLabels, onShowDepLabelsChange,
   showDeps, onShowDepsChange,
   hideCrossCatDeps, onHideCrossCatDepsChange,
@@ -344,6 +374,18 @@ function SpacingPanel({
               className={`${styles.axisModePill} ${axisMode === val ? styles.axisModePillActive : ''}`}
               onClick={() => onAxisModeChange(val)}>
               {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className={styles.axisModeRow}>
+        <span className={styles.spacingLabel}>Metric</span>
+        <div className={styles.axisModePills}>
+          {METRICS.map(m => (
+            <button key={m}
+              className={`${styles.axisModePill} ${metric === m ? styles.axisModePillActive : ''}`}
+              onClick={() => onMetricChange(m)}>
+              {METRIC_LABELS[m]}
             </button>
           ))}
         </div>
@@ -591,6 +633,7 @@ function GanttToolbar({
   savedFilters, activeLaneFilterId, onLaneGroupChange,
   spacing, onSpacingChange, mode, onModeChange,
   axisMode, onAxisModeChange,
+  metric, onMetricChange,
   showDepLabels, onShowDepLabelsChange,
   showDeps, onShowDepsChange, hideCrossCatDeps, onHideCrossCatDepsChange,
   showCrucialDepsOnly, onShowCrucialDepsOnlyChange,
@@ -682,6 +725,7 @@ function GanttToolbar({
           <SpacingPanel spacing={spacing} onChange={onSpacingChange}
             onClose={closeSettings} anchorRef={settingsBtnRef}
             axisMode={axisMode} onAxisModeChange={onAxisModeChange}
+            metric={metric} onMetricChange={onMetricChange}
             showDepLabels={showDepLabels} onShowDepLabelsChange={onShowDepLabelsChange}
             showDeps={showDeps} onShowDepsChange={onShowDepsChange}
             hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={onHideCrossCatDepsChange}
@@ -1164,6 +1208,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const [activeDimId,       setActiveDimId]       = useState('')
   const [activeLaneFilterId, setActiveLaneFilterId] = useState('')
   const [axisMode, setAxisMode] = useState('full')
+  const [metric,   setMetric]   = useState('days') // 'days'|'weeks'|'months'|'hours'|'order'
   const [showDepLabels, setShowDepLabels] = useState(true)
   const [showDeps, setShowDeps] = useState(true)
   const [hideCrossCatDeps, setHideCrossCatDeps] = useState(false)
@@ -1243,6 +1288,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       state: {
         spacing: DEFAULT_SPACING,
         axisMode: 'full',
+        metric: 'days',
         showDepLabels: true,
         showDeps: true,
         hideCrossCatDeps: false,
@@ -1438,7 +1484,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   }, [])
 
   // ── Infinite timeline state ────────────────────────────────────────────────
-  const [totalDays,  setTotalDays]  = useState(INIT_TOTAL_DAYS)
+  const [totalCols,  setTotalCols]  = useState(INIT_TOTAL_COLS)
 
   // ── Selection + context menu ───────────────────────────────────────────────
   const [selectedIds,  setSelectedIds]  = useState(new Set())
@@ -1457,7 +1503,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const scrollTopRef    = useRef(0)
   const vpRef           = useRef({ w: 0, h: 0 })
   const spacingRef      = useRef(spacing)
-  const totalDaysRef    = useRef(INIT_TOTAL_DAYS)
+  const totalColsRef    = useRef(INIT_TOTAL_COLS)
   const rafIdRef          = useRef(null)         // requestAnimationFrame id
   const gridInnerRef      = useRef(null)         // for synchronous width update during extension
   const lastExtensionRef  = useRef(0)            // timestamp — prevents stacked extensions
@@ -1473,7 +1519,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   // Keep imperative refs in sync with state (assigned synchronously in render)
   spacingRef.current       = spacing
-  totalDaysRef.current     = totalDays
+  totalColsRef.current     = totalCols
   dependenciesRef.current  = dependencies
   deadlinesRef.current     = deadlines
   modeRef.current          = mode
@@ -2007,9 +2053,9 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     vpRef.current = { w, h }
     setVpSize({ w, h })
     const needed = Math.ceil(w / spacingRef.current.colW) + COL_BUF + EDGE_COLS + 1
-    if (needed > totalDaysRef.current) {
-      totalDaysRef.current = needed
-      setTotalDays(needed)
+    if (needed > totalColsRef.current) {
+      totalColsRef.current = needed
+      setTotalCols(needed)
     }
   }, [])
 
@@ -2027,16 +2073,16 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     return () => obs.disconnect()
   }, [ensureGridCoversVp])
 
-  // When colW changes (via slider or perspective restore), re-check totalDays.
+  // When colW changes (via slider or perspective restore), re-check totalCols.
   // applyPerspective calls setSpacing directly, bypassing handleSpacingChange,
-  // so totalDays can fall short of what's needed to cover the viewport.
+  // so totalCols can fall short of what's needed to cover the viewport.
   useEffect(() => {
     const w = vpRef.current.w
     if (w <= 0) return
     const needed = Math.ceil(w / spacing.colW) + COL_BUF + EDGE_COLS + 1
-    if (needed > totalDaysRef.current) {
-      totalDaysRef.current = needed
-      setTotalDays(needed)
+    if (needed > totalColsRef.current) {
+      totalColsRef.current = needed
+      setTotalCols(needed)
     }
   }, [spacing.colW])
 
@@ -2057,12 +2103,12 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     if (!dragRef.current) {
       const now = Date.now()
       if (now - lastExtensionRef.current >= 150 &&
-          sl + vpRef.current.w > (totalDaysRef.current - EDGE_COLS) * sp.colW) {
+          sl + vpRef.current.w > (totalColsRef.current - EDGE_COLS) * sp.colW) {
         lastExtensionRef.current = now
-        const newTd = totalDaysRef.current + EXTEND_DELTA
+        const newTd = totalColsRef.current + EXTEND_DELTA
         if (gridInnerRef.current) gridInnerRef.current.style.width = `${newTd * sp.colW}px`
-        totalDaysRef.current = newTd
-        setTotalDays(newTd)
+        totalColsRef.current = newTd
+        setTotalCols(newTd)
       }
     }
 
@@ -2095,7 +2141,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     const rawY = e.clientY - rect.top  + scrollTopRef.current - HEADER_H
     if (rawY < 0) { if (highlightRef.current) highlightRef.current.style.display = ''; return }
     const col  = Math.floor(rawX / sp.colW)
-    if (col < 0 || col >= totalDaysRef.current) return
+    if (col < 0 || col >= totalColsRef.current) return
     const item = rowItemsRef.current.find(r => rawY >= r.top && rawY < r.top + r.height)
     if (!item || item.type !== 'goal') { if (highlightRef.current) highlightRef.current.style.display = ''; return }
     hoveredCellRef.current = { col, item }
@@ -2121,15 +2167,15 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     if (next.colW !== prev.colW && gridBodyRef.current) {
       const leftDay = scrollLeftRef.current / prev.colW
       const nextScrollLeft = Math.max(0, Math.round(leftDay * next.colW))
-      if (gridInnerRef.current) gridInnerRef.current.style.width = `${totalDaysRef.current * next.colW}px`
+      if (gridInnerRef.current) gridInnerRef.current.style.width = `${totalColsRef.current * next.colW}px`
       gridBodyRef.current.scrollLeft = nextScrollLeft
       scrollLeftRef.current = gridBodyRef.current.scrollLeft
       setScrollLeft(scrollLeftRef.current)
       // Ensure grid stays wider than viewport after colW change
       const needed = Math.ceil(vpRef.current.w / next.colW) + COL_BUF + EDGE_COLS + 1
-      if (needed > totalDaysRef.current) {
-        totalDaysRef.current = needed
-        setTotalDays(needed)
+      if (needed > totalColsRef.current) {
+        totalColsRef.current = needed
+        setTotalCols(needed)
       }
     }
     setSpacing(next)
@@ -2142,7 +2188,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     const relY = e.clientY - rect.top
     const rawX = e.clientX - rect.left + scrollLeftRef.current
     const col  = Math.floor(rawX / sp.colW)
-    if (col < 0 || col >= totalDaysRef.current) return null
+    if (col < 0 || col >= totalColsRef.current) return null
 
     if (relY < HEADER_H) return { type: 'header', col }
 
@@ -2724,7 +2770,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
           key: `milestone:${id}`,
           type: 'milestone',
           id,
-          label: `${goal?.title ?? 'Milestone'} · ${milestone.title || dateFmt(milestone.startCol)}`,
+          label: `${goal?.title ?? 'Milestone'} · ${milestone.title || colToLabel(milestone.startCol, metric)}`,
           checked: true,
         }
       })
@@ -2833,6 +2879,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     activePerspectiveId,
     spacing,
     axisMode,
+    metric,
     showDepLabels,
     showDeps,
     hideCrossCatDeps,
@@ -2859,7 +2906,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       dependencyIds: [...selectedDepIdsRef.current],
     },
   }), [
-    activeDimId, activeFilterIds, activeLaneFilterId, activePerspectiveId, axisMode, colorDimId,
+    activeDimId, activeFilterIds, activeLaneFilterId, activePerspectiveId, axisMode, metric, colorDimId,
     colorDependencyDirection, hiddenCatIds, hiddenGoalsByLane, hideCrossCatDeps,
     leftPanelWidth, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps, spacing, visibleGoalFilterIds,
   ])
@@ -2875,6 +2922,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
     if (state.spacing) setSpacing({ ...DEFAULT_SPACING, ...state.spacing })
     if (state.axisMode) setAxisMode(state.axisMode)
+    if (state.metric) setMetric(state.metric)
     if (typeof state.showDepLabels === 'boolean') setShowDepLabels(state.showDepLabels)
     if (typeof state.showDeps === 'boolean') setShowDeps(state.showDeps)
     if (typeof state.hideCrossCatDeps === 'boolean') setHideCrossCatDeps(state.hideCrossCatDeps)
@@ -2917,6 +2965,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
     if (state.spacing) setSpacing({ ...DEFAULT_SPACING, ...state.spacing })
     if (state.axisMode) setAxisMode(state.axisMode)
+    if (state.metric) setMetric(state.metric)
     if (typeof state.showDepLabels === 'boolean') setShowDepLabels(state.showDepLabels)
     if (typeof state.showDeps === 'boolean') setShowDeps(state.showDeps)
     if (typeof state.hideCrossCatDeps === 'boolean') setHideCrossCatDeps(state.hideCrossCatDeps)
@@ -3115,21 +3164,29 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const msY = Math.max(2, Math.floor((rowH - msH) / 2))
 
   const startCol = Math.max(0,         Math.floor(scrollLeft / colW) - COL_BUF)
-  const endCol   = Math.min(totalDays, Math.ceil((scrollLeft + vpSize.w) / colW) + COL_BUF)
+  const endCol   = Math.min(totalCols, Math.ceil((scrollLeft + vpSize.w) / colW) + COL_BUF)
   const visCols  = Array.from({ length: Math.max(0, endCol - startCol) }, (_, i) => startCol + i)
-  const visibleMonthSegments = buildAxisSegments(
+  const visibleMonthSegments = metric === 'days' ? buildAxisSegments(
     visCols,
     date => `${date.getFullYear()}-${date.getMonth()}`,
     date => `${MONTH_ABR[date.getMonth()]} ${date.getFullYear()}`
-  )
-  const visibleWeekSegments = buildAxisSegments(
+  ) : metric === 'months' ? buildColSegments(
+    visCols,
+    col => Math.floor(col / 12),
+    col => `Year ${Math.floor(col / 12) + 1}`
+  ) : null
+  const visibleWeekSegments = metric === 'days' ? buildAxisSegments(
     visCols,
     date => {
       const { week, year } = isoWeekInfo(date)
       return `${year}-${week}`
     },
     date => `KW ${isoWeekInfo(date).week}`
-  )
+  ) : metric === 'weeks' ? buildColSegments(
+    visCols,
+    col => Math.floor(col / 4),
+    col => `Mo ${Math.floor(col / 4) + 1}`
+  ) : null
 
   const bufH    = ROW_BUF * rowH
   const visItems = rowItems.filter(r => r.top + r.height >= scrollTop - bufH && r.top <= scrollTop + vpSize.h + bufH)
@@ -3175,6 +3232,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         spacing={spacing} onSpacingChange={handleSpacingChange}
         mode={mode} onModeChange={setMode}
         axisMode={axisMode} onAxisModeChange={setAxisMode}
+        metric={metric} onMetricChange={setMetric}
         showDepLabels={showDepLabels} onShowDepLabelsChange={setShowDepLabels}
         showDeps={showDeps} onShowDepsChange={setShowDeps}
         hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={setHideCrossCatDeps}
@@ -3398,40 +3456,42 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
           onContextMenu={handleContextMenu}>
 
           <div ref={gridInnerRef} className={styles.gridInner}
-            style={{ width: totalDays * colW, height: totalContentH + HEADER_H, '--col-w': `${colW}px` }}>
+            style={{ width: totalCols * colW, height: totalContentH + HEADER_H, '--col-w': `${colW}px` }}>
 
             {/* Sticky time axis */}
             <div className={styles.timeAxis}>
               {axisMode === 'full' && (<>
-                <div className={styles.monthBand}>
-                  {visibleMonthSegments.map(segment => (
-                    <div key={segment.key}
-                      className={styles.monthSegment}
-                      style={{ left: segment.startCol * colW, width: (segment.endCol - segment.startCol) * colW }}>
-                      {segment.label}
-                    </div>
-                  ))}
-                </div>
-                <div className={styles.weekBand}>
-                  {visibleWeekSegments.map(segment => (
-                    <div key={segment.key}
-                      className={styles.weekSegment}
-                      style={{ left: segment.startCol * colW, width: (segment.endCol - segment.startCol) * colW }}>
-                      {segment.label}
-                    </div>
-                  ))}
-                </div>
+                {visibleMonthSegments && (
+                  <div className={styles.monthBand}>
+                    {visibleMonthSegments.map(segment => (
+                      <div key={segment.key}
+                        className={styles.monthSegment}
+                        style={{ left: segment.startCol * colW, width: (segment.endCol - segment.startCol) * colW }}>
+                        {segment.label}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {visibleWeekSegments && (
+                  <div className={styles.weekBand}>
+                    {visibleWeekSegments.map(segment => (
+                      <div key={segment.key}
+                        className={styles.weekSegment}
+                        style={{ left: segment.startCol * colW, width: (segment.endCol - segment.startCol) * colW }}>
+                        {segment.label}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {visCols.map(ci => {
-                  const date = colToDate(ci)
-                  const dow  = date.getDay()
-                  const isToday   = ci === 0
-                  const isWeekend = dow === 0 || dow === 6
+                  const isToday = ci === 0
+                  const isWeekend = metric === 'days' && (() => { const dow = colToDate(ci).getDay(); return dow === 0 || dow === 6 })()
                   return (
                     <div key={ci}
                       className={[styles.dayHeader, isToday && styles.dayHeaderToday, isWeekend && !isToday && styles.dayHeaderWeekend].filter(Boolean).join(' ')}
                       style={{ left: ci * colW, width: colW }}>
                       <span className={[styles.dayNum, isToday && styles.dayNumToday].filter(Boolean).join(' ')}>
-                        {date.getDate()}
+                        {metric === 'days' ? colToDate(ci).getDate() : colToLabel(ci, metric)}
                       </span>
                     </div>
                   )
@@ -3452,7 +3512,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
             {/* Today + weekend column tints */}
             <div className={styles.todayCol} style={{ left: 0, width: colW }} />
-            {visCols.map(ci => {
+            {metric === 'days' && visCols.map(ci => {
               const dow = colToDate(ci).getDay()
               return (dow === 0 || dow === 6)
                 ? <div key={`wk-${ci}`} className={styles.weekendCol} style={{ left: ci * colW, width: colW }} />
@@ -3481,7 +3541,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
             {deadlines.map(dl => {
               const row = goalRowMap[dl.goalId]; if (!row) return null
               const hatchLeft  = dl.col * colW
-              const hatchWidth = Math.max(0, totalDays - dl.col) * colW
+              const hatchWidth = Math.max(0, totalCols - dl.col) * colW
               return hatchWidth > 0 ? (
                 <div key={`dl-${dl.goalId}`} className={styles.deadlineHatch}
                   style={{ left: hatchLeft, top: HEADER_H + row.top, width: hatchWidth, height: row.height }} />
@@ -3538,7 +3598,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
                     e.stopPropagation()
                     if (paintCat) return
                     const goal = goals.find(g => g.id === m.goalId)
-                    const label = `${goal?.title ?? 'Milestone'} · ${m.title || dateFmt(m.startCol)}`
+                    const label = `${goal?.title ?? 'Milestone'} · ${m.title || colToLabel(m.startCol, metric)}`
                     setContextMenu({ type: 'milestone', x: e.clientX, y: e.clientY, milestoneId: m.id, label })
                   }}>
                   <div
@@ -3552,7 +3612,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
                       if (isDepMode) startDependencyDrag(e, m.id)
                       else handleMilestoneMouseDown(e, m.id, 'left')
                     }} />
-                  <span className={styles.msLabel}>{m.title || dateFmt(m.startCol)}</span>
+                  <span className={styles.msLabel}>{m.title || colToLabel(m.startCol, metric)}</span>
                   <div
                     className={[styles.msHandle, styles.msHandleRight, isDepMode && styles.depHandle, isDepMode && isSource && styles.depHandleSource].filter(Boolean).join(' ')}
                     data-ms-id={m.id}
@@ -3570,7 +3630,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
             {/* Dependency arrows SVG — pointer-events none on container, individual paths can override */}
             <svg className={styles.depSvg}
-              style={{ width: totalDays * colW, height: totalContentH + HEADER_H }}>
+              style={{ width: totalCols * colW, height: totalContentH + HEADER_H }}>
               {showDeps && dependencies.map(dep => {
                 if (showCrucialDepsOnly && !crucialDependencyIds.has(dep.id)) return null
                 const from = milestones.find(m => m.id === dep.fromId)

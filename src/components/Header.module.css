@@ -33,6 +33,33 @@
 .active { color: #1a73e8; font-weight: 700; background: #e8f0fe; }
 .active:hover { background: #d2e3fc; }
 
+/* ── Back button ───────────────────────────────────────────────────────────── */
+.backBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: Arial, sans-serif;
+  font-weight: 500;
+  color: #666;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-right: 4px;
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+.backBtn:hover { color: #1a73e8; background: #e8f0fe; }
+
+.projectName {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Quick-add ─────────────────────────────────────────────────────────────── */
 .quickAddWrap {
   position: relative;

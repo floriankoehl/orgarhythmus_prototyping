@@ -1,7 +1,12 @@
 const BASE = 'http://localhost:8000'
 
+let _projectId = 'default'
+export function setProjectId(id) { _projectId = id }
+
 async function req(method, path, body) {
-  const res = await fetch(`${BASE}${path}`, {
+  const sep = path.includes('?') ? '&' : '?'
+  const url = `${BASE}${path}${sep}project_id=${encodeURIComponent(_projectId)}`
+  const res = await fetch(url, {
     method,
     headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -22,6 +27,31 @@ async function req(method, path, body) {
   }
   if (res.status === 204) return null
   return res.json()
+}
+
+async function baseReq(method, path, body) {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const data = await res.json()
+      detail = typeof data.detail === 'string' ? data.detail : data.detail?.message || JSON.stringify(data.detail)
+    } catch {}
+    throw new Error(detail || `${method} ${path} → ${res.status}`)
+  }
+  if (res.status === 204) return null
+  return res.json()
+}
+
+export const projectsApi = {
+  getProjects:   ()          => baseReq('GET',    '/projects'),
+  createProject: (data)      => baseReq('POST',   '/projects', data),
+  updateProject: (id, patch) => baseReq('PATCH',  `/projects/${id}`, patch),
+  deleteProject: (id)        => baseReq('DELETE', `/projects/${id}`),
 }
 
 export const api = {

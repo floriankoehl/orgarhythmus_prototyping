@@ -4,7 +4,7 @@ import uuid
 from contextlib import contextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -34,18 +34,28 @@ def _db():
 def _init_db():
     with _db() as con:
         con.execute("""
+            CREATE TABLE IF NOT EXISTS projects (
+                id         TEXT PRIMARY KEY,
+                name       TEXT NOT NULL DEFAULT 'Untitled',
+                color      TEXT NOT NULL DEFAULT '#1a73e8',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        con.execute("""
             CREATE TABLE IF NOT EXISTS pages (
-                id        TEXT PRIMARY KEY,
-                html      TEXT NOT NULL DEFAULT '',
-                title     TEXT NOT NULL DEFAULT 'Untitled',
-                collapsed INTEGER NOT NULL DEFAULT 0,
-                order_idx INTEGER NOT NULL DEFAULT 0
+                id         TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL DEFAULT 'default',
+                html       TEXT NOT NULL DEFAULT '',
+                title      TEXT NOT NULL DEFAULT 'Untitled',
+                collapsed  INTEGER NOT NULL DEFAULT 0,
+                order_idx  INTEGER NOT NULL DEFAULT 0
             )
         """)
         con.execute("""
             CREATE TABLE IF NOT EXISTS dimensions (
-                id   TEXT PRIMARY KEY,
-                name TEXT NOT NULL
+                id         TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL DEFAULT 'default',
+                name       TEXT NOT NULL
             )
         """)
         con.execute("""
@@ -95,6 +105,7 @@ def _init_db():
         con.execute("""
             CREATE TABLE IF NOT EXISTS saved_filters (
                 id              TEXT PRIMARY KEY,
+                project_id      TEXT NOT NULL DEFAULT 'default',
                 name            TEXT NOT NULL,
                 gate            TEXT NOT NULL DEFAULT 'AND',
                 color           TEXT NOT NULL DEFAULT '#64748b',
@@ -105,6 +116,7 @@ def _init_db():
         con.execute("""
             CREATE TABLE IF NOT EXISTS schedule_perspectives (
                 id         TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL DEFAULT 'default',
                 name       TEXT NOT NULL,
                 state_json TEXT NOT NULL DEFAULT '{}'
             )
@@ -112,6 +124,7 @@ def _init_db():
         con.execute("""
             CREATE TABLE IF NOT EXISTS classification_perspectives (
                 id         TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL DEFAULT 'default',
                 name       TEXT NOT NULL,
                 state_json TEXT NOT NULL DEFAULT '{}'
             )
@@ -134,12 +147,19 @@ _init_db()
 
 def _migrate():
     with _db() as con:
+        # Add project_id to tables that need it
+        for table in ['pages', 'dimensions', 'saved_filters', 'schedule_perspectives', 'classification_perspectives']:
+            cols = [r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()]
+            if 'project_id' not in cols:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default'")
+
         cols = [r[1] for r in con.execute("PRAGMA table_info(categories)").fetchall()]
         if 'order_idx' not in cols:
             con.execute("ALTER TABLE categories ADD COLUMN order_idx INTEGER NOT NULL DEFAULT 0")
             rows = con.execute("SELECT id FROM categories ORDER BY rowid").fetchall()
             for i, row in enumerate(rows):
                 con.execute("UPDATE categories SET order_idx = ? WHERE id = ?", (i, row[0]))
+
         assignment_cols = [r[1] for r in con.execute("PRAGMA table_info(assignments)").fetchall()]
         if 'order_idx' not in assignment_cols:
             con.execute("ALTER TABLE assignments ADD COLUMN order_idx INTEGER NOT NULL DEFAULT 0")
@@ -155,12 +175,15 @@ def _migrate():
                     "UPDATE assignments SET order_idx = ? WHERE goal_id = ? AND dimension_id = ?",
                     (idx, row["goal_id"], row["dimension_id"]),
                 )
+
         filter_cols = [r[1] for r in con.execute("PRAGMA table_info(saved_filters)").fetchall()]
         if 'color' not in filter_cols:
             con.execute("ALTER TABLE saved_filters ADD COLUMN color TEXT NOT NULL DEFAULT '#64748b'")
+
         dep_cols = [r[1] for r in con.execute("PRAGMA table_info(dependencies)").fetchall()]
         if 'reason' not in dep_cols:
             con.execute("ALTER TABLE dependencies ADD COLUMN reason TEXT NOT NULL DEFAULT ''")
+
         con.execute("""
             CREATE TABLE IF NOT EXISTS transaction_history (
                 id               TEXT PRIMARY KEY,
@@ -174,30 +197,47 @@ def _migrate():
             )
         """)
 
+        # Seed default project if missing
+        if not con.execute("SELECT id FROM projects WHERE id = 'default'").fetchone():
+            con.execute(
+                "INSERT INTO projects (id, name, color) VALUES ('default', 'My Project', '#1a73e8')"
+            )
+
 _migrate()
 
 
-def _seed_defaults():
+def _seed_defaults(project_id: str = 'default'):
     defaults = [
         ("Group",    [("All",    "#94a3b8")]),
         ("Priority", [("High",   "#ef4444"), ("Medium", "#eab308"), ("Low", "#94a3b8")]),
     ]
     with _db() as con:
         for dim_name, cats in defaults:
-            if con.execute("SELECT id FROM dimensions WHERE name = ?", (dim_name,)).fetchone():
+            if con.execute(
+                "SELECT id FROM dimensions WHERE name = ? AND project_id = ?", (dim_name, project_id)
+            ).fetchone():
                 continue
             dim_id = str(uuid.uuid4())
-            con.execute("INSERT INTO dimensions (id, name) VALUES (?, ?)", (dim_id, dim_name))
+            con.execute("INSERT INTO dimensions (id, name, project_id) VALUES (?, ?, ?)", (dim_id, dim_name, project_id))
             for cat_name, color in cats:
                 con.execute(
                     "INSERT INTO categories (id, dimension_id, name, color) VALUES (?, ?, ?, ?)",
                     (str(uuid.uuid4()), dim_id, cat_name, color),
                 )
 
-_seed_defaults()
+_seed_defaults('default')
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
+class ProjectIn(BaseModel):
+    id: Optional[str] = None
+    name: str
+    color: str = '#1a73e8'
+
+class ProjectPatch(BaseModel):
+    name: Optional[str] = None
+    color: Optional[str] = None
+
 class PageIn(BaseModel):
     id: Optional[str] = None
     html: str = ""
@@ -305,6 +345,9 @@ class TransactionApplyIn(BaseModel):
 
 
 # ── Helper converters ─────────────────────────────────────────────────────────
+def _project(row) -> dict:
+    return {"id": row["id"], "name": row["name"], "color": row["color"], "createdAt": row["created_at"]}
+
 def _page(row) -> dict:
     d = dict(row)
     d["collapsed"] = bool(d["collapsed"])
@@ -375,7 +418,6 @@ def _normalize_filter_payload(data) -> tuple[str, str, str | None]:
     return gate, json.dumps(selections), data.quickKey
 
 HISTORY_LIMIT = 20
-DEFAULT_PROJECT_ID = "default"
 
 def _milestone_from_api(data: dict) -> dict:
     return {
@@ -587,21 +629,21 @@ def _apply_transaction_rows(con, before: dict, after: dict):
                 (d["id"], d["fromId"], d["toId"], d["reason"]),
             )
 
-def _push_history(con, transaction: dict, before: dict, after: dict):
+def _push_history(con, project_id: str, transaction: dict, before: dict, after: dict):
     con.execute(
         "DELETE FROM transaction_history WHERE project_id = ? AND stack = 'redo'",
-        (DEFAULT_PROJECT_ID,),
+        (project_id,),
     )
     seq = con.execute(
         "SELECT COALESCE(MAX(seq), 0) + 1 FROM transaction_history WHERE project_id = ? AND stack = 'undo'",
-        (DEFAULT_PROJECT_ID,),
+        (project_id,),
     ).fetchone()[0]
     con.execute(
         """
         INSERT INTO transaction_history (id, project_id, stack, seq, transaction_json, before_json, after_json)
         VALUES (?, ?, 'undo', ?, ?, ?, ?)
         """,
-        (transaction["id"], DEFAULT_PROJECT_ID, seq, json.dumps(transaction), json.dumps(before), json.dumps(after)),
+        (transaction["id"], project_id, seq, json.dumps(transaction), json.dumps(before), json.dumps(after)),
     )
     overflow = con.execute(
         """
@@ -609,7 +651,7 @@ def _push_history(con, transaction: dict, before: dict, after: dict):
         WHERE project_id = ? AND stack = 'undo'
         ORDER BY seq DESC LIMIT -1 OFFSET ?
         """,
-        (DEFAULT_PROJECT_ID, HISTORY_LIMIT),
+        (project_id, HISTORY_LIMIT),
     ).fetchall()
     if overflow:
         con.execute(
@@ -617,20 +659,20 @@ def _push_history(con, transaction: dict, before: dict, after: dict):
             tuple(row["id"] for row in overflow),
         )
 
-def _move_history_entry(con, row, target_stack: str):
+def _move_history_entry(con, project_id: str, row, target_stack: str):
     seq = con.execute(
         "SELECT COALESCE(MAX(seq), 0) + 1 FROM transaction_history WHERE project_id = ? AND stack = ?",
-        (DEFAULT_PROJECT_ID, target_stack),
+        (project_id, target_stack),
     ).fetchone()[0]
     con.execute(
         "UPDATE transaction_history SET stack = ?, seq = ? WHERE id = ?",
         (target_stack, seq, row["id"]),
     )
 
-def _history_summary(con) -> dict:
+def _history_summary(con, project_id: str) -> dict:
     rows = con.execute(
         "SELECT id, stack, seq, transaction_json FROM transaction_history WHERE project_id = ? ORDER BY stack, seq",
-        (DEFAULT_PROJECT_ID,),
+        (project_id,),
     ).fetchall()
     undo, redo = [], []
     for row in rows:
@@ -644,7 +686,7 @@ def _history_summary(con) -> dict:
     redo.sort(key=lambda item: item["seq"])
     return {"undo": undo, "redo": redo}
 
-def _apply_transaction(con, transaction: TransactionPayload, record_history: bool = True):
+def _apply_transaction(con, project_id: str, transaction: TransactionPayload, record_history: bool = True):
     tx = transaction.dict()
     tx["id"] = tx.get("id") or str(uuid.uuid4())
     before = _normalize_tx_state(tx.get("before") or {})
@@ -655,27 +697,99 @@ def _apply_transaction(con, transaction: TransactionPayload, record_history: boo
     if record_history:
         tx["before"] = before
         tx["after"] = after
-        _push_history(con, tx, before, after)
-    return {"ok": True, "transaction": tx, "history": _history_summary(con)}
+        _push_history(con, project_id, tx, before, after)
+    return {"ok": True, "transaction": tx, "history": _history_summary(con, project_id)}
+
+
+# ── Projects ──────────────────────────────────────────────────────────────────
+@app.get("/projects")
+def list_projects():
+    with _db() as con:
+        rows = con.execute("SELECT * FROM projects ORDER BY created_at").fetchall()
+    return [_project(r) for r in rows]
+
+@app.post("/projects", status_code=201)
+def create_project(data: ProjectIn):
+    pid = data.id or str(uuid.uuid4())
+    name = data.name.strip() or 'Untitled'
+    with _db() as con:
+        if con.execute("SELECT id FROM projects WHERE id = ?", (pid,)).fetchone():
+            raise HTTPException(409, "Project already exists")
+        con.execute(
+            "INSERT INTO projects (id, name, color) VALUES (?, ?, ?)",
+            (pid, name, data.color),
+        )
+        row = con.execute("SELECT * FROM projects WHERE id = ?", (pid,)).fetchone()
+    return _project(row)
+
+@app.patch("/projects/{project_id}")
+def update_project(project_id: str, data: ProjectPatch):
+    with _db() as con:
+        if not con.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone():
+            raise HTTPException(404, "Project not found")
+        fields, values = [], []
+        if data.name is not None:  fields.append("name = ?");  values.append(data.name.strip() or 'Untitled')
+        if data.color is not None: fields.append("color = ?"); values.append(data.color)
+        if fields:
+            con.execute(f"UPDATE projects SET {', '.join(fields)} WHERE id = ?", (*values, project_id))
+        row = con.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+    return _project(row)
+
+@app.delete("/projects/{project_id}", status_code=204)
+def delete_project(project_id: str):
+    with _db() as con:
+        if not con.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone():
+            raise HTTPException(404, "Project not found")
+        # Cascade: goals and their milestones/deadlines/assignments
+        goal_rows = con.execute("SELECT id FROM pages WHERE project_id = ?", (project_id,)).fetchall()
+        goal_ids = [r["id"] for r in goal_rows]
+        if goal_ids:
+            ph = ','.join('?' * len(goal_ids))
+            ms_rows = con.execute(f"SELECT id FROM milestones WHERE goal_id IN ({ph})", goal_ids).fetchall()
+            ms_ids = [r["id"] for r in ms_rows]
+            if ms_ids:
+                mph = ','.join('?' * len(ms_ids))
+                con.execute(f"DELETE FROM dependencies WHERE from_id IN ({mph}) OR to_id IN ({mph})", ms_ids + ms_ids)
+                con.execute(f"DELETE FROM milestones WHERE id IN ({mph})", ms_ids)
+            con.execute(f"DELETE FROM deadlines WHERE goal_id IN ({ph})", goal_ids)
+            con.execute(f"DELETE FROM assignments WHERE goal_id IN ({ph})", goal_ids)
+            con.execute(f"DELETE FROM pages WHERE id IN ({ph})", goal_ids)
+        # Cascade: dimensions → categories → assignments
+        dim_rows = con.execute("SELECT id FROM dimensions WHERE project_id = ?", (project_id,)).fetchall()
+        dim_ids = [r["id"] for r in dim_rows]
+        if dim_ids:
+            ph = ','.join('?' * len(dim_ids))
+            con.execute(f"DELETE FROM assignments WHERE dimension_id IN ({ph})", dim_ids)
+            con.execute(f"DELETE FROM categories WHERE dimension_id IN ({ph})", dim_ids)
+            con.execute(f"DELETE FROM dimensions WHERE id IN ({ph})", dim_ids)
+        con.execute("DELETE FROM saved_filters WHERE project_id = ?", (project_id,))
+        con.execute("DELETE FROM schedule_perspectives WHERE project_id = ?", (project_id,))
+        con.execute("DELETE FROM classification_perspectives WHERE project_id = ?", (project_id,))
+        con.execute("DELETE FROM transaction_history WHERE project_id = ?", (project_id,))
+        con.execute("DELETE FROM projects WHERE id = ?", (project_id,))
 
 
 # ── Pages (goals) ─────────────────────────────────────────────────────────────
 @app.get("/pages")
-def list_pages():
+def list_pages(project_id: str = Query(default='default')):
     with _db() as con:
-        rows = con.execute("SELECT * FROM pages ORDER BY order_idx").fetchall()
+        rows = con.execute(
+            "SELECT * FROM pages WHERE project_id = ? ORDER BY order_idx", (project_id,)
+        ).fetchall()
     return [_page(r) for r in rows]
 
 @app.post("/pages", status_code=201)
-def create_page(data: PageIn):
+def create_page(data: PageIn, project_id: str = Query(default='default')):
     pid = data.id or str(uuid.uuid4())
     with _db() as con:
         if con.execute("SELECT id FROM pages WHERE id = ?", (pid,)).fetchone():
             raise HTTPException(409, "Page already exists")
-        max_ord = con.execute("SELECT COALESCE(MAX(order_idx), -1) FROM pages").fetchone()[0]
+        max_ord = con.execute(
+            "SELECT COALESCE(MAX(order_idx), -1) FROM pages WHERE project_id = ?", (project_id,)
+        ).fetchone()[0]
         con.execute(
-            "INSERT INTO pages (id, html, title, collapsed, order_idx) VALUES (?, ?, ?, ?, ?)",
-            (pid, data.html, data.title, int(data.collapsed), max_ord + 1),
+            "INSERT INTO pages (id, project_id, html, title, collapsed, order_idx) VALUES (?, ?, ?, ?, ?, ?)",
+            (pid, project_id, data.html, data.title, int(data.collapsed), max_ord + 1),
         )
     return {"id": pid, "html": data.html, "title": data.title, "collapsed": data.collapsed}
 
@@ -712,19 +826,21 @@ def reorder_pages(data: OrderIn):
 
 # ── Dimensions ────────────────────────────────────────────────────────────────
 @app.get("/dimensions")
-def list_dimensions():
+def list_dimensions(project_id: str = Query(default='default')):
     with _db() as con:
-        rows = con.execute("SELECT * FROM dimensions").fetchall()
+        rows = con.execute(
+            "SELECT * FROM dimensions WHERE project_id = ?", (project_id,)
+        ).fetchall()
     return [dict(r) for r in rows]
 
 @app.post("/dimensions", status_code=201)
-def create_dimension(data: DimensionIn):
+def create_dimension(data: DimensionIn, project_id: str = Query(default='default')):
     did = data.id or str(uuid.uuid4())
     with _db() as con:
         if con.execute("SELECT id FROM dimensions WHERE id = ?", (did,)).fetchone():
             raise HTTPException(409, "Dimension already exists")
-        con.execute("INSERT INTO dimensions (id, name) VALUES (?, ?)", (did, data.name))
-    return {"id": did, "name": data.name}
+        con.execute("INSERT INTO dimensions (id, name, project_id) VALUES (?, ?, ?)", (did, data.name, project_id))
+    return {"id": did, "name": data.name, "project_id": project_id}
 
 @app.patch("/dimensions/{dim_id}")
 def update_dimension(dim_id: str, data: DimensionPatch):
@@ -752,9 +868,14 @@ def delete_dimension(dim_id: str):
 
 # ── Categories ────────────────────────────────────────────────────────────────
 @app.get("/categories")
-def list_all_categories():
+def list_all_categories(project_id: str = Query(default='default')):
     with _db() as con:
-        rows = con.execute("SELECT * FROM categories ORDER BY order_idx").fetchall()
+        rows = con.execute(
+            """SELECT * FROM categories
+            WHERE dimension_id IN (SELECT id FROM dimensions WHERE project_id = ?)
+            ORDER BY order_idx""",
+            (project_id,)
+        ).fetchall()
     return [_cat(r) for r in rows]
 
 @app.post("/dimensions/{dim_id}/categories", status_code=201)
@@ -809,9 +930,14 @@ def delete_category(cat_id: str):
 
 # ── Assignments ───────────────────────────────────────────────────────────────
 @app.get("/assignments")
-def list_assignments():
+def list_assignments(project_id: str = Query(default='default')):
     with _db() as con:
-        rows = con.execute("SELECT * FROM assignments ORDER BY dimension_id, category_id, order_idx").fetchall()
+        rows = con.execute(
+            """SELECT * FROM assignments
+            WHERE goal_id IN (SELECT id FROM pages WHERE project_id = ?)
+            ORDER BY dimension_id, category_id, order_idx""",
+            (project_id,)
+        ).fetchall()
     return [_assign(r) for r in rows]
 
 @app.put("/goals/{goal_id}/assign/{dim_id}")
@@ -866,13 +992,15 @@ def unassign_category(goal_id: str, dim_id: str):
 
 # ── Saved filters ─────────────────────────────────────────────────────────────
 @app.get("/filters")
-def list_filters():
+def list_filters(project_id: str = Query(default='default')):
     with _db() as con:
-        rows = con.execute("SELECT * FROM saved_filters ORDER BY name COLLATE NOCASE").fetchall()
+        rows = con.execute(
+            "SELECT * FROM saved_filters WHERE project_id = ? ORDER BY name COLLATE NOCASE", (project_id,)
+        ).fetchall()
     return [_filter(r) for r in rows]
 
 @app.post("/filters", status_code=201)
-def create_filter(data: SavedFilterIn):
+def create_filter(data: SavedFilterIn, project_id: str = Query(default='default')):
     fid = data.id or str(uuid.uuid4())
     name = data.name.strip() or "Untitled filter"
     gate, selections_json, quick_key = _normalize_filter_payload(data)
@@ -882,10 +1010,10 @@ def create_filter(data: SavedFilterIn):
             raise HTTPException(409, "Filter already exists")
         con.execute(
             """
-            INSERT INTO saved_filters (id, name, gate, color, selections_json, quick_key)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO saved_filters (id, project_id, name, gate, color, selections_json, quick_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (fid, name, gate, color, selections_json, quick_key),
+            (fid, project_id, name, gate, color, selections_json, quick_key),
         )
         row = con.execute("SELECT * FROM saved_filters WHERE id = ?", (fid,)).fetchone()
     return _filter(row)
@@ -928,23 +1056,25 @@ def delete_filter(filter_id: str):
         con.execute("DELETE FROM saved_filters WHERE id = ?", (filter_id,))
 
 
-# ── Schedule perspectives ────────────────────────────────────────────────────
+# ── Schedule perspectives ─────────────────────────────────────────────────────
 @app.get("/schedule-perspectives")
-def list_schedule_perspectives():
+def list_schedule_perspectives(project_id: str = Query(default='default')):
     with _db() as con:
-        rows = con.execute("SELECT * FROM schedule_perspectives ORDER BY name COLLATE NOCASE").fetchall()
+        rows = con.execute(
+            "SELECT * FROM schedule_perspectives WHERE project_id = ? ORDER BY name COLLATE NOCASE", (project_id,)
+        ).fetchall()
     return [_schedule_perspective(r) for r in rows]
 
 @app.post("/schedule-perspectives", status_code=201)
-def create_schedule_perspective(data: SchedulePerspectiveIn):
+def create_schedule_perspective(data: SchedulePerspectiveIn, project_id: str = Query(default='default')):
     pid = data.id or str(uuid.uuid4())
     name = data.name.strip() or "Untitled perspective"
     with _db() as con:
         if con.execute("SELECT id FROM schedule_perspectives WHERE id = ?", (pid,)).fetchone():
             raise HTTPException(409, "Perspective already exists")
         con.execute(
-            "INSERT INTO schedule_perspectives (id, name, state_json) VALUES (?, ?, ?)",
-            (pid, name, json.dumps(data.state or {})),
+            "INSERT INTO schedule_perspectives (id, project_id, name, state_json) VALUES (?, ?, ?, ?)",
+            (pid, project_id, name, json.dumps(data.state or {})),
         )
         row = con.execute("SELECT * FROM schedule_perspectives WHERE id = ?", (pid,)).fetchone()
     return _schedule_perspective(row)
@@ -974,23 +1104,25 @@ def delete_schedule_perspective(perspective_id: str):
         con.execute("DELETE FROM schedule_perspectives WHERE id = ?", (perspective_id,))
 
 
-# ── Classification perspectives ──────────────────────────────────────────────
+# ── Classification perspectives ───────────────────────────────────────────────
 @app.get("/classification-perspectives")
-def list_classification_perspectives():
+def list_classification_perspectives(project_id: str = Query(default='default')):
     with _db() as con:
-        rows = con.execute("SELECT * FROM classification_perspectives ORDER BY name COLLATE NOCASE").fetchall()
+        rows = con.execute(
+            "SELECT * FROM classification_perspectives WHERE project_id = ? ORDER BY name COLLATE NOCASE", (project_id,)
+        ).fetchall()
     return [_classification_perspective(r) for r in rows]
 
 @app.post("/classification-perspectives", status_code=201)
-def create_classification_perspective(data: ClassificationPerspectiveIn):
+def create_classification_perspective(data: ClassificationPerspectiveIn, project_id: str = Query(default='default')):
     pid = data.id or str(uuid.uuid4())
     name = data.name.strip() or "Untitled perspective"
     with _db() as con:
         if con.execute("SELECT id FROM classification_perspectives WHERE id = ?", (pid,)).fetchone():
             raise HTTPException(409, "Perspective already exists")
         con.execute(
-            "INSERT INTO classification_perspectives (id, name, state_json) VALUES (?, ?, ?)",
-            (pid, name, json.dumps(data.state or {})),
+            "INSERT INTO classification_perspectives (id, project_id, name, state_json) VALUES (?, ?, ?, ?)",
+            (pid, project_id, name, json.dumps(data.state or {})),
         )
         row = con.execute("SELECT * FROM classification_perspectives WHERE id = ?", (pid,)).fetchone()
     return _classification_perspective(row)
@@ -1022,17 +1154,17 @@ def delete_classification_perspective(perspective_id: str):
 
 # ── Transactions ──────────────────────────────────────────────────────────────
 @app.get("/transactions/history")
-def get_transaction_history():
+def get_transaction_history(project_id: str = Query(default='default')):
     with _db() as con:
-        return _history_summary(con)
+        return _history_summary(con, project_id)
 
 @app.post("/transactions")
-def apply_transaction(data: TransactionApplyIn):
+def apply_transaction(data: TransactionApplyIn, project_id: str = Query(default='default')):
     with _db() as con:
-        return _apply_transaction(con, data.transaction)
+        return _apply_transaction(con, project_id, data.transaction)
 
 @app.post("/transactions/undo")
-def undo_transaction():
+def undo_transaction(project_id: str = Query(default='default')):
     with _db() as con:
         row = con.execute(
             """
@@ -1040,7 +1172,7 @@ def undo_transaction():
             WHERE project_id = ? AND stack = 'undo'
             ORDER BY seq DESC LIMIT 1
             """,
-            (DEFAULT_PROJECT_ID,),
+            (project_id,),
         ).fetchone()
         if not row:
             raise HTTPException(409, "Nothing to undo")
@@ -1052,12 +1184,12 @@ def undo_transaction():
             before=json.loads(row["after_json"]),
             after=json.loads(row["before_json"]),
         )
-        _apply_transaction(con, reverse, record_history=False)
-        _move_history_entry(con, row, "redo")
-        return {"ok": True, "transaction": transaction, "history": _history_summary(con)}
+        _apply_transaction(con, project_id, reverse, record_history=False)
+        _move_history_entry(con, project_id, row, "redo")
+        return {"ok": True, "transaction": transaction, "history": _history_summary(con, project_id)}
 
 @app.post("/transactions/redo")
-def redo_transaction():
+def redo_transaction(project_id: str = Query(default='default')):
     with _db() as con:
         row = con.execute(
             """
@@ -1065,7 +1197,7 @@ def redo_transaction():
             WHERE project_id = ? AND stack = 'redo'
             ORDER BY seq DESC LIMIT 1
             """,
-            (DEFAULT_PROJECT_ID,),
+            (project_id,),
         ).fetchone()
         if not row:
             raise HTTPException(409, "Nothing to redo")
@@ -1077,16 +1209,21 @@ def redo_transaction():
             before=json.loads(row["before_json"]),
             after=json.loads(row["after_json"]),
         )
-        _apply_transaction(con, forward, record_history=False)
-        _move_history_entry(con, row, "undo")
-        return {"ok": True, "transaction": transaction, "history": _history_summary(con)}
+        _apply_transaction(con, project_id, forward, record_history=False)
+        _move_history_entry(con, project_id, row, "undo")
+        return {"ok": True, "transaction": transaction, "history": _history_summary(con, project_id)}
 
 
 # ── Milestones ────────────────────────────────────────────────────────────────
 @app.get("/milestones")
-def list_milestones():
+def list_milestones(project_id: str = Query(default='default')):
     with _db() as con:
-        rows = con.execute("SELECT * FROM milestones ORDER BY start_col").fetchall()
+        rows = con.execute(
+            """SELECT * FROM milestones
+            WHERE goal_id IN (SELECT id FROM pages WHERE project_id = ?)
+            ORDER BY start_col""",
+            (project_id,)
+        ).fetchall()
     return [_ms(r) for r in rows]
 
 @app.post("/milestones", status_code=201)
@@ -1140,9 +1277,14 @@ def delete_milestone(ms_id: str):
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 @app.get("/dependencies")
-def list_dependencies():
+def list_dependencies(project_id: str = Query(default='default')):
     with _db() as con:
-        rows = con.execute("SELECT * FROM dependencies").fetchall()
+        rows = con.execute(
+            """SELECT * FROM dependencies WHERE from_id IN (
+                SELECT id FROM milestones WHERE goal_id IN (SELECT id FROM pages WHERE project_id = ?)
+            )""",
+            (project_id,)
+        ).fetchall()
     return [_dep(r) for r in rows]
 
 @app.post("/dependencies", status_code=201)
@@ -1174,9 +1316,12 @@ def delete_dependency(dep_id: str):
 
 # ── Deadlines ─────────────────────────────────────────────────────────────────
 @app.get("/deadlines")
-def list_deadlines():
+def list_deadlines(project_id: str = Query(default='default')):
     with _db() as con:
-        rows = con.execute("SELECT * FROM deadlines").fetchall()
+        rows = con.execute(
+            "SELECT * FROM deadlines WHERE goal_id IN (SELECT id FROM pages WHERE project_id = ?)",
+            (project_id,)
+        ).fetchall()
     return [_dl(r) for r in rows]
 
 @app.put("/deadlines/{goal_id}")
