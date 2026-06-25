@@ -300,6 +300,7 @@ function SpacingPanel({
   hideCrossCatDeps, onHideCrossCatDepsChange,
   showCrucialDepsOnly, onShowCrucialDepsOnlyChange,
   colorDependencyDirection, onColorDependencyDirectionChange,
+  canFilterToSelection, onFilterToSelectedGoals, onExpandEverything,
 }) {
   const panelRef = useRef()
   const closeRef = useRef(onClose)
@@ -370,6 +371,24 @@ function SpacingPanel({
             <input type="checkbox" checked={showDepLabels} onChange={e => onShowDepLabelsChange(e.target.checked)} />
             <span>Labels</span>
           </label>
+        </div>
+      </div>
+      <div className={styles.axisModeRow}>
+        <span className={styles.spacingLabel}>View</span>
+        <div className={styles.panelActions}>
+          <button
+            className={styles.panelActionBtn}
+            disabled={!canFilterToSelection}
+            onClick={onFilterToSelectedGoals}
+            title="Show only goals that have selected milestones">
+            Only selected goals
+          </button>
+          <button
+            className={styles.panelActionBtn}
+            onClick={onExpandEverything}
+            title="Show all lane categories and goals">
+            Expand everything
+          </button>
         </div>
       </div>
     </div>
@@ -576,6 +595,7 @@ function GanttToolbar({
   showDeps, onShowDepsChange, hideCrossCatDeps, onHideCrossCatDepsChange,
   showCrucialDepsOnly, onShowCrucialDepsOnlyChange,
   colorDependencyDirection, onColorDependencyDirectionChange,
+  autoResolveDependencyView, onAutoResolveDependencyViewChange,
   canDeleteSelection, onDeleteSelection,
   canFilterToSelection, onFilterToSelectedGoals, onExpandEverything,
   canUndo, canRedo, onUndo, onRedo,
@@ -600,19 +620,6 @@ function GanttToolbar({
           Redo
         </button>
       </div>
-      <button
-        className={styles.historyBtn}
-        disabled={!canFilterToSelection}
-        onClick={onFilterToSelectedGoals}
-        title="Show only goals that have selected milestones">
-        Only selected goals
-      </button>
-      <button
-        className={styles.historyBtn}
-        onClick={onExpandEverything}
-        title="Show all lane categories and goals">
-        Expand everything
-      </button>
       <div className={styles.modePills}>
         <button className={`${styles.modePill} ${mode === 'milestone' ? styles.modePillActive : ''}`}
           onClick={() => onModeChange('milestone')}>Milestone</button>
@@ -656,6 +663,12 @@ function GanttToolbar({
         />
       )}
       <div style={{ flex: 1 }} />
+      <button
+        className={`${styles.toolbarToggleBtn} ${autoResolveDependencyView ? styles.toolbarToggleBtnActive : ''}`}
+        onClick={() => onAutoResolveDependencyViewChange(!autoResolveDependencyView)}
+        title="Automatically enter the dependency resolving view when a dependency constraint blocks a move">
+        Auto resolve view
+      </button>
       <div className={styles.spacingWrap}>
         <button ref={settingsBtnRef}
           className={`${styles.spacingBtn} ${settingsOpen ? styles.spacingBtnOpen : ''}`}
@@ -673,7 +686,10 @@ function GanttToolbar({
             showDeps={showDeps} onShowDepsChange={onShowDepsChange}
             hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={onHideCrossCatDepsChange}
             showCrucialDepsOnly={showCrucialDepsOnly} onShowCrucialDepsOnlyChange={onShowCrucialDepsOnlyChange}
-            colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={onColorDependencyDirectionChange} />
+            colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={onColorDependencyDirectionChange}
+            canFilterToSelection={canFilterToSelection}
+            onFilterToSelectedGoals={onFilterToSelectedGoals}
+            onExpandEverything={onExpandEverything} />
         )}
       </div>
     </div>
@@ -1172,9 +1188,12 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const [blinkingMilestoneIds, setBlinkingMilestoneIds] = useState(new Set())
   const [pendingDependencyResolveIds, setPendingDependencyResolveIds] = useState(new Set())
   const [dependencyResolveSnapshot, setDependencyResolveSnapshot] = useState(null)
+  const [autoResolveDependencyView, setAutoResolveDependencyView] = useState(false)
   const [deleteDraft, setDeleteDraft] = useState(null)
   const warningPromptTimerRef = useRef(null)
   const capturePerspectiveStateRef = useRef(null)
+  const resolveDependencySelectionRef = useRef(null)
+  const autoResolveDependencyViewRef = useRef(false)
   const [dragOverGoalId, setDragOverGoalId] = useState(null)
   const [dragOverLaneCatId, setDragOverLaneCatId] = useState(null)
   const [draggingCatId, setDraggingCatId] = useState(null)
@@ -1200,6 +1219,10 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       warningPromptTimerRef.current = null
     }, 4500)
   }, [])
+
+  useEffect(() => {
+    autoResolveDependencyViewRef.current = autoResolveDependencyView
+  }, [autoResolveDependencyView])
 
   const activeCategories = useMemo(
     () => categories.filter(c => c.dimensionId === activeDimId),
@@ -1536,6 +1559,9 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         setBlinkingDepIds(new Set(depIds))
         window.setTimeout(() => setBlinkingDepIds(new Set()), 3000)
         showWarningPrompt({ title: 'Dependency violation', message: detail.message, actions: 'dependency', dependencyIds: depIds })
+        if (autoResolveDependencyViewRef.current) {
+          resolveDependencySelectionRef.current?.(milestoneIds)
+        }
       } else {
         showTransactionFailure(err)
       }
@@ -1738,19 +1764,23 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     setHiddenGoalsByLane({})
   }, [])
 
-  const resolveDependencySelection = useCallback(() => {
-    const idsToResolve = pendingDependencyResolveIds.size > 0
+  const resolveDependencySelection = useCallback((milestoneIds = null) => {
+    const explicitIds = milestoneIds ? new Set(milestoneIds) : null
+    const idsToResolve = explicitIds?.size > 0
+      ? explicitIds
+      : pendingDependencyResolveIds.size > 0
       ? pendingDependencyResolveIds
       : selectedIdsRef.current
+    const accumulatedIds = new Set([...selectedIdsRef.current, ...idsToResolve])
     const goalIds = new Set()
-    idsToResolve.forEach(msId => {
+    accumulatedIds.forEach(msId => {
       const milestone = milestonesRef.current.find(m => m.id === msId)
       if (milestone) goalIds.add(milestone.goalId)
     })
     const snapshot = capturePerspectiveStateRef.current?.()
     if (snapshot) setDependencyResolveSnapshot(prev => prev ?? snapshot)
     setSelectedDepIds(new Set())
-    setSelectedIds(prev => new Set([...prev, ...idsToResolve]))
+    setSelectedIds(accumulatedIds)
     setActiveFilterIds([])
     setQuickFilters([])
     setPaintCat(null)
@@ -1760,6 +1790,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     setPendingDependencyResolveIds(new Set())
     clearWarningPrompt()
   }, [applyGoalVisibilityFilter, clearWarningPrompt, pendingDependencyResolveIds])
+  resolveDependencySelectionRef.current = resolveDependencySelection
 
   const isGoalHighlighted = goalId => selectedGoalIds.has(goalId) || goalId === clickedGoalId
 
@@ -1958,6 +1989,9 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       actions: 'dependency',
       dependencyIds: depIds,
     })
+    if (autoResolveDependencyViewRef.current) {
+      resolveDependencySelectionRef.current?.(milestoneIds)
+    }
   }, [presentDependencyConflictMilestones, showWarningPrompt])
 
   const maybeBlockDependencyWarning = useCallback((nextMilestones, nextDependencies) => {
@@ -3145,6 +3179,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={setHideCrossCatDeps}
         showCrucialDepsOnly={showCrucialDepsOnly} onShowCrucialDepsOnlyChange={setShowCrucialDepsOnly}
         colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={setColorDependencyDirection}
+        autoResolveDependencyView={autoResolveDependencyView}
+        onAutoResolveDependencyViewChange={setAutoResolveDependencyView}
       />
 
       <div className={styles.canvasRow}>
