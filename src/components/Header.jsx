@@ -3,7 +3,11 @@ import styles from './Header.module.css'
 import { api } from '../api'
 import CategoryAssignmentPicker from './CategoryAssignmentPicker'
 
-const PAGES = ['Overview', 'Goals', 'Classification', 'Schedule']
+const PAGES = [
+  { name: 'Goals', view: 1 },
+  { name: 'Classification', view: 2 },
+  { name: 'Schedule', view: 3 },
+]
 
 function computeWordRects(el) {
   const base = el.getBoundingClientRect()
@@ -109,16 +113,35 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
   return (
     <header className={styles.header}>
       {onBack && (
-        <button className={styles.backBtn} onClick={onBack} title="Back to projects">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path d="M9 2L4 7l5 5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+        <button className={styles.backBtn} onClick={onBack} title="See all projects" aria-label="See all projects">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+            <path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v8A1.5 1.5 0 0 0 3.5 14h8A1.5 1.5 0 0 0 13 12.5V10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            <path d="M9 2h5v5M14 2 8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
-          {projectName && <span className={styles.projectName}>{projectName}</span>}
         </button>
       )}
+      {projectName && (
+        <button
+          className={`${styles.projectNameBtn} ${view === 0 ? styles.projectNameBtnActive : ''}`}
+          onClick={() => onNavigate(0)}
+          title="Open project overview">
+          {projectName}
+        </button>
+      )}
+
+      <nav className={styles.nav}>
+        {PAGES.map(page => (
+          <button key={page.view}
+            className={`${styles.navItem} ${view === page.view ? styles.active : ''}`}
+            onClick={() => onNavigate(page.view)}>
+            {page.name}
+          </button>
+        ))}
+      </nav>
+
       <div ref={wrapRef} className={styles.quickAddWrap}>
         <button className={styles.quickAddBtn} onClick={() => setOpen(o => !o)} title="Quick add goal">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
             <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.5"/>
             <path d="M5 8h6M5 5.5h4M5 10.5h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
             <path d="M11.5 10l1 1 1.5-1.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
@@ -188,16 +211,6 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
           </div>
         )}
       </div>
-
-      <nav className={styles.nav}>
-        {PAGES.map((name, i) => (
-          <button key={i}
-            className={`${styles.navItem} ${view === i ? styles.active : ''}`}
-            onClick={() => onNavigate(i)}>
-            {name}
-          </button>
-        ))}
-      </nav>
     </header>
   )
 }

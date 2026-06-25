@@ -21,8 +21,6 @@ const FILTER_CATEGORY_PREFIX = 'filter:'
 const NONE_PERSPECTIVE_ID = '__none__'
 const SCHEDULE_DEFAULT_PERSPECTIVE_KEY = 'schedule.defaultPerspectiveId'
 
-// Metric options: what each column index represents
-const METRICS = ['days', 'weeks', 'months', 'hours', 'order']
 const METRIC_LABELS = { days: 'Days', weeks: 'Weeks', months: 'Months', hours: 'Hours', order: 'Order' }
 
 function makeColorCursor(color) {
@@ -324,7 +322,7 @@ function buildRowItems(goals, categories, assignments, assignmentOrders, activeD
 // ── Visual settings panel ─────────────────────────────────────────────────────
 function SpacingPanel({
   spacing, onChange, onClose, anchorRef, axisMode, onAxisModeChange,
-  metric, onMetricChange,
+  metric,
   showDepLabels, onShowDepLabelsChange,
   showDeps, onShowDepsChange,
   hideCrossCatDeps, onHideCrossCatDepsChange,
@@ -367,25 +365,13 @@ function SpacingPanel({
         </label>
       ))}
       <div className={styles.axisModeRow}>
-        <span className={styles.spacingLabel}>Time axis</span>
+        <span className={styles.spacingLabel}>Display</span>
         <div className={styles.axisModePills}>
-          {[['full', 'All days'], ['numbers', 'Numbers'], ['none', 'None']].map(([val, label]) => (
+          {[['full', METRIC_LABELS[metric] ?? 'Metric'], ['numbers', 'Numbers'], ['none', 'None']].map(([val, label]) => (
             <button key={val}
               className={`${styles.axisModePill} ${axisMode === val ? styles.axisModePillActive : ''}`}
               onClick={() => onAxisModeChange(val)}>
               {label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className={styles.axisModeRow}>
-        <span className={styles.spacingLabel}>Metric</span>
-        <div className={styles.axisModePills}>
-          {METRICS.map(m => (
-            <button key={m}
-              className={`${styles.axisModePill} ${metric === m ? styles.axisModePillActive : ''}`}
-              onClick={() => onMetricChange(m)}>
-              {METRIC_LABELS[m]}
             </button>
           ))}
         </div>
@@ -633,7 +619,7 @@ function GanttToolbar({
   savedFilters, activeLaneFilterId, onLaneGroupChange,
   spacing, onSpacingChange, mode, onModeChange,
   axisMode, onAxisModeChange,
-  metric, onMetricChange,
+  metric,
   showDepLabels, onShowDepLabelsChange,
   showDeps, onShowDepsChange, hideCrossCatDeps, onHideCrossCatDepsChange,
   showCrucialDepsOnly, onShowCrucialDepsOnlyChange,
@@ -725,7 +711,7 @@ function GanttToolbar({
           <SpacingPanel spacing={spacing} onChange={onSpacingChange}
             onClose={closeSettings} anchorRef={settingsBtnRef}
             axisMode={axisMode} onAxisModeChange={onAxisModeChange}
-            metric={metric} onMetricChange={onMetricChange}
+            metric={metric}
             showDepLabels={showDepLabels} onShowDepLabelsChange={onShowDepLabelsChange}
             showDeps={showDeps} onShowDepsChange={onShowDepsChange}
             hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={onHideCrossCatDepsChange}
@@ -1244,6 +1230,10 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
   const [draggingCatId, setDraggingCatId] = useState(null)
   const [dragOverCatReorderId, setDragOverCatReorderId] = useState(null)
 
+  useEffect(() => {
+    setMetric(defaultMetric)
+  }, [defaultMetric])
+
   useEffect(() => () => {
     if (warningPromptTimerRef.current) window.clearTimeout(warningPromptTimerRef.current)
   }, [])
@@ -1288,7 +1278,6 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
       state: {
         spacing: DEFAULT_SPACING,
         axisMode: 'full',
-        metric: defaultMetric,
         showDepLabels: true,
         showDeps: true,
         hideCrossCatDeps: false,
@@ -1306,7 +1295,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
         },
       },
     })
-  }, [dimensions, defaultMetric])
+  }, [dimensions])
 
   const perspectiveOptions = useMemo(
     () => [nonePerspective, ...perspectives],
@@ -2879,7 +2868,6 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
     activePerspectiveId,
     spacing,
     axisMode,
-    metric,
     showDepLabels,
     showDeps,
     hideCrossCatDeps,
@@ -2906,7 +2894,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
       dependencyIds: [...selectedDepIdsRef.current],
     },
   }), [
-    activeDimId, activeFilterIds, activeLaneFilterId, activePerspectiveId, axisMode, metric, colorDimId,
+    activeDimId, activeFilterIds, activeLaneFilterId, activePerspectiveId, axisMode, colorDimId,
     colorDependencyDirection, hiddenCatIds, hiddenGoalsByLane, hideCrossCatDeps,
     leftPanelWidth, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps, spacing, visibleGoalFilterIds,
   ])
@@ -2922,7 +2910,6 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
 
     if (state.spacing) setSpacing({ ...DEFAULT_SPACING, ...state.spacing })
     if (state.axisMode) setAxisMode(state.axisMode)
-    if (state.metric) setMetric(state.metric)
     if (typeof state.showDepLabels === 'boolean') setShowDepLabels(state.showDepLabels)
     if (typeof state.showDeps === 'boolean') setShowDeps(state.showDeps)
     if (typeof state.hideCrossCatDeps === 'boolean') setHideCrossCatDeps(state.hideCrossCatDeps)
@@ -2965,7 +2952,6 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
 
     if (state.spacing) setSpacing({ ...DEFAULT_SPACING, ...state.spacing })
     if (state.axisMode) setAxisMode(state.axisMode)
-    if (state.metric) setMetric(state.metric)
     if (typeof state.showDepLabels === 'boolean') setShowDepLabels(state.showDepLabels)
     if (typeof state.showDeps === 'boolean') setShowDeps(state.showDeps)
     if (typeof state.hideCrossCatDeps === 'boolean') setHideCrossCatDeps(state.hideCrossCatDeps)
@@ -3232,7 +3218,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen,
         spacing={spacing} onSpacingChange={handleSpacingChange}
         mode={mode} onModeChange={setMode}
         axisMode={axisMode} onAxisModeChange={setAxisMode}
-        metric={metric} onMetricChange={setMetric}
+        metric={metric}
         showDepLabels={showDepLabels} onShowDepLabelsChange={setShowDepLabels}
         showDeps={showDeps} onShowDepsChange={setShowDeps}
         hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={setHideCrossCatDeps}
