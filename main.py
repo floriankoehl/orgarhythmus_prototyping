@@ -35,10 +35,11 @@ def _init_db():
     with _db() as con:
         con.execute("""
             CREATE TABLE IF NOT EXISTS projects (
-                id         TEXT PRIMARY KEY,
-                name       TEXT NOT NULL DEFAULT 'Untitled',
-                color      TEXT NOT NULL DEFAULT '#1a73e8',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                id          TEXT PRIMARY KEY,
+                name        TEXT NOT NULL DEFAULT 'Untitled',
+                description TEXT NOT NULL DEFAULT '',
+                metric      TEXT NOT NULL DEFAULT 'days',
+                created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
         con.execute("""
@@ -197,10 +198,19 @@ def _migrate():
             )
         """)
 
+        # Migrate projects table columns
+        proj_cols = [r[1] for r in con.execute("PRAGMA table_info(projects)").fetchall()]
+        if 'description' not in proj_cols:
+            con.execute("ALTER TABLE projects ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+        if 'metric' not in proj_cols:
+            con.execute("ALTER TABLE projects ADD COLUMN metric TEXT NOT NULL DEFAULT 'days'")
+        if 'color' in proj_cols:
+            pass  # keep for compat, just don't use in UI
+
         # Seed default project if missing
         if not con.execute("SELECT id FROM projects WHERE id = 'default'").fetchone():
             con.execute(
-                "INSERT INTO projects (id, name, color) VALUES ('default', 'My Project', '#1a73e8')"
+                "INSERT INTO projects (id, name, description, metric) VALUES ('default', 'My Project', '', 'days')"
             )
 
 _migrate()
@@ -232,11 +242,13 @@ _seed_defaults('default')
 class ProjectIn(BaseModel):
     id: Optional[str] = None
     name: str
-    color: str = '#1a73e8'
+    description: str = ''
+    metric: str = 'days'
 
 class ProjectPatch(BaseModel):
     name: Optional[str] = None
-    color: Optional[str] = None
+    description: Optional[str] = None
+    metric: Optional[str] = None
 
 class PageIn(BaseModel):
     id: Optional[str] = None
@@ -346,7 +358,14 @@ class TransactionApplyIn(BaseModel):
 
 # ── Helper converters ─────────────────────────────────────────────────────────
 def _project(row) -> dict:
-    return {"id": row["id"], "name": row["name"], "color": row["color"], "createdAt": row["created_at"]}
+    d = dict(row)
+    return {
+        "id": d["id"],
+        "name": d["name"],
+        "description": d.get("description", ""),
+        "metric": d.get("metric", "days"),
+        "createdAt": d["created_at"],
+    }
 
 def _page(row) -> dict:
     d = dict(row)
@@ -712,12 +731,13 @@ def list_projects():
 def create_project(data: ProjectIn):
     pid = data.id or str(uuid.uuid4())
     name = data.name.strip() or 'Untitled'
+    metric = data.metric if data.metric in ('days', 'weeks', 'months', 'hours', 'order') else 'days'
     with _db() as con:
         if con.execute("SELECT id FROM projects WHERE id = ?", (pid,)).fetchone():
             raise HTTPException(409, "Project already exists")
         con.execute(
-            "INSERT INTO projects (id, name, color) VALUES (?, ?, ?)",
-            (pid, name, data.color),
+            "INSERT INTO projects (id, name, description, metric) VALUES (?, ?, ?, ?)",
+            (pid, name, data.description or '', metric),
         )
         row = con.execute("SELECT * FROM projects WHERE id = ?", (pid,)).fetchone()
     return _project(row)
@@ -728,12 +748,58 @@ def update_project(project_id: str, data: ProjectPatch):
         if not con.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone():
             raise HTTPException(404, "Project not found")
         fields, values = [], []
-        if data.name is not None:  fields.append("name = ?");  values.append(data.name.strip() or 'Untitled')
-        if data.color is not None: fields.append("color = ?"); values.append(data.color)
+        if data.name is not None:
+            fields.append("name = ?");  values.append(data.name.strip() or 'Untitled')
+        if data.description is not None:
+            fields.append("description = ?"); values.append(data.description)
+        if data.metric is not None:
+            m = data.metric if data.metric in ('days', 'weeks', 'months', 'hours', 'order') else 'days'
+            fields.append("metric = ?"); values.append(m)
         if fields:
             con.execute(f"UPDATE projects SET {', '.join(fields)} WHERE id = ?", (*values, project_id))
         row = con.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
     return _project(row)
+
+@app.get("/projects/{project_id}/stats")
+def get_project_stats(project_id: str):
+    with _db() as con:
+        if not con.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone():
+            raise HTTPException(404, "Project not found")
+        goals = con.execute(
+            "SELECT COUNT(*) FROM pages WHERE project_id = ?", (project_id,)
+        ).fetchone()[0]
+        milestones = con.execute(
+            "SELECT COUNT(*) FROM milestones WHERE goal_id IN (SELECT id FROM pages WHERE project_id = ?)",
+            (project_id,)
+        ).fetchone()[0]
+        dimensions = con.execute(
+            "SELECT COUNT(*) FROM dimensions WHERE project_id = ?", (project_id,)
+        ).fetchone()[0]
+        categories = con.execute(
+            """SELECT COUNT(*) FROM categories
+            WHERE dimension_id IN (SELECT id FROM dimensions WHERE project_id = ?)""",
+            (project_id,)
+        ).fetchone()[0]
+        dependencies = con.execute(
+            """SELECT COUNT(*) FROM dependencies WHERE from_id IN (
+                SELECT id FROM milestones WHERE goal_id IN (SELECT id FROM pages WHERE project_id = ?)
+            )""",
+            (project_id,)
+        ).fetchone()[0]
+        perspectives = con.execute(
+            """SELECT
+                (SELECT COUNT(*) FROM schedule_perspectives WHERE project_id = ?) +
+                (SELECT COUNT(*) FROM classification_perspectives WHERE project_id = ?)""",
+            (project_id, project_id)
+        ).fetchone()[0]
+    return {
+        "goals": goals,
+        "milestones": milestones,
+        "dimensions": dimensions,
+        "categories": categories,
+        "dependencies": dependencies,
+        "perspectives": perspectives,
+    }
 
 @app.delete("/projects/{project_id}", status_code=204)
 def delete_project(project_id: str):

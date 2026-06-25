@@ -48,10 +48,11 @@ async function baseReq(method, path, body) {
 }
 
 export const projectsApi = {
-  getProjects:   ()          => baseReq('GET',    '/projects'),
-  createProject: (data)      => baseReq('POST',   '/projects', data),
-  updateProject: (id, patch) => baseReq('PATCH',  `/projects/${id}`, patch),
-  deleteProject: (id)        => baseReq('DELETE', `/projects/${id}`),
+  getProjects:      ()          => baseReq('GET',    '/projects'),
+  createProject:    (data)      => baseReq('POST',   '/projects', data),
+  updateProject:    (id, patch) => baseReq('PATCH',  `/projects/${id}`, patch),
+  deleteProject:    (id)        => baseReq('DELETE', `/projects/${id}`),
+  getProjectStats:  (id)        => baseReq('GET',    `/projects/${id}/stats`),
 }
 
 export const api = {

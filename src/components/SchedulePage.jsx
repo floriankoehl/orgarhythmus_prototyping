@@ -1155,7 +1155,7 @@ function ScheduleColorLegendWidget({
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function SchedulePage({ goals = [], isActive = false, onGoalOpen }) {
+export default function SchedulePage({ goals = [], isActive = false, onGoalOpen, defaultMetric = 'days' }) {
   // ── API data ───────────────────────────────────────────────────────────────
   const [dimensions,   setDimensions]   = useState([])
   const [categories,   setCategories]   = useState([])
@@ -1208,7 +1208,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const [activeDimId,       setActiveDimId]       = useState('')
   const [activeLaneFilterId, setActiveLaneFilterId] = useState('')
   const [axisMode, setAxisMode] = useState('full')
-  const [metric,   setMetric]   = useState('days') // 'days'|'weeks'|'months'|'hours'|'order'
+  const [metric,   setMetric]   = useState(defaultMetric)
   const [showDepLabels, setShowDepLabels] = useState(true)
   const [showDeps, setShowDeps] = useState(true)
   const [hideCrossCatDeps, setHideCrossCatDeps] = useState(false)
@@ -1288,7 +1288,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       state: {
         spacing: DEFAULT_SPACING,
         axisMode: 'full',
-        metric: 'days',
+        metric: defaultMetric,
         showDepLabels: true,
         showDeps: true,
         hideCrossCatDeps: false,
@@ -1306,7 +1306,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         },
       },
     })
-  }, [dimensions])
+  }, [dimensions, defaultMetric])
 
   const perspectiveOptions = useMemo(
     () => [nonePerspective, ...perspectives],

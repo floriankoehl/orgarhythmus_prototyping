@@ -2,25 +2,16 @@ import { useState, useEffect, useRef } from 'react'
 import { projectsApi } from '../api'
 import styles from './ProjectsPage.module.css'
 
-const COLORS = [
-  '#1a73e8', '#0f9d58', '#e53935', '#fb8c00',
-  '#8e24aa', '#00897b', '#3949ab', '#e91e63',
+const PROJECT_METRICS = [
+  { value: 'days',   label: 'Days' },
+  { value: 'weeks',  label: 'Weeks' },
+  { value: 'months', label: 'Months' },
+  { value: 'hours',  label: 'Hours' },
 ]
 
-function ColorDot({ color, selected, onClick }) {
-  return (
-    <button
-      className={`${styles.colorDot} ${selected ? styles.colorDotSelected : ''}`}
-      style={{ background: color }}
-      onClick={onClick}
-      title={color}
-    />
-  )
-}
-
 function CreateProjectModal({ onClose, onCreate }) {
-  const [name, setName]   = useState('')
-  const [color, setColor] = useState(COLORS[0])
+  const [name,   setName]   = useState('')
+  const [metric, setMetric] = useState('days')
   const inputRef = useRef()
 
   useEffect(() => { inputRef.current?.focus() }, [])
@@ -28,7 +19,7 @@ function CreateProjectModal({ onClose, onCreate }) {
   const submit = async () => {
     const trimmed = name.trim()
     if (!trimmed) return
-    await onCreate({ name: trimmed, color })
+    await onCreate({ name: trimmed, metric })
     onClose()
   }
 
@@ -49,10 +40,18 @@ function CreateProjectModal({ onClose, onCreate }) {
           onKeyDown={onKey}
           placeholder="Project name"
         />
-        <div className={styles.colorRow}>
-          {COLORS.map(c => (
-            <ColorDot key={c} color={c} selected={color === c} onClick={() => setColor(c)} />
-          ))}
+        <div className={styles.fieldRow}>
+          <span className={styles.fieldLabel}>Time metric</span>
+          <div className={styles.metricPills}>
+            {PROJECT_METRICS.map(m => (
+              <button
+                key={m.value}
+                className={`${styles.metricPill} ${metric === m.value ? styles.metricPillActive : ''}`}
+                onClick={() => setMetric(m.value)}>
+                {m.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className={styles.modalActions}>
           <button className={styles.modalCancel} onClick={onClose}>Cancel</button>
@@ -76,13 +75,19 @@ function ProjectCard({ project, onOpen, onDelete }) {
 
   const date = new Date(project.createdAt)
   const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const metricLabel = PROJECT_METRICS.find(m => m.value === project.metric)?.label ?? project.metric
 
   return (
     <div className={styles.card} onClick={() => onOpen(project)}>
-      <div className={styles.cardAccent} style={{ background: project.color }} />
       <div className={styles.cardBody}>
         <div className={styles.cardName}>{project.name}</div>
-        <div className={styles.cardDate}>Created {dateStr}</div>
+        <div className={styles.cardMeta}>
+          <span className={styles.cardMetric}>{metricLabel}</span>
+          <span className={styles.cardDate}>{dateStr}</span>
+        </div>
+        {project.description && (
+          <div className={styles.cardDesc}>{project.description}</div>
+        )}
       </div>
       <div className={styles.cardMenu} ref={menuRef}>
         <button
@@ -109,7 +114,7 @@ export default function ProjectsPage({ onOpenProject }) {
   const [projects, setProjects] = useState([])
   const [loading, setLoading]   = useState(true)
   const [creating, setCreating] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState(null) // project to delete
+  const [deleteConfirm, setDeleteConfirm] = useState(null)
 
   useEffect(() => {
     projectsApi.getProjects()

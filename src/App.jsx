@@ -8,6 +8,7 @@ import SchedulePage from './components/SchedulePage'
 import BrainstormV2 from './components/BrainstormV2'
 import GoalPopup from './components/GoalPopup'
 import ProjectsPage from './components/ProjectsPage'
+import ProjectDashboard from './components/ProjectDashboard'
 import { api, setProjectId } from './api'
 import styles from './App.module.css'
 
@@ -50,6 +51,7 @@ export default function App() {
   const [navDragOffset, setNavDragOffset] = useState(0)
   const [navDragging, setNavDragging] = useState(false)
   const [activeProject, setActiveProject] = useState(null)
+  const [appScreen, setAppScreen] = useState('home') // 'home' | 'dashboard' | 'workspace'
   const [goals, setGoals] = useState([])
   const [refreshKey, setRefreshKey] = useState(0)
   const [popupGoalId, setPopupGoalId] = useState(null)
@@ -59,17 +61,31 @@ export default function App() {
     setProjectId(project.id)
     setActiveProject(project)
     setGoals([])
-    setView(0)
     setToast(null)
     setPopupGoalId(null)
     setRefreshKey(0)
+    setAppScreen('dashboard')
   }
 
-  const closeProject = () => {
+  const handleProjectUpdate = (updated) => {
+    setActiveProject(updated)
+  }
+
+  const enterWorkspace = (wsView = 0) => {
+    setView(wsView)
+    setAppScreen('workspace')
+  }
+
+  const backToDashboard = () => {
+    setAppScreen('dashboard')
+  }
+
+  const backToHome = () => {
     setActiveProject(null)
     setGoals([])
     setToast(null)
     setPopupGoalId(null)
+    setAppScreen('home')
   }
   const navGestureRef = useRef({ active: false, startX: 0, startView: 0, offset: 0, suppressContextUntil: 0 })
   const viewRef = useRef(view)
@@ -116,11 +132,11 @@ export default function App() {
     setRefreshKey(k => k + 1)
   }
 
-  // Load goals when project opens or refreshKey changes
+  // Load goals when entering the workspace for this project
   useEffect(() => {
-    if (!activeProject) return
+    if (!activeProject || appScreen !== 'workspace') return
     api.getPages().then(setGoals).catch(console.error)
-  }, [activeProject?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeProject?.id, appScreen]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!refreshKey || !activeProject) return
     api.getPages().then(data => { if (data.length > 0) setGoals(data) }).catch(console.error)
@@ -224,7 +240,7 @@ export default function App() {
 
   const popupGoal = goals.find(g => g.id === popupGoalId)
 
-  if (!activeProject) {
+  if (appScreen === 'home') {
     return (
       <div className={styles.app}>
         <ProjectsPage onOpenProject={openProject} />
@@ -232,11 +248,25 @@ export default function App() {
     )
   }
 
+  if (appScreen === 'dashboard') {
+    return (
+      <div className={styles.app}>
+        <ProjectDashboard
+          project={activeProject}
+          onUpdate={handleProjectUpdate}
+          onBack={backToHome}
+          onEnterWorkspace={enterWorkspace}
+        />
+      </div>
+    )
+  }
+
+  // appScreen === 'workspace'
   return (
     <div className={styles.app}>
       <Header
         view={view} onNavigate={setView} onQuickAdd={handleQuickAdd}
-        projectName={activeProject.name} onBack={closeProject}
+        projectName={activeProject.name} onBack={backToDashboard}
       />
       <div
         className={`${styles.slider} ${navDragging ? styles.sliderDragging : ''}`}
@@ -259,7 +289,12 @@ export default function App() {
 
         {/* View 2 — Schedule */}
         <div className={styles.view}>
-          <SchedulePage goals={goals} isActive={view === 2} onGoalOpen={openGoalPopup} />
+          <SchedulePage
+            goals={goals}
+            isActive={view === 2}
+            onGoalOpen={openGoalPopup}
+            defaultMetric={activeProject?.metric ?? 'days'}
+          />
         </div>
 
         
