@@ -1,14 +1,29 @@
 import json
+import os
 import sqlite3
+import time
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+from threading import Lock
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from jose import JWTError, jwt
+from passlib.context import CryptContext
 from pydantic import BaseModel, Field
 
 DB_PATH = "goals.db"
+JWT_ALGORITHM = "HS256"
+ACCESS_TOKEN_MINUTES = 30
+REFRESH_TOKEN_DAYS = 30
+LOGIN_REGISTER_LIMIT = 10
+RATE_LIMIT_WINDOW_SECONDS = 60
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
+_rate_limit_lock = Lock()
+_rate_limit_buckets: dict[tuple[str, str], list[float]] = {}
 
 app = FastAPI()
 
@@ -33,6 +48,16 @@ def _db():
 
 def _init_db():
     with _db() as con:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id                  TEXT PRIMARY KEY,
+                email               TEXT NOT NULL UNIQUE,
+                display_name        TEXT NOT NULL,
+                hashed_password     TEXT,
+                created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                google_oauth        INTEGER NOT NULL DEFAULT 0
+            )
+        """)
         con.execute("""
             CREATE TABLE IF NOT EXISTS projects (
                 id          TEXT PRIMARY KEY,
@@ -148,6 +173,17 @@ _init_db()
 
 def _migrate():
     with _db() as con:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id                  TEXT PRIMARY KEY,
+                email               TEXT NOT NULL UNIQUE,
+                display_name        TEXT NOT NULL,
+                hashed_password     TEXT,
+                created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                google_oauth        INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+
         # Add project_id to tables that need it
         for table in ['pages', 'dimensions', 'saved_filters', 'schedule_perspectives', 'classification_perspectives']:
             cols = [r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()]
@@ -239,6 +275,29 @@ _seed_defaults('default')
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
+class RegisterIn(BaseModel):
+    email: str
+    displayName: str
+    password: str
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
+
+class RefreshIn(BaseModel):
+    refreshToken: str
+
+class TokenOut(BaseModel):
+    accessToken: str
+    refreshToken: str
+    tokenType: str = "bearer"
+    expiresIn: int = ACCESS_TOKEN_MINUTES * 60
+
+class AccessTokenOut(BaseModel):
+    accessToken: str
+    tokenType: str = "bearer"
+    expiresIn: int = ACCESS_TOKEN_MINUTES * 60
+
 class ProjectIn(BaseModel):
     id: Optional[str] = None
     name: str
@@ -718,6 +777,159 @@ def _apply_transaction(con, project_id: str, transaction: TransactionPayload, re
         tx["after"] = after
         _push_history(con, project_id, tx, before, after)
     return {"ok": True, "transaction": tx, "history": _history_summary(con, project_id)}
+
+
+# ── Auth helpers ──────────────────────────────────────────────────────────────
+def _auth_secret() -> str:
+    secret = os.getenv("JWT_SECRET_KEY") or os.getenv("AUTH_SECRET_KEY")
+    if not secret:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "JWT secret is not configured",
+        )
+    return secret
+
+def _normalize_email(email: str) -> str:
+    return (email or "").strip().lower()
+
+def _user(row) -> dict:
+    d = dict(row)
+    return {
+        "id": d["id"],
+        "email": d["email"],
+        "displayName": d["display_name"],
+        "createdAt": d["created_at"],
+        "googleOauth": bool(d["google_oauth"]),
+    }
+
+def _hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+def _verify_password(password: str, hashed_password: str | None) -> bool:
+    if not hashed_password:
+        return False
+    return pwd_context.verify(password, hashed_password)
+
+def _create_access_token(user_id: str) -> str:
+    exp = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_MINUTES)
+    return jwt.encode({"sub": user_id, "exp": exp}, _auth_secret(), algorithm=JWT_ALGORITHM)
+
+def _create_refresh_token(user_id: str) -> str:
+    exp = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_DAYS)
+    return jwt.encode({"sub": user_id, "exp": exp, "typ": "refresh"}, _auth_secret(), algorithm=JWT_ALGORITHM)
+
+def _token_pair(user_id: str) -> dict:
+    return {
+        "accessToken": _create_access_token(user_id),
+        "refreshToken": _create_refresh_token(user_id),
+        "tokenType": "bearer",
+        "expiresIn": ACCESS_TOKEN_MINUTES * 60,
+    }
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",", 1)[0].strip()
+    return request.client.host if request.client else "unknown"
+
+def _check_rate_limit(request: Request, bucket: str):
+    ip = _client_ip(request)
+    key = (bucket, ip)
+    now = time.monotonic()
+    cutoff = now - RATE_LIMIT_WINDOW_SECONDS
+    with _rate_limit_lock:
+        attempts = [ts for ts in _rate_limit_buckets.get(key, []) if ts >= cutoff]
+        if len(attempts) >= LOGIN_REGISTER_LIMIT:
+            _rate_limit_buckets[key] = attempts
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "Too many attempts. Please try again later.",
+            )
+        attempts.append(now)
+        _rate_limit_buckets[key] = attempts
+
+def current_user(authorization: str | None = Header(default=None)) -> dict:
+    if not authorization:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing authorization header")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid authorization header")
+    try:
+        payload = jwt.decode(token, _auth_secret(), algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
+    user_id = payload.get("sub")
+    if not user_id or payload.get("typ") == "refresh":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+    with _db() as con:
+        row = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not row:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+    return _user(row)
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+@app.post("/auth/register", response_model=TokenOut, status_code=201)
+def register(data: RegisterIn, request: Request):
+    _check_rate_limit(request, "register")
+    _auth_secret()
+    email = _normalize_email(data.email)
+    display_name = (data.displayName or "").strip()
+    password = data.password or ""
+    if "@" not in email or "." not in email.rsplit("@", 1)[-1]:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Valid email is required")
+    if not display_name:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Display name is required")
+    if len(password) < 8:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Password must be at least 8 characters")
+
+    user_id = str(uuid.uuid4())
+    hashed_password = _hash_password(password)
+    with _db() as con:
+        if con.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone():
+            raise HTTPException(status.HTTP_409_CONFLICT, "Email is already registered")
+        con.execute(
+            """
+            INSERT INTO users (id, email, display_name, hashed_password, google_oauth)
+            VALUES (?, ?, ?, ?, 0)
+            """,
+            (user_id, email, display_name, hashed_password),
+        )
+    return _token_pair(user_id)
+
+@app.post("/auth/login", response_model=TokenOut)
+def login(data: LoginIn, request: Request):
+    _check_rate_limit(request, "login")
+    _auth_secret()
+    email = _normalize_email(data.email)
+    with _db() as con:
+        row = con.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    if not row or not _verify_password(data.password or "", row["hashed_password"]):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
+    return _token_pair(row["id"])
+
+@app.post("/auth/refresh", response_model=AccessTokenOut)
+def refresh_token(data: RefreshIn):
+    _auth_secret()
+    try:
+        payload = jwt.decode(data.refreshToken, _auth_secret(), algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired refresh token")
+    if payload.get("typ") != "refresh" or not payload.get("sub"):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid refresh token")
+    user_id = payload["sub"]
+    with _db() as con:
+        if not con.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone():
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid refresh token")
+    return {
+        "accessToken": _create_access_token(user_id),
+        "tokenType": "bearer",
+        "expiresIn": ACCESS_TOKEN_MINUTES * 60,
+    }
+
+@app.get("/auth/me")
+def me(user: dict = Depends(current_user)):
+    return user
 
 
 # ── Projects ──────────────────────────────────────────────────────────────────
