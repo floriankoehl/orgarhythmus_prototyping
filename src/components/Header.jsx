@@ -194,7 +194,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
       </nav>
 
       {/* Search button */}
-      <div ref={searchWrapRef} className={styles.searchWrap}>
+      {view !== 1 && <div ref={searchWrapRef} className={styles.searchWrap}>
         <button
           className={`${styles.searchBtn} ${searchOpen ? styles.searchBtnActive : ''}`}
           onClick={() => setSearchOpen(o => !o)}
@@ -234,7 +234,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
             )}
           </div>
         )}
-      </div>
+      </div>}
 
       {/* Quick-add button */}
       {view !== 1 && <div ref={wrapRef} className={styles.quickAddWrap}>

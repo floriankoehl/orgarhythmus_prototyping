@@ -11,7 +11,15 @@ function deriveTitle(text) {
 }
 
 function stripHtml(html) {
-  return (html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+  return (html || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<p[^>]*>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim()
 }
 
 function computeWordRects(el) {
@@ -33,21 +41,165 @@ function computeWordRects(el) {
 }
 
 // ── PostIt card ───────────────────────────────────────────────────────────────
-function PostIt({ note, position, selected, onDragStart, onCollapse, onSelect, onOpen }) {
+function PostIt({ note, position, size, isMergeTarget, onDragStart, onCollapse, onOpen, onSplit, onResize }) {
+  const [splitActive, setSplitActive] = useState(false)
+  const [cutY, setCutY]               = useState(null) // px from top of card
+  const [cutOffset, setCutOffset]     = useState(null) // char index in snippet text
+  const cardRef  = useRef(null)
+  const bodyRef  = useRef(null)
+  const lineBreaksRef = useRef(null)
+
   const snippet = stripHtml(note.html || '')
+
+  // Compute paragraph-based line break positions relative to body element
+  const buildLineBreaks = () => {
+    const body = bodyRef.current
+    if (!body) return []
+    const textNode = body.firstChild
+    if (!textNode || textNode.nodeType !== Node.TEXT_NODE) return []
+    const text = textNode.textContent
+    const bodyRect = body.getBoundingClientRect()
+    const breaks = []
+    let idx = 0
+    while (idx < text.length) {
+      const nl = text.indexOf('\n', idx)
+      if (nl === -1) break
+      const range = document.createRange()
+      range.setStart(textNode, nl)
+      range.setEnd(textNode, nl + 1)
+      const rects = range.getClientRects()
+      if (rects.length > 0) {
+        breaks.push({ relBottom: rects[0].bottom - bodyRect.top, charOffset: nl + 1 })
+      }
+      idx = nl + 1
+    }
+    return breaks
+  }
+
+  useEffect(() => {
+    if (splitActive) {
+      // defer so the body is rendered first
+      setTimeout(() => { lineBreaksRef.current = buildLineBreaks() }, 0)
+    } else {
+      lineBreaksRef.current = null
+      setCutY(null)
+      setCutOffset(null)
+    }
+  }, [splitActive, snippet]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!splitActive) return
+    const handler = e => { if (e.key === 'Escape') setSplitActive(false) }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [splitActive])
+
+  const handleMouseMove = (e) => {
+    if (!splitActive || !lineBreaksRef.current) return
+    const card = cardRef.current
+    const body = bodyRef.current
+    if (!card || !body) return
+
+    const cardRect = card.getBoundingClientRect()
+    const relX = e.clientX - cardRect.left
+    if (relX > 56) { setCutY(null); setCutOffset(null); return }
+
+    const bodyRect = body.getBoundingClientRect()
+    const mouseRelBody = e.clientY - bodyRect.top
+
+    let best = null, bestDist = Infinity
+    for (const lb of lineBreaksRef.current) {
+      const d = Math.abs(mouseRelBody - lb.relBottom)
+      if (d < bestDist) { bestDist = d; best = lb }
+    }
+
+    if (best && bestDist < 24) {
+      setCutY(best.relBottom + (bodyRect.top - cardRect.top))
+      setCutOffset(best.charOffset)
+    } else {
+      setCutY(null)
+      setCutOffset(null)
+    }
+  }
+
+  const handleResizeDown = (e) => {
+    e.stopPropagation()
+    e.preventDefault()
+    const card = cardRef.current
+    if (!card) return
+    const startX = e.clientX
+    const startY = e.clientY
+    const startW = card.offsetWidth
+    const startH = card.offsetHeight
+    const onMove = ev => {
+      onResize?.(Math.max(180, startW + ev.clientX - startX), Math.max(80, startH + ev.clientY - startY))
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  const handleClick = (e) => {
+    if (splitActive && cutY !== null && cutOffset !== null) {
+      e.stopPropagation()
+      const part1 = snippet.slice(0, cutOffset).trimEnd()
+      const part2 = snippet.slice(cutOffset).trimStart()
+      setSplitActive(false)
+      onSplit?.(part1, part2)
+    }
+  }
+
   return (
     <div
-      className={`${styles.postit} ${selected ? styles.postitSelected : ''}`}
-      style={{ left: position.x, top: position.y }}
-      onClick={onSelect}
-      onDoubleClick={e => { e.stopPropagation(); onOpen() }}
+      ref={cardRef}
+      className={`${styles.postit} ${isMergeTarget ? styles.postitMergeTarget : ''} ${splitActive ? styles.postitSplitMode : ''}`}
+      style={{ left: position.x, top: position.y, ...(size ? { width: size.w, height: size.h } : {}) }}
+      onClick={handleClick}
+      onDoubleClick={splitActive ? undefined : e => { e.stopPropagation(); onOpen() }}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={() => { if (splitActive) { setCutY(null); setCutOffset(null) } }}
     >
-      <div className={styles.postitHeader} onPointerDown={onDragStart}>
-        <div className={`${styles.selectDot} ${selected ? styles.selectDotOn : ''}`} />
+      <div className={styles.postitHeader} onPointerDown={splitActive ? undefined : onDragStart}>
         <span className={styles.postitTitle}>{note.title || 'Untitled'}</span>
-        <button className={styles.postitClose} title="Collapse" onClick={e => { e.stopPropagation(); onCollapse() }}>×</button>
+        <button
+          className={`${styles.postitSplitBtn} ${splitActive ? styles.postitSplitBtnActive : ''}`}
+          title="Split note"
+          onPointerDown={e => e.stopPropagation()}
+          onClick={e => { e.stopPropagation(); setSplitActive(a => !a) }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/>
+            <line x1="20" y1="4" x2="8.12" y2="15.88"/>
+            <line x1="14.47" y1="14.48" x2="20" y2="20"/>
+            <line x1="8.12" y1="8.12" x2="12" y2="12"/>
+          </svg>
+        </button>
+        <button className={styles.postitClose} title="Collapse" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onCollapse() }}>×</button>
       </div>
-      {snippet && <p className={styles.postitBody}>{snippet}</p>}
+
+      {snippet && <p ref={bodyRef} className={styles.postitBody}>{snippet}</p>}
+
+      <div className={styles.resizeHandle} onPointerDown={handleResizeDown}>
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+          <circle cx="9" cy="9" r="1.2"/><circle cx="5.5" cy="9" r="1.2"/><circle cx="9" cy="5.5" r="1.2"/>
+          <circle cx="2" cy="9" r="1.2"/><circle cx="5.5" cy="5.5" r="1.2"/><circle cx="9" cy="2" r="1.2"/>
+        </svg>
+      </div>
+
+      {splitActive && cutY !== null && (
+        <div className={styles.cutLine} style={{ top: cutY }}>
+          <svg className={styles.cutScissor} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/>
+            <line x1="20" y1="4" x2="8.12" y2="15.88"/>
+            <line x1="14.47" y1="14.48" x2="20" y2="20"/>
+            <line x1="8.12" y1="8.12" x2="12" y2="12"/>
+          </svg>
+          <div className={styles.cutDash} />
+        </div>
+      )}
     </div>
   )
 }
@@ -55,9 +207,11 @@ function PostIt({ note, position, selected, onDragStart, onCollapse, onSelect, o
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefresh }) {
   // Canvas state
-  const [openNoteIds, setOpenNoteIds] = useState(new Set())
+  const [openNoteIds, setOpenNoteIds]       = useState(new Set())
   const [notePositions, setNotePositions]   = useState({})
-  const [selectedIds, setSelectedIds]       = useState(new Set())
+  const [mergeCandidate, setMergeCandidate] = useState(null)
+  const [mergeProposal, setMergeProposal]   = useState(null)
+  const [noteSizes, setNoteSizes]           = useState({}) // { [id]: { w, h } }
 
   // Drag
   const draggingRef   = useRef(null)
@@ -129,37 +283,45 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
 
   const collapseNote = (id) => {
     setOpenNoteIds(prev => { const n = new Set(prev); n.delete(id); return n })
-    setSelectedIds(prev => { const n = new Set(prev); n.delete(id); return n })
-  }
-
-  const toggleSelect = (id) => {
-    if (wasDraggedRef.current) return
-    setSelectedIds(prev => {
-      const n = new Set(prev)
-      if (n.has(id)) n.delete(id); else n.add(id)
-      return n
-    })
   }
 
   // ── Merge ────────────────────────────────────────────────────────────────────
-  const mergeSelected = async () => {
-    const ids = [...selectedIds]
-    if (ids.length < 2) return
-    const toMerge = notes.filter(n => ids.includes(n.id))
-    if (toMerge.length < 2) return
+  const confirmMerge = async () => {
+    if (!mergeProposal) return
+    const { sourceId, targetId } = mergeProposal
+    setMergeProposal(null)
+    const src = notes.find(n => n.id === sourceId)
+    const tgt = notes.find(n => n.id === targetId)
+    if (!src || !tgt) return
 
-    const mergedTitle = toMerge.map(n => n.title || 'Untitled').join(' · ')
-    const mergedHtml  = toMerge.map(n => n.html || n.title || '').join('<p style="color:#ccc;text-align:center;margin:8px 0">— — —</p>')
+    const mergedHtml = (tgt.html || tgt.title || '') +
+      `<br><br><br><strong>${src.title || 'Untitled'}</strong><br>${src.html || ''}`
 
     try {
-      await api.updateNote(toMerge[0].id, { title: mergedTitle, html: mergedHtml })
-      await Promise.all(toMerge.slice(1).map(n => api.deleteNote(n.id)))
-      const secondary = new Set(ids.slice(1))
-      setOpenNoteIds(prev => { const n = new Set(prev); secondary.forEach(id => n.delete(id)); return n })
-      setSelectedIds(new Set())
+      await api.updateNote(targetId, { title: tgt.title, html: mergedHtml })
+      await api.deleteNote(sourceId)
+      setOpenNoteIds(prev => { const n = new Set(prev); n.delete(sourceId); return n })
       onRefresh?.()
     } catch (e) {
       console.error('Merge failed', e)
+    }
+  }
+
+  // ── Split ────────────────────────────────────────────────────────────────────
+  const handleSplitNote = async (noteId, text1, text2) => {
+    const original = notes.find(n => n.id === noteId)
+    if (!original) return
+    const title2 = deriveTitle(text2) || 'Untitled'
+    try {
+      await api.updateNote(noteId, { html: text1, title: original.title })
+      const newId = crypto.randomUUID()
+      await api.createNote({ id: newId, html: text2, title: title2, collapsed: false })
+      const base = notePositions[noteId] || randomPos()
+      setNotePositions(prev => ({ ...prev, [newId]: { x: base.x + 260, y: base.y + 20 } }))
+      setOpenNoteIds(prev => new Set([...prev, newId]))
+      onRefresh?.()
+    } catch (e) {
+      console.error('Split failed', e)
     }
   }
 
@@ -179,13 +341,38 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
     const dx = e.clientX - startX
     const dy = e.clientY - startY
     if (Math.abs(dx) > 4 || Math.abs(dy) > 4) wasDraggedRef.current = true
-    if (wasDraggedRef.current) {
-      setNotePositions(prev => ({ ...prev, [id]: { x: origX + dx, y: origY + dy } }))
+    if (!wasDraggedRef.current) return
+
+    const newPos = { x: origX + dx, y: origY + dy }
+    setNotePositions(prev => ({ ...prev, [id]: newPos }))
+
+    // Detect if dragged card overlaps another (estimated card size)
+    const W = 280, H = 180
+    let candidate = null
+    for (const otherId of openNoteIds) {
+      if (otherId === id) continue
+      const op = notePositions[otherId]
+      if (!op) continue
+      if (newPos.x < op.x + W && newPos.x + W > op.x &&
+          newPos.y < op.y + H && newPos.y + H > op.y) {
+        candidate = otherId; break
+      }
     }
+    setMergeCandidate(candidate)
   }
 
   const handlePointerUp = () => {
+    const { id } = draggingRef.current || {}
     draggingRef.current = null
+
+    if (id && mergeCandidate && wasDraggedRef.current) {
+      const pos = notePositions[id] || { x: 200, y: 200 }
+      setMergeProposal({ sourceId: id, targetId: mergeCandidate, x: pos.x + 130, y: pos.y + 70 })
+      setMergeCandidate(null)
+    } else {
+      setMergeCandidate(null)
+    }
+
     requestAnimationFrame(() => { wasDraggedRef.current = false })
   }
 
@@ -310,22 +497,24 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
               key={id}
               note={note}
               position={pos}
-              selected={selectedIds.has(id)}
+              size={noteSizes[id] || null}
+              isMergeTarget={mergeCandidate === id}
               onDragStart={e => handlePointerDown(e, id)}
               onCollapse={() => collapseNote(id)}
-              onSelect={() => toggleSelect(id)}
-              onOpen={() => { if (!wasDraggedRef.current) { setSelectedIds(new Set()); onNoteOpen?.(id) } }}
+              onOpen={() => { if (!wasDraggedRef.current) onNoteOpen?.(id) }}
+              onSplit={(t1, t2) => handleSplitNote(id, t1, t2)}
+              onResize={(w, h) => setNoteSizes(prev => ({ ...prev, [id]: { w, h } }))}
             />
           )
         })}
       </div>
 
-      {/* Merge bar */}
-      {selectedIds.size >= 2 && (
-        <div className={styles.mergeBar}>
-          <span className={styles.mergeLabel}>{selectedIds.size} selected</span>
-          <button className={styles.mergeBtn} onClick={mergeSelected}>Merge</button>
-          <button className={styles.mergeClear} onClick={() => setSelectedIds(new Set())}>Clear</button>
+      {/* Merge proposal dialog */}
+      {mergeProposal && (
+        <div className={styles.mergeDialog} style={{ left: mergeProposal.x, top: mergeProposal.y }}>
+          <span className={styles.mergeDialogText}>Merge notes?</span>
+          <button className={styles.mergeDialogConfirm} onClick={confirmMerge}>Merge</button>
+          <button className={styles.mergeDialogCancel} onClick={() => setMergeProposal(null)}>Cancel</button>
         </div>
       )}
 
