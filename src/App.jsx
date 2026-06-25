@@ -218,6 +218,7 @@ export default function App() {
       <Header
         view={view} onNavigate={setView} onQuickAdd={handleQuickAdd}
         projectName={activeProject.name} onBack={backToHome}
+        notes={notes} onNoteOpen={openNotePopup}
       />
 
       <div className={styles.views}>
@@ -225,7 +226,7 @@ export default function App() {
           <ProjectDashboard project={activeProject} onUpdate={handleProjectUpdate} isActive={view === 0} />
         </div>
         <div className={styles.view} style={{ display: view === 1 ? 'flex' : 'none' }}>
-          <BrainstormV2 notes={notes} onNoteCreated={handleNoteCreated} />
+          <BrainstormV2 notes={notes} onNoteCreated={handleNoteCreated} onNoteOpen={openNotePopup} />
         </div>
         <div className={styles.view} style={{ display: view === 2 ? 'flex' : 'none' }}>
           <ClassificationPage notes={notes} isActive={view === 2} onNoteOpen={openNotePopup} refreshKey={noteDataVersion} />

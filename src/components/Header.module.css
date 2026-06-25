@@ -86,6 +86,115 @@
   background: #e8f0fe;
 }
 
+/* ── Search ────────────────────────────────────────────────────────────────── */
+.searchWrap {
+  position: fixed;
+  left: 88px;
+  bottom: 24px;
+  z-index: 3500;
+}
+
+.searchBtn {
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 50%;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+  cursor: pointer;
+  color: #666;
+  transition: color 0.15s, background 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+.searchBtn:hover {
+  color: #1a73e8;
+  background: #f0f4ff;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.13);
+}
+.searchBtnActive {
+  color: #1a73e8;
+  background: #e8f0fe;
+  border-color: #c5d8f8;
+}
+
+.searchPanel {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 12px);
+  width: 380px;
+  max-width: calc(100vw - 48px);
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.13);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.searchInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 13px 16px;
+  font-size: 14px;
+  font-family: monospace;
+  color: #1a1a1a;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #f0f0f0;
+  outline: none;
+}
+.searchInput::placeholder { color: #bbb; font-family: Arial, sans-serif; }
+
+.searchResults {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.searchEmpty {
+  padding: 16px;
+  font-size: 13px;
+  font-family: Arial, sans-serif;
+  color: #aaa;
+  text-align: center;
+}
+
+.searchResultCard {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 16px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid #f5f5f5;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.searchResultCard:last-child { border-bottom: none; }
+.searchResultCard:hover { background: #f5f8ff; }
+
+.searchResultTitle {
+  font-size: 13px;
+  font-family: Arial, sans-serif;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.searchResultSnippet {
+  font-size: 12px;
+  font-family: Arial, sans-serif;
+  color: #888;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ── Quick-add ─────────────────────────────────────────────────────────────── */
 .quickAddWrap {
   position: fixed;

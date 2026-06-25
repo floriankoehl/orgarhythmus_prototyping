@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import styles from './Header.module.css'
 import { api } from '../api'
 import CategoryAssignmentPicker from './CategoryAssignmentPicker'
@@ -8,6 +8,18 @@ const PAGES = [
   { name: 'Classification', view: 2 },
   { name: 'Schedule', view: 3 },
 ]
+
+function stripHtml(html) {
+  return (html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function getSnippet(html, re) {
+  const text = stripHtml(html)
+  const m = re.exec(text)
+  if (!m) return text.slice(0, 120)
+  const start = Math.max(0, m.index - 40)
+  return (start > 0 ? '…' : '') + text.slice(start, start + 120) + (start + 120 < text.length ? '…' : '')
+}
 
 function computeWordRects(el) {
   const base = el.getBoundingClientRect()
@@ -27,24 +39,36 @@ function computeWordRects(el) {
   return result
 }
 
-export default function Header({ view, onNavigate, onQuickAdd, projectName, onBack }) {
+export default function Header({ view, onNavigate, onQuickAdd, projectName, onBack, notes = [], onNoteOpen }) {
+  // quick-add state
   const [open, setOpen]               = useState(false)
   const [titleVal, setTitleVal]       = useState('')
   const [titleManual, setTitleManual] = useState(false)
   const [headlineMode, setHeadlineMode] = useState(false)
   const [wordRects, setWordRects]     = useState([])
-  const [dimensions, setDimensions] = useState([])
-  const [categories, setCategories] = useState([])
+  const [dimensions, setDimensions]   = useState([])
+  const [categories, setCategories]   = useState([])
   const [categorySelections, setCategorySelections] = useState({})
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false)
 
-  const editorRef    = useRef(null)
-  const titleInputRef = useRef(null)
-  const wrapRef      = useRef(null)
+  // search state
+  const [searchOpen, setSearchOpen]   = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+
+  const editorRef      = useRef(null)
+  const titleInputRef  = useRef(null)
+  const wrapRef        = useRef(null)
+  const searchInputRef = useRef(null)
+  const searchWrapRef  = useRef(null)
 
   useEffect(() => {
     if (open) setTimeout(() => editorRef.current?.focus(), 20)
   }, [open])
+
+  useEffect(() => {
+    if (searchOpen) setTimeout(() => searchInputRef.current?.focus(), 20)
+    else setSearchQuery('')
+  }, [searchOpen])
 
   const closePopup = () => {
     setOpen(false); setTitleVal(''); setTitleManual(false)
@@ -99,6 +123,16 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
     return () => document.removeEventListener('mousedown', handler)
   }, [open, categoryPickerOpen, titleVal, categorySelections]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!searchOpen) return
+    const handler = e => {
+      if (searchWrapRef.current?.contains(e.target)) return
+      setSearchOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [searchOpen])
+
   const handleKey = e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
     if (e.key === 'Escape') closePopup()
@@ -108,6 +142,26 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
     const next = !headlineMode
     setHeadlineMode(next)
     if (next && editorRef.current) setWordRects(computeWordRects(editorRef.current))
+  }
+
+  // search logic
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim()
+    if (!q) return []
+    let re
+    try { re = new RegExp(q, 'i') } catch { return [] }
+
+    const titleHits = notes.filter(n => re.test(n.title || ''))
+    if (titleHits.length > 0) return titleHits.map(n => ({ note: n, matchedTitle: true }))
+
+    return notes
+      .filter(n => re.test(stripHtml(n.html || '')))
+      .map(n => ({ note: n, matchedTitle: false, snippet: getSnippet(n.html, re) }))
+  }, [searchQuery, notes])
+
+  const openResult = (noteId) => {
+    setSearchOpen(false)
+    onNoteOpen?.(noteId)
   }
 
   return (
@@ -139,7 +193,51 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
         ))}
       </nav>
 
-      <div ref={wrapRef} className={styles.quickAddWrap}>
+      {/* Search button */}
+      <div ref={searchWrapRef} className={styles.searchWrap}>
+        <button
+          className={`${styles.searchBtn} ${searchOpen ? styles.searchBtnActive : ''}`}
+          onClick={() => setSearchOpen(o => !o)}
+          title="Search notes">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <circle cx="6.5" cy="6.5" r="4" stroke="currentColor" strokeWidth="1.5"/>
+            <path d="M10 10l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+        </button>
+
+        {searchOpen && (
+          <div className={styles.searchPanel}>
+            <input
+              ref={searchInputRef}
+              className={styles.searchInput}
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Escape') setSearchOpen(false) }}
+              placeholder="Search notes… (regex ok)"
+            />
+            {searchQuery.trim() && (
+              <div className={styles.searchResults}>
+                {searchResults.length === 0 ? (
+                  <div className={styles.searchEmpty}>No results</div>
+                ) : searchResults.map(({ note, matchedTitle, snippet }) => (
+                  <button
+                    key={note.id}
+                    className={styles.searchResultCard}
+                    onClick={() => openResult(note.id)}>
+                    <span className={styles.searchResultTitle}>{note.title || 'Untitled'}</span>
+                    {!matchedTitle && snippet && (
+                      <span className={styles.searchResultSnippet}>{snippet}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Quick-add button */}
+      {view !== 1 && <div ref={wrapRef} className={styles.quickAddWrap}>
         <button className={styles.quickAddBtn} onClick={() => setOpen(o => !o)} title="Quick add note">
           <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
             <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.5"/>
@@ -210,7 +308,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
             />
           </div>
         )}
-      </div>
+      </div>}
     </header>
   )
 }

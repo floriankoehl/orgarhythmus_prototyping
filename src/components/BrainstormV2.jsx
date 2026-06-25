@@ -51,7 +51,6 @@ export default function BrainstormV2({ notes, onNoteCreated }) {
       .catch(console.error)
   }
 
-  // Focus + select-all when title edit activates
   useEffect(() => {
     if (editingTitle) {
       titleInputRef.current?.focus()
@@ -59,10 +58,8 @@ export default function BrainstormV2({ notes, onNoteCreated }) {
     }
   }, [editingTitle])
 
-  // Focus description on mount
   useEffect(() => { editorRef.current?.focus() }, [])
 
-  // Escape: exit headline / title edit
   useEffect(() => {
     if (!headlineMode && !editingTitle) return
     const h = (e) => {
@@ -87,26 +84,22 @@ export default function BrainstormV2({ notes, onNoteCreated }) {
     return positionsRef.current[noteId]
   }
 
-  // Live-derive title from first 7 words while user types
   const handleDescriptionInput = () => {
     if (!titleManual && editorRef.current) {
       const derived = deriveTitle(editorRef.current.innerText || '')
       setTitleVal(derived)
     }
-    // Refresh word rects when in headline mode
     if (headlineMode && editorRef.current) {
       setWordRects(computeWordRects(editorRef.current))
     }
   }
 
-  // Clicking the title: edit + headline mode, select-all
   const handleTitleClick = () => {
     setEditingTitle(true)
     setHeadlineMode(true)
     if (editorRef.current) setWordRects(computeWordRects(editorRef.current))
   }
 
-  // Word click: uses functional setState so the prev value is always current (no stale closure)
   const handleWordClick = (word) => {
     setTitleVal(prev => prev ? prev + ' ' + word : word)
     setTitleManual(true)
@@ -119,7 +112,6 @@ export default function BrainstormV2({ notes, onNoteCreated }) {
     const finalTitle = titleVal.trim() || deriveTitle(content) || 'Untitled'
     const html = editorRef.current?.innerHTML || ''
 
-    // Trigger float-away, then clear immediately
     const rect = editorRef.current?.getBoundingClientRect()
     if (rect) setGhost({ html, rect })
     if (editorRef.current) { editorRef.current.innerHTML = ''; editorRef.current.focus() }
@@ -165,10 +157,9 @@ export default function BrainstormV2({ notes, onNoteCreated }) {
         })}
       </div>
 
-      {/* ── Central input ─────────────────────────────────────────────── */}
+      {/* ── Central input card (bottom) ───────────────────────────────── */}
       <div className={styles.center}>
 
-        {/* Title — sits above the card */}
         <div className={styles.titleRow}>
           {editingTitle ? (
             <input
@@ -194,7 +185,6 @@ export default function BrainstormV2({ notes, onNoteCreated }) {
           )}
         </div>
 
-        {/* Description editor + headline overlay */}
         <div className={styles.editorWrap}>
           <div
             ref={editorRef}
@@ -222,7 +212,6 @@ export default function BrainstormV2({ notes, onNoteCreated }) {
           )}
         </div>
 
-        {/* Actions */}
         <div className={styles.actions}>
           <button
             className={styles.categoryBtn}
@@ -242,7 +231,6 @@ export default function BrainstormV2({ notes, onNoteCreated }) {
         onClose={() => setCategoryPickerOpen(false)}
       />
 
-      {/* ── Float-away ghost ─────────────────────────────────────────── */}
       {ghost && (
         <div
           className={styles.floatGhost}
