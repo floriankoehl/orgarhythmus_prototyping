@@ -41,7 +41,7 @@ function computeWordRects(el) {
 }
 
 // ── PostIt card ───────────────────────────────────────────────────────────────
-function PostIt({ note, position, size, isMergeTarget, onDragStart, onCollapse, onOpen, onSplit, onResize }) {
+function PostIt({ note, position, size, isMergeTarget, assignedCategories, onDragStart, onCollapse, onOpen, onSplit, onResize, onEditCategories }) {
   const [splitActive, setSplitActive] = useState(false)
   const [cutY, setCutY]               = useState(null) // px from top of card
   const [cutOffset, setCutOffset]     = useState(null) // char index in snippet text
@@ -165,6 +165,17 @@ function PostIt({ note, position, size, isMergeTarget, onDragStart, onCollapse, 
       <div className={styles.postitHeader} onPointerDown={splitActive ? undefined : onDragStart}>
         <span className={styles.postitTitle}>{note.title || 'Untitled'}</span>
         <button
+          className={styles.postitTagBtn}
+          title="Edit categories"
+          onPointerDown={e => e.stopPropagation()}
+          onClick={e => { e.stopPropagation(); onEditCategories?.() }}
+        >
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/>
+            <line x1="7" y1="7" x2="7.01" y2="7"/>
+          </svg>
+        </button>
+        <button
           className={`${styles.postitSplitBtn} ${splitActive ? styles.postitSplitBtnActive : ''}`}
           title="Split note"
           onPointerDown={e => e.stopPropagation()}
@@ -181,6 +192,17 @@ function PostIt({ note, position, size, isMergeTarget, onDragStart, onCollapse, 
       </div>
 
       {snippet && <p ref={bodyRef} className={styles.postitBody}>{snippet}</p>}
+
+      {assignedCategories?.length > 0 && (
+        <div className={styles.postitTags}>
+          {assignedCategories.map((ac, i) => (
+            <span key={i} className={styles.postitTag}>
+              <span className={styles.postitTagDot} style={{ background: ac.color }} />
+              <span className={styles.postitTagName}>{ac.dimName}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       <div className={styles.resizeHandle} onPointerDown={handleResizeDown}>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
@@ -234,6 +256,9 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
   const [categories, setCategories]     = useState([])
   const [categorySelections, setCategorySelections] = useState({})
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false)
+  const [allAssignments, setAllAssignments] = useState([])
+  const [editingNoteId, setEditingNoteId] = useState(null)
+  const [pickerSelections, setPickerSelections] = useState({})
 
   const editorRef    = useRef(null)
   const titleInputRef = useRef(null)
@@ -259,6 +284,53 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [findFocused])
+
+  // ── Load category metadata on mount ─────────────────────────────────────────
+  useEffect(() => {
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments()])
+      .then(([dims, cats, asns]) => {
+        setDimensions(dims)
+        setCategories(cats)
+        setAllAssignments(asns)
+      })
+      .catch(console.error)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Note category editor ─────────────────────────────────────────────────────
+  const openNoteEditor = (noteId) => {
+    const sels = {}
+    allAssignments.filter(a => a.noteId === noteId).forEach(a => { sels[a.dimensionId] = a.categoryId })
+    setPickerSelections(sels)
+    setEditingNoteId(noteId)
+  }
+
+  const handlePickerChange = async (newSels) => {
+    const noteId = editingNoteId
+    const oldSels = pickerSelections
+    setPickerSelections(newSels)
+    const allDimIds = new Set([...Object.keys(oldSels), ...Object.keys(newSels)])
+    for (const dimId of allDimIds) {
+      const oldCat = oldSels[dimId] || null
+      const newCat = newSels[dimId] || null
+      if (oldCat === newCat) continue
+      try {
+        if (!newCat) {
+          await api.unassign(noteId, dimId)
+          setAllAssignments(prev => prev.filter(a => !(a.noteId === noteId && a.dimensionId === dimId)))
+        } else {
+          await api.assign(noteId, dimId, newCat)
+          setAllAssignments(prev => [
+            ...prev.filter(a => !(a.noteId === noteId && a.dimensionId === dimId)),
+            { noteId, dimensionId: dimId, categoryId: newCat },
+          ])
+        }
+      } catch (e) {
+        console.error(e)
+        setPickerSelections(oldSels)
+      }
+      break
+    }
+  }
 
   // ── Canvas helpers ───────────────────────────────────────────────────────────
   const randomPos = () => {
@@ -492,6 +564,12 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
           const note = notes.find(n => n.id === id)
           if (!note) return null
           const pos = notePositions[id] || { x: 100, y: 100 }
+          const noteAsns = allAssignments.filter(a => a.noteId === id)
+          const assignedCats = noteAsns.map(a => {
+            const dim = dimensions.find(d => d.id === a.dimensionId)
+            const cat = categories.find(c => c.id === a.categoryId)
+            return dim && cat ? { dimName: dim.name, catName: cat.name, color: cat.color } : null
+          }).filter(Boolean)
           return (
             <PostIt
               key={id}
@@ -499,11 +577,13 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
               position={pos}
               size={noteSizes[id] || null}
               isMergeTarget={mergeCandidate === id}
+              assignedCategories={assignedCats}
               onDragStart={e => handlePointerDown(e, id)}
               onCollapse={() => collapseNote(id)}
               onOpen={() => { if (!wasDraggedRef.current) onNoteOpen?.(id) }}
               onSplit={(t1, t2) => handleSplitNote(id, t1, t2)}
               onResize={(w, h) => setNoteSizes(prev => ({ ...prev, [id]: { w, h } }))}
+              onEditCategories={() => openNoteEditor(id)}
             />
           )
         })}
@@ -606,6 +686,15 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
         selections={categorySelections}
         onChange={setCategorySelections}
         onClose={() => setCategoryPickerOpen(false)}
+      />
+
+      <CategoryAssignmentPicker
+        open={editingNoteId !== null}
+        dimensions={dimensions}
+        categories={categories}
+        selections={pickerSelections}
+        onChange={handlePickerChange}
+        onClose={() => setEditingNoteId(null)}
       />
 
       {ghost && (

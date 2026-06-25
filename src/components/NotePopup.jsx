@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import styles from './NotePopup.module.css'
 import { api } from '../api'
+import CategoryAssignmentPicker from './CategoryAssignmentPicker'
 
 // ── Headline-mode helpers ─────────────────────────────────────────────────────
 function computeWordRects(editorEl) {
@@ -50,7 +51,7 @@ function ChevronIcon({ down }) {
 // ── Main popup ────────────────────────────────────────────────────────────────
 export default function NotePopup({ note, onClose, onNoteUpdated, onNoteDeleted }) {
   const [expanded, setExpanded]           = useState(false)
-  const [editingCategories, setEditingCategories] = useState(false)
+  const [categoryPickerOpen, setCategoryPickerOpen] = useState(false)
   const [headlineMode, setHeadlineMode]   = useState(false)
   const [wordRects, setWordRects]         = useState([])
   const [headlineStarted, setHeadlineStarted] = useState(false)
@@ -72,7 +73,7 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onNoteDeleted 
   useEffect(() => { setTitleVal(note.title) }, [note.title])
 
   useEffect(() => {
-    setEditingCategories(false)
+    setCategoryPickerOpen(false)
   }, [expanded, note.id])
 
   // Focus title input when editing starts
@@ -164,18 +165,23 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onNoteDeleted 
     return categories.find(c => c.id === catId)
   }
 
-  const toggleAssignment = async (dimId, catId) => {
-    const currentCatId = assignments[dimId]
-    const next = { ...assignments }
-    if (currentCatId === catId) delete next[dimId]
-    else next[dimId] = catId
-    setAssignments(next)
-    try {
-      if (currentCatId === catId) await api.unassign(note.id, dimId)
-      else await api.assign(note.id, dimId, catId)
-    } catch (e) {
-      console.error(e)
-      setAssignments(assignments)
+  const handleCategoryChange = async (newSels) => {
+    const old = { ...assignments }
+    const allDimIds = new Set([...Object.keys(old), ...Object.keys(newSels)])
+    for (const dimId of allDimIds) {
+      const oldCat = old[dimId] || null
+      const newCat = newSels[dimId] || null
+      if (oldCat === newCat) continue
+      if (!newCat) {
+        setAssignments(prev => { const n = { ...prev }; delete n[dimId]; return n })
+        try { await api.unassign(note.id, dimId) }
+        catch (e) { console.error(e); setAssignments(old) }
+      } else {
+        setAssignments(prev => ({ ...prev, [dimId]: newCat }))
+        try { await api.assign(note.id, dimId, newCat) }
+        catch (e) { console.error(e); setAssignments(old) }
+      }
+      break
     }
   }
 
@@ -284,9 +290,9 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onNoteDeleted 
               {dimensions.length > 0 && (
                 <button
                   className={styles.editCategoriesBtn}
-                  onClick={() => setEditingCategories(editing => !editing)}
+                  onClick={() => setCategoryPickerOpen(true)}
                 >
-                  {editingCategories ? 'Done' : 'Edit categorization'}
+                  Edit categorization
                 </button>
               )}
             </div>
@@ -295,29 +301,10 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onNoteDeleted 
             )}
             {dimensions.map(dim => {
               const cat = categoryName(dim.id)
-              const dimCats = categories.filter(c => c.dimensionId === dim.id)
               return (
                 <div key={dim.id} className={styles.dimRow}>
                   <span className={styles.dimName}>{dim.name}</span>
-                  {editingCategories && dimCats.length > 0 ? (
-                    <div className={styles.catButtonGrid}>
-                      {dimCats.map(candidate => {
-                        const active = cat?.id === candidate.id
-                        return (
-                          <button
-                            key={candidate.id}
-                            className={`${styles.catChoiceBtn} ${active ? styles.catChoiceActive : ''}`}
-                            style={active ? { borderColor: candidate.color, background: `${candidate.color}22`, color: candidate.color } : undefined}
-                            onClick={() => toggleAssignment(dim.id, candidate.id)}>
-                            <span className={styles.catDot} style={{ background: candidate.color }} />
-                            {candidate.name}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  ) : editingCategories ? (
-                    <span className={styles.catUnassigned}>No categories</span>
-                  ) : cat ? (
+                  {cat ? (
                     <span
                       className={styles.catBadge}
                       style={{ borderColor: cat.color, background: `${cat.color}18`, color: cat.color }}
@@ -333,6 +320,15 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onNoteDeleted 
             })}
           </div>
         )}
+
+        <CategoryAssignmentPicker
+          open={categoryPickerOpen}
+          dimensions={dimensions}
+          categories={categories}
+          selections={assignments}
+          onChange={handleCategoryChange}
+          onClose={() => setCategoryPickerOpen(false)}
+        />
 
         {/* Delete confirmation overlay */}
         {confirmDelete && (

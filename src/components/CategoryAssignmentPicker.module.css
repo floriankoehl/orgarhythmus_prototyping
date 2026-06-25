@@ -1,7 +1,7 @@
 .backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.28);
+  background: rgba(0,0,0,0.22);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -9,121 +9,149 @@
 }
 
 .modal {
-  width: 520px;
-  max-width: calc(100vw - 40px);
+  width: min(760px, calc(100vw - 40px));
   max-height: calc(100vh - 80px);
   background: #fff;
-  border-radius: 10px;
-  box-shadow: 0 14px 42px rgba(0,0,0,0.22);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.2);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
+/* ── Header ─────────────────────────────────────────────────────────────── */
 .header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 16px 18px 12px;
-  border-bottom: 1px solid #eee;
+  padding: 14px 20px;
+  border-bottom: 1px solid #efefef;
+  flex-shrink: 0;
 }
 
 .title {
-  font: 700 15px Arial, sans-serif;
-  color: #222;
-}
-
-.sub {
-  margin-top: 3px;
-  font: 12px Arial, sans-serif;
-  color: #888;
+  font: 700 14px Arial, sans-serif;
+  color: #1a1a1a;
+  letter-spacing: 0.01em;
 }
 
 .closeBtn {
+  width: 28px;
   height: 28px;
-  padding: 0 12px;
-  color: #555;
-  background: #f5f5f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: #999;
+  background: none;
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  font: 600 12px Arial, sans-serif;
+  transition: background 0.12s, color 0.12s;
 }
+.closeBtn:hover { background: #f0f0f0; color: #333; }
 
-.closeBtn:hover {
-  background: #e8f0fe;
-  color: #1a73e8;
-}
-
+/* ── Body ───────────────────────────────────────────────────────────────── */
 .body {
-  padding: 14px 18px 18px;
+  padding: 6px 16px 16px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 0;
 }
 
-.dimBlock {
-  display: grid;
-  grid-template-columns: 120px minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
+/* ── Dimension row ──────────────────────────────────────────────────────── */
+.dimRow {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 13px 12px;
+  border-radius: 0;
+  border-bottom: 1px solid #efefef;
+  transition: background 0.1s;
 }
+.dimRow:first-child { border-radius: 8px 8px 0 0; }
+.dimRow:last-child { border-radius: 0 0 8px 8px; border-bottom: none; }
+.dimRow:only-child { border-radius: 8px; }
+.dimRow:hover { background: #fafafa; }
 
 .dimName {
-  padding-top: 6px;
+  width: 120px;
+  flex-shrink: 0;
   font: 700 12px Arial, sans-serif;
-  color: #555;
+  color: #333;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 10.5px;
 }
 
-.catGrid {
+.divider {
+  width: 1px;
+  align-self: stretch;
+  background: #e8e8e8;
+  flex-shrink: 0;
+  margin: 0 14px;
+}
+
+/* ── Category row ───────────────────────────────────────────────────────── */
+.catRow {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
+  overflow-x: auto;
+  flex: 1;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+.catRow::-webkit-scrollbar { display: none; }
+
+.catRowWrap {
+  flex-wrap: wrap;
+  overflow-x: visible;
 }
 
+/* ── Category button ────────────────────────────────────────────────────── */
 .catBtn {
   height: 28px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 0 10px;
+  padding: 0 11px;
   color: #555;
   background: #fff;
-  border: 1px solid #ddd;
-  border-radius: 6px;
+  border: 1.5px solid #e0e0e0;
+  border-radius: 20px;
   cursor: pointer;
-  font: 600 12px Arial, sans-serif;
+  font: 500 12px Arial, sans-serif;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
 }
-
 .catBtn:hover {
+  border-color: #bbb;
   background: #f8f8f8;
 }
 
 .catBtnActive {
-  box-shadow: inset 0 0 0 1px currentColor;
+  font-weight: 700;
 }
 
 .dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
-.empty,
-.emptySmall {
-  font: 12px Arial, sans-serif;
+/* ── Empty states ───────────────────────────────────────────────────────── */
+.empty {
+  padding: 24px 0;
+  text-align: center;
+  font: 13px Arial, sans-serif;
   color: #aaa;
 }
 
-.empty {
-  padding: 18px 0;
-  text-align: center;
-}
-
 .emptySmall {
-  padding-top: 6px;
-  font-style: italic;
+  font: italic 12px Arial, sans-serif;
+  color: #bbb;
 }
