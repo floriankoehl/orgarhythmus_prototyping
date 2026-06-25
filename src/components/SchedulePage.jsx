@@ -177,11 +177,6 @@ function getOverlapViolation(msList, movedIds = new Set()) {
   return null
 }
 
-function getBlockingMilestoneIds(ids, movedIds = new Set()) {
-  const blockers = ids.filter(id => !movedIds.has(id))
-  return blockers.length > 0 ? blockers : ids
-}
-
 function getMilestoneOrderViolation(beforeList, afterList, movedIds = new Set()) {
   const beforeById = Object.fromEntries(beforeList.map(m => [m.id, m]))
   const afterById = Object.fromEntries(afterList.map(m => [m.id, m]))
@@ -1307,31 +1302,45 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
 
   const showAllCategories = useCallback(() => setHiddenCatIds(new Set()), [])
 
-  const presentConflictMilestones = useCallback((ids, revealIds = ids) => {
+  const presentConflictMilestones = useCallback(ids => {
     const idSet = new Set(ids)
-    const revealSet = new Set(revealIds)
     const conflictMilestones = milestonesRef.current.filter(m => idSet.has(m.id))
-    const revealMilestones = milestonesRef.current.filter(m => revealSet.has(m.id))
-    const selectedRevealMilestones = revealMilestones.length ? revealMilestones : conflictMilestones
-    const goalIds = selectedRevealMilestones.map(m => m.goalId)
+    const goalIds = conflictMilestones.map(m => m.goalId)
     if (conflictMilestones.length === 0 || goalIds.length === 0) return
     const hiddenMilestoneIds = conflictMilestones
       .filter(m => !goalRowMapRef.current[m.goalId])
       .map(m => m.id)
-    setPendingConflictMilestoneIds(new Set(hiddenMilestoneIds.length ? hiddenMilestoneIds : selectedRevealMilestones.map(m => m.id)))
+    setPendingConflictMilestoneIds(new Set(hiddenMilestoneIds.length ? hiddenMilestoneIds : conflictMilestones.map(m => m.id)))
     setRevealedConflictGoalIds(prev => new Set([...prev, ...goalIds]))
     setHiddenCatIds(prev => {
       const next = new Set(prev)
       goalIds.forEach(goalId => {
         if (activeLaneFilter) {
-          next.delete(filterMatchesGoal(activeLaneFilter, goalId, assignments) ? activeLaneFilter.id : UNASSIGNED_LANE)
+          if (filterMatchesGoal(activeLaneFilter, goalId, assignments)) next.delete(activeLaneFilter.id)
         } else if (activeDimId) {
           const catId = assignments[goalId]?.[activeDimId]
-          next.delete(catId ?? UNASSIGNED_LANE)
+          if (catId) next.delete(catId)
         }
       })
       return next
     })
+    if (colorDimId && colorDimId !== FILTER_DIMENSION_ID) {
+      const colorFilterAdds = goalIds
+        .map(goalId => assignments[goalId]?.[colorDimId])
+        .filter(Boolean)
+      if (colorFilterAdds.length > 0) {
+        setQuickFilters(prev => {
+          if (prev.length === 0) return prev
+          const next = [...prev]
+          colorFilterAdds.forEach(catId => {
+            if (!next.some(filter => filter.dimId === colorDimId && filter.catId === catId)) {
+              next.push({ dimId: colorDimId, catId })
+            }
+          })
+          return next
+        })
+      }
+    }
     setHiddenGoalsByLane(prev => {
       const next = { ...prev }
       goalIds.forEach(goalId => {
@@ -1353,7 +1362,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     }
     setSelectedIds(new Set())
     setSelectedDepIds(new Set())
-  }, [activeDimId, activeLaneFilter, assignments])
+  }, [activeDimId, activeLaneFilter, assignments, colorDimId])
 
   const toggleSavedFilter = useCallback(filterId => {
     setActiveFilterIds(prev => prev.includes(filterId) ? prev.filter(id => id !== filterId) : [...prev, filterId])
@@ -1506,8 +1515,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       applyTransactionState(before, after)
       const detail = err?.detail
       if (detail?.type === 'overlap' && Array.isArray(detail.milestoneIds)) {
-        const movedIds = new Set([...before.milestones, ...after.milestones].map(m => m.id))
-        presentConflictMilestones(detail.milestoneIds, getBlockingMilestoneIds(detail.milestoneIds, movedIds))
+        presentConflictMilestones(detail.milestoneIds)
         showWarningPrompt({ title: 'Milestone overlap', message: detail.message, actions: 'close' })
       } else if (detail?.type === 'deadline') {
         showWarningPrompt({ title: 'Hard deadline', message: detail.message, actions: 'close' })
@@ -1518,8 +1526,7 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
           const dep = dependenciesRef.current.find(d => d.id === depId)
           if (dep) { milestoneIds.add(dep.fromId); milestoneIds.add(dep.toId) }
         })
-        const movedIds = new Set([...before.milestones, ...after.milestones].map(m => m.id))
-        presentConflictMilestones(milestoneIds, getBlockingMilestoneIds([...milestoneIds], movedIds))
+        presentConflictMilestones(milestoneIds)
         setBlinkingDepIds(new Set(depIds))
         window.setTimeout(() => setBlinkingDepIds(new Set()), 3000)
         showWarningPrompt({ title: 'Dependency violation', message: detail.message, actions: 'dependency', dependencyIds: depIds })
@@ -1796,8 +1803,8 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
   const violationIds = useMemo(() => computeViolations(milestones, dependencies), [milestones, dependencies])
   const crucialDependencyIds = useMemo(() => getCrucialDependencyIds(dependencies), [dependencies])
 
-  const reportOverlapViolation = useCallback((ids, revealIds = ids) => {
-    presentConflictMilestones(ids, revealIds)
+  const reportOverlapViolation = useCallback(ids => {
+    presentConflictMilestones(ids)
     showWarningPrompt({
       title: 'Milestone overlap',
       message: 'Milestones in the same goal row cannot overlap or pass each other.',
@@ -1813,23 +1820,14 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     })
   }, [showWarningPrompt])
 
-  const reportDependencyViolations = useCallback((violations, movedIds = new Set()) => {
+  const reportDependencyViolations = useCallback(violations => {
     const depIds = violations.map(v => v.dep.id).filter(Boolean)
     const milestoneIds = new Set()
-    const revealIds = new Set()
     violations.forEach(v => {
       milestoneIds.add(v.from.id)
       milestoneIds.add(v.to.id)
-      const fromMoved = movedIds.has(v.from.id)
-      const toMoved = movedIds.has(v.to.id)
-      if (fromMoved && !toMoved) revealIds.add(v.to.id)
-      else if (toMoved && !fromMoved) revealIds.add(v.from.id)
-      else {
-        revealIds.add(v.from.id)
-        revealIds.add(v.to.id)
-      }
     })
-    presentConflictMilestones(milestoneIds, revealIds)
+    presentConflictMilestones(milestoneIds)
     setBlinkingDepIds(new Set(depIds))
     window.setTimeout(() => setBlinkingDepIds(new Set()), 3000)
     showWarningPrompt({
@@ -1842,10 +1840,10 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
     })
   }, [presentConflictMilestones, showWarningPrompt])
 
-  const maybeBlockDependencyWarning = useCallback((nextMilestones, nextDependencies, movedIds = new Set()) => {
+  const maybeBlockDependencyWarning = useCallback((nextMilestones, nextDependencies) => {
     const violations = getDependencyViolations(nextMilestones, nextDependencies)
     if (violations.length === 0) return false
-    reportDependencyViolations(violations, movedIds)
+    reportDependencyViolations(violations)
     return true
   }, [reportDependencyViolations])
 
@@ -2071,11 +2069,10 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
       }
       const nextMilestones = milestonesRef.current.map(m => after.find(candidate => candidate.id === m.id) ?? m)
       const overlap = getOverlapViolation(nextMilestones, new Set(before.map(m => m.id)))
-      const movedIds = new Set(before.map(m => m.id))
-      if (overlap) { reportOverlapViolation(overlap, getBlockingMilestoneIds(overlap, movedIds)); return }
+      if (overlap) { reportOverlapViolation(overlap); return }
       const order = getMilestoneOrderViolation(milestonesRef.current, nextMilestones, new Set(before.map(m => m.id)))
-      if (order) { reportOverlapViolation(order, getBlockingMilestoneIds(order, movedIds)); return }
-      if (maybeBlockDependencyWarning(nextMilestones, dependenciesRef.current, movedIds)) return
+      if (order) { reportOverlapViolation(order); return }
+      if (maybeBlockDependencyWarning(nextMilestones, dependenciesRef.current)) return
       await commitTransaction(tx)
     }
   }, [commitTransaction, maybeBlockDependencyWarning, reportOverlapViolation])
@@ -2105,11 +2102,10 @@ export default function SchedulePage({ goals = [], isActive = false, onGoalOpen 
         after: { milestones: after, dependencies: [] },
       }
       const overlap = getOverlapViolation(updated, new Set(before.map(m => m.id)))
-      const movedIds = new Set(before.map(m => m.id))
-      if (overlap) { reportOverlapViolation(overlap, getBlockingMilestoneIds(overlap, movedIds)); return }
+      if (overlap) { reportOverlapViolation(overlap); return }
       const order = getMilestoneOrderViolation(milestonesRef.current, updated, new Set(before.map(m => m.id)))
-      if (order) { reportOverlapViolation(order, getBlockingMilestoneIds(order, movedIds)); return }
-      if (maybeBlockDependencyWarning(updated, dependenciesRef.current, movedIds)) return
+      if (order) { reportOverlapViolation(order); return }
+      if (maybeBlockDependencyWarning(updated, dependenciesRef.current)) return
       await commitTransaction(tx)
     }
   }, [commitTransaction, maybeBlockDependencyWarning, reportOverlapViolation])
