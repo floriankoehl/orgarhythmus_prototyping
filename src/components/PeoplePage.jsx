@@ -83,13 +83,13 @@ function CameraDirector({ locked, focusTarget, focusLevel = 'category', resetRev
     const desiredPosition = overviewRef.current
       ? new THREE.Vector3(0, 32, 56)
       : focusLevel === 'note'
-        ? new THREE.Vector3(x + 0.16, 2.8, z + 3.1)
-        : new THREE.Vector3(x + 0.5, 14, z + 16)
+        ? new THREE.Vector3(x + 0.08, 1.9, z + 2.25)
+        : new THREE.Vector3(x + 0.5, 17, z + 22)
     const desiredTarget = overviewRef.current
       ? new THREE.Vector3(0, 0, 0)
       : focusLevel === 'note'
-        ? new THREE.Vector3(x, ISLAND_H + 0.18, z + 0.02)
-        : new THREE.Vector3(x, ISLAND_H + 0.16, z + 2)
+        ? new THREE.Vector3(x, ISLAND_H + 0.14, z)
+        : new THREE.Vector3(x, ISLAND_H + 0.16, z + 3.8)
     camera.position.lerp(desiredPosition, 0.12)
     if (controls?.target) controls.target.lerp(desiredTarget, 0.12)
     camera.lookAt(controls?.target ?? desiredTarget)
@@ -212,13 +212,13 @@ function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7',
 
 // ── Category island ──────────────────────────────────────────────────────────
 const ISLAND_W     = 20.0
-const ISLAND_D     = 20.0
+const ISLAND_D     = 28.0
 const ISLAND_H     = 0.84
 const ISLAND_COLS  = 4
 const ISLAND_SLOT_GRID = 20
 const TILE_GRID    = 16
 const ISLAND_RENDER_W = ISLAND_W * TILE_GRID / ISLAND_SLOT_GRID   // 16.0
-const ISLAND_RENDER_D = ISLAND_D * TILE_GRID / ISLAND_SLOT_GRID   // 16.0
+const ISLAND_RENDER_D = ISLAND_D * TILE_GRID / ISLAND_SLOT_GRID   // 22.4
 const LOCKED_CATEGORY_X = -30
 const LOCKED_CATEGORY_Z = -30
 
@@ -420,16 +420,18 @@ function computeIslandLayout(cats, locked = false) {
 }
 
 // ── Note card (rendered on focused island floor) ─────────────────────────────
-const NOTE_W = 2.10
-const NOTE_D = 1.36
+const NOTE_W = 4.05
+const NOTE_D = 2.62
 const NOTE_H = 0.10
-const NOTE_MILESTONE_TRACK_W = NOTE_W - 0.34
-const NOTE_MILESTONE_MIN_W = 0.34
-const NOTE_MILESTONE_D = 0.17
-const NOTE_MILESTONE_START_Z = -NOTE_D * 0.10
-const NOTE_MILESTONE_ROW_D = 0.26
-const NOTE_SLOT_W = NOTE_W + 0.40
-const NOTE_SLOT_D = NOTE_D + 0.54
+const NOTE_MILESTONE_SIZE = 0.68
+const NOTE_MILESTONE_H = 0.026
+const NOTE_MILESTONE_GAP = 0.16
+const NOTE_MILESTONE_HIT_PAD = 0.12
+const NOTE_MILESTONE_SURFACE_Y = NOTE_H + 0.024
+const NOTE_MILESTONE_CENTER_Y = NOTE_MILESTONE_SURFACE_Y + NOTE_MILESTONE_H / 2
+const NOTE_MILESTONE_TOP_Y = NOTE_MILESTONE_SURFACE_Y + NOTE_MILESTONE_H
+const NOTE_SLOT_W = NOTE_W + 0.48
+const NOTE_SLOT_D = NOTE_D + 0.62
 const MINI_TARGET_HEIGHT = 1.04
 const MINI_PERSONA_SPACING = 1.76
 const PLATEAU_W = 13.6
@@ -438,20 +440,20 @@ const PLATEAU_H = 0.72
 
 function layoutMilestonesOnNote(milestones) {
   const sorted = [...milestones].sort((a, b) => (a.startCol ?? 0) - (b.startCol ?? 0))
-  const maxCol = sorted.reduce((max, ms) => (
-    Math.max(max, (Number(ms.startCol) || 0) + Math.max(1, Number(ms.duration) || 1))
-  ), 1)
+  if (sorted.length === 0) return []
+  const cols = Math.max(1, Math.floor((NOTE_W - 0.32 + NOTE_MILESTONE_GAP) / (NOTE_MILESTONE_SIZE + NOTE_MILESTONE_GAP)))
+  const usedW = (Math.min(cols, sorted.length) - 1) * (NOTE_MILESTONE_SIZE + NOTE_MILESTONE_GAP)
+  const rowCount = Math.ceil(sorted.length / cols)
+  const usedD = (rowCount - 1) * (NOTE_MILESTONE_SIZE + NOTE_MILESTONE_GAP)
   return sorted.map((ms, i) => {
-    const start = Math.max(0, Number(ms.startCol) || 0)
-    const duration = Math.max(1, Number(ms.duration) || 1)
-    const x = -NOTE_MILESTONE_TRACK_W / 2 + (start / maxCol) * NOTE_MILESTONE_TRACK_W
-    const w = Math.max(NOTE_MILESTONE_MIN_W, Math.min(NOTE_MILESTONE_TRACK_W, (duration / maxCol) * NOTE_MILESTONE_TRACK_W))
+    const col = i % cols
+    const row = Math.floor(i / cols)
     return {
       milestone: ms,
-      x: x + w / 2,
-      z: NOTE_MILESTONE_START_Z + i * NOTE_MILESTONE_ROW_D,
-      w,
-      d: NOTE_MILESTONE_D,
+      x: -usedW / 2 + col * (NOTE_MILESTONE_SIZE + NOTE_MILESTONE_GAP),
+      z: -usedD / 2 + row * (NOTE_MILESTONE_SIZE + NOTE_MILESTONE_GAP) + 0.22,
+      w: NOTE_MILESTONE_SIZE,
+      d: NOTE_MILESTONE_SIZE,
     }
   })
 }
@@ -537,7 +539,7 @@ function NoteCard({ position, title, color = '#888', highlighted = false, focuse
         position={[0, NOTE_H + 0.012, focused ? -NOTE_D * 0.34 : 0]}
         rotation={[-Math.PI / 2, 0, 0]}
         fontSize={focused ? 0.13 : 0.18}
-        color={color}
+        color="#111"
         anchorX="center"
         anchorY="middle"
         maxWidth={NOTE_W - 0.20}
@@ -549,7 +551,7 @@ function NoteCard({ position, title, color = '#888', highlighted = false, focuse
         {title}
       </Text>
       {focused && (
-        <group position={[0, NOTE_H + 0.024, 0]}>
+        <group position={[0, NOTE_MILESTONE_SURFACE_Y, 0]}>
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
             <planeGeometry args={[NOTE_W - 0.14, NOTE_D - 0.14]} />
             <meshBasicMaterial color={color} transparent opacity={0.08} depthWrite={false} />
@@ -566,11 +568,11 @@ function NoteCard({ position, title, color = '#888', highlighted = false, focuse
             >
               No milestones yet
             </Text>
-          ) : milestoneLayout.map(({ milestone: ms, x, z, w }) => {
+          ) : milestoneLayout.map(({ milestone: ms, x, z, w, d }) => {
             const milestoneHighlighted = highlightedMilestoneId === ms.id
             return (
-              <group key={ms.id} position={[x, 0.014, z]}>
-                <RoundedBox args={[w, 0.035, 0.17]} radius={0.025} smoothness={2} position={[0, 0.014, 0]}>
+              <group key={ms.id} position={[x, 0, z]}>
+                <RoundedBox args={[w, NOTE_MILESTONE_H, d]} radius={0.035} smoothness={4} position={[0, NOTE_MILESTONE_H / 2, 0]}>
                   <meshStandardMaterial
                     color={milestoneHighlighted ? '#ffffff' : ms.color || color}
                     roughness={0.56}
@@ -580,13 +582,13 @@ function NoteCard({ position, title, color = '#888', highlighted = false, focuse
                   />
                 </RoundedBox>
                 <Text
-                  position={[0, 0.038, 0]}
+                  position={[0, NOTE_MILESTONE_H + 0.012, 0]}
                   rotation={[-Math.PI / 2, 0, 0]}
-                  fontSize={0.064}
-                  color="#fff"
+                  fontSize={0.095}
+                  color={milestoneHighlighted ? (ms.color || color) : '#fff'}
                   anchorX="center"
                   anchorY="middle"
-                  maxWidth={Math.max(0.24, w - 0.04)}
+                  maxWidth={w - 0.06}
                 >
                   {formatMilestoneDate(ms)}
                 </Text>
@@ -602,10 +604,10 @@ function NoteCard({ position, title, color = '#888', highlighted = false, focuse
 function computeNotesOnIsland(islandPos, notes, pageIndex = 0) {
   if (notes.length === 0) return { notes: [], pageCount: 1, noteStartZ: 0, maxRows: 0, cols: 0 }
   const availW = ISLAND_RENDER_W - 0.48
-  const noteStartZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D + 1.60 + NOTE_D / 2
+  const noteStartZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D + 2.05 + NOTE_D / 2
   const availD = (islandPos[2] + ISLAND_RENDER_D / 2 - 1.00) - noteStartZ
   const cols = Math.max(1, Math.min(notes.length, Math.floor(availW / NOTE_SLOT_W)))
-  const maxRows = Math.max(1, Math.floor(availD / NOTE_SLOT_D))
+  const maxRows = Math.max(1, Math.floor(availD / NOTE_SLOT_D) + 1)
   const perPage = cols * maxRows
   const pageCount = Math.ceil(notes.length / perPage)
   const page = Math.min(pageIndex, pageCount - 1)
@@ -625,9 +627,9 @@ function computeNotesOnIsland(islandPos, notes, pageIndex = 0) {
 function NotePagination({ pageIndex, pageCount, islandPos, color, onPrev, onNext, onGo }) {
   if (pageCount <= 1) return null
 
-  const noteStartZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D + 1.60 + NOTE_D / 2
+  const noteStartZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D + 2.05 + NOTE_D / 2
   const availD = (islandPos[2] + ISLAND_RENDER_D / 2 - 1.00) - noteStartZ
-  const maxRows = Math.max(1, Math.floor(availD / NOTE_SLOT_D))
+  const maxRows = Math.max(1, Math.floor(availD / NOTE_SLOT_D) + 1)
   const paginationZ = noteStartZ + maxRows * NOTE_SLOT_D + 0.7
 
   const dotSpacing = 0.7
@@ -957,8 +959,8 @@ function Scene({
         id: target.milestone.id,
         x: focusedNoteOnIsland.notePos[0] + target.x,
         z: focusedNoteOnIsland.notePos[2] + target.z,
-        w: target.w,
-        d: target.d,
+        w: target.w + NOTE_MILESTONE_HIT_PAD,
+        d: target.d + NOTE_MILESTONE_HIT_PAD,
       }))
     : []
 
@@ -1083,7 +1085,7 @@ function Scene({
           name={activeDragPersona.name}
           color={keyColor(activeDragPersona.modelKey)}
           phaseId={99}
-          targetHeight={focusedNoteId ? 0.28 : focusedCategoryId ? MINI_TARGET_HEIGHT : TARGET_HEIGHT}
+          targetHeight={focusedNoteId ? 0.38 : focusedCategoryId ? MINI_TARGET_HEIGHT : TARGET_HEIGHT}
           showName={!focusedCategoryId && !focusedNoteId}
           selected
           dragging
@@ -1175,7 +1177,7 @@ function Scene({
             modelKey={persona.modelKey}
             position={[
               target.x - (assigned.length - 1) * spacing / 2 + i * spacing,
-              focusedNoteOnIsland.notePos[1] + NOTE_H + 0.06,
+              focusedNoteOnIsland.notePos[1] + NOTE_MILESTONE_TOP_Y + 0.035,
               target.z,
             ]}
             name={persona.name}
@@ -1247,7 +1249,7 @@ function Scene({
         enabled={!layoutLocked && activeDragId === null}
         minPolarAngle={0.2}
         maxPolarAngle={Math.PI / 2.1}
-        minDistance={6}
+        minDistance={focusedNoteId ? 1.15 : 6}
         maxDistance={60}
         target={layoutLocked ? [0, 0, 0] : [0, 0, 0]}
       />
