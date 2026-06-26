@@ -146,10 +146,10 @@ const ISLAND_H     = 0.22
 const ISLAND_COLS  = 4
 const ISLAND_SLOT_GRID = 10
 const TILE_GRID    = 8
+const ISLAND_RENDER_W = ISLAND_W * TILE_GRID / ISLAND_SLOT_GRID
+const ISLAND_RENDER_D = ISLAND_D * TILE_GRID / ISLAND_SLOT_GRID
 const LOCKED_CATEGORY_X = -7.5
 const LOCKED_CATEGORY_Z = -7.5
-const LOCKED_PERSONA_X = 7.5
-const LOCKED_PERSONA_Z = 6.5
 
 function darkenColor(hexColor, factor = 0.76) {
   return new THREE.Color(hexColor).multiplyScalar(factor)
@@ -263,44 +263,56 @@ function personaSlotPosition(islandPos, idx, total) {
   ]
 }
 
-function personaPoolPosition(idx) {
-  const cols = 4
-  const spacing = 0.9
-  const col = idx % cols
-  const row = Math.floor(idx / cols)
-  return [LOCKED_PERSONA_X + col * spacing, ISLAND_H, LOCKED_PERSONA_Z + row * spacing]
-}
-
-function Scene({ activeDimensionId, activeCats = [], personas = [], personaAssignments = [], layoutLocked = true, onPositionUpdate, onAssign, onSelect, selected }) {
+function Scene({
+  activeDimensionId,
+  activeCats = [],
+  personas = [],
+  personaAssignments = [],
+  layoutLocked = true,
+  sourceDragPersonaId = null,
+  onSourceDragEnd,
+  onPositionUpdate,
+  onAssign,
+  onUnassign,
+  onSelect,
+  selected,
+}) {
   const [dragId, setDragId]       = useState(null)
   const [posOverrides, setPosOverrides] = useState({})
   const dragIdRef      = useRef(null)
+  const dragAssignmentRef = useRef(null)
   const posOverridesRef = useRef({})
   const dragMovedRef   = useRef(false)
 
-  const getPos = useCallback((p, index) => {
-    if (layoutLocked) return posOverrides[p.id] ?? personaPoolPosition(index)
-    return posOverrides[p.id] ?? [p.posX ?? 0, ISLAND_H, p.posZ ?? 0]
-  }, [layoutLocked, posOverrides])
-
   const islands = computeIslandLayout(activeCats, layoutLocked)
+  const activeDragId = dragId ?? sourceDragPersonaId
+  const activeDragPersona = activeDragId ? personas.find(p => p.id === activeDragId) : null
+  const activeDragPos = activeDragId ? posOverrides[activeDragId] : null
+  const draggedAssignment = dragAssignmentRef.current
 
   const stopDrag = useCallback(() => {
-    const id = dragIdRef.current
+    const id = dragIdRef.current ?? sourceDragPersonaId
     if (id !== null) {
       const pos = posOverridesRef.current[id]
       if (pos) {
-        if (!layoutLocked) onPositionUpdate?.(id, pos[0], pos[2])
+        if (dragIdRef.current && !layoutLocked) onPositionUpdate?.(id, pos[0], pos[2])
         const targetIsland = islands.find(cat =>
-          Math.abs(pos[0] - cat.islandPos[0]) <= ISLAND_W / 2 &&
-          Math.abs(pos[2] - cat.islandPos[2]) <= ISLAND_D / 2
+          Math.abs(pos[0] - cat.islandPos[0]) <= ISLAND_RENDER_W / 2 &&
+          Math.abs(pos[2] - cat.islandPos[2]) <= ISLAND_RENDER_D / 2
         )
         if (targetIsland && activeDimensionId) {
           onAssign?.(id, activeDimensionId, targetIsland.id)
+          if (dragAssignmentRef.current && dragAssignmentRef.current.categoryId !== targetIsland.id) {
+            const assignment = dragAssignmentRef.current
+            onUnassign?.(assignment.personaId, assignment.dimensionId, assignment.categoryId)
+          }
+        } else if (dragAssignmentRef.current) {
+          const assignment = dragAssignmentRef.current
+          onUnassign?.(assignment.personaId, assignment.dimensionId, assignment.categoryId)
         }
       }
     }
-    if (id !== null && layoutLocked) {
+    if (id !== null) {
       posOverridesRef.current = { ...posOverridesRef.current }
       delete posOverridesRef.current[id]
       setPosOverrides(prev => {
@@ -310,8 +322,10 @@ function Scene({ activeDimensionId, activeCats = [], personas = [], personaAssig
       })
     }
     dragIdRef.current = null
+    dragAssignmentRef.current = null
     setDragId(null)
-  }, [activeDimensionId, islands, layoutLocked, onAssign, onPositionUpdate])
+    onSourceDragEnd?.()
+  }, [activeDimensionId, islands, layoutLocked, onAssign, onPositionUpdate, onSourceDragEnd, onUnassign, sourceDragPersonaId])
 
   useEffect(() => {
     window.addEventListener('pointerup', stopDrag)
@@ -322,15 +336,27 @@ function Scene({ activeDimensionId, activeCats = [], personas = [], personaAssig
     e.stopPropagation()
     dragMovedRef.current = false
     dragIdRef.current = id
+    dragAssignmentRef.current = null
     setDragId(id)
     onSelect?.(id)
   }
 
+  const startAssignmentDrag = (assignment, position, e) => {
+    e.stopPropagation()
+    dragMovedRef.current = false
+    dragIdRef.current = assignment.personaId
+    dragAssignmentRef.current = assignment
+    posOverridesRef.current = { ...posOverridesRef.current, [assignment.personaId]: position }
+    setPosOverrides(prev => ({ ...prev, [assignment.personaId]: position }))
+    setDragId(assignment.personaId)
+    onSelect?.(assignment.personaId)
+  }
+
   const handleDragMove = (e) => {
-    if (dragIdRef.current === null) return
+    const id = dragIdRef.current ?? sourceDragPersonaId
+    if (id === null) return
     e.stopPropagation()
     dragMovedRef.current = true
-    const id = dragIdRef.current
     const newPos = [e.point.x, ISLAND_H, e.point.z]
     posOverridesRef.current = { ...posOverridesRef.current, [id]: newPos }
     setPosOverrides(prev => ({ ...prev, [id]: newPos }))
@@ -339,11 +365,17 @@ function Scene({ activeDimensionId, activeCats = [], personas = [], personaAssig
   const assignedCopies = islands.flatMap(cat => {
     const assigned = personaAssignments
       .filter(a => a.dimensionId === activeDimensionId && a.categoryId === cat.id)
+      .filter(a => !draggedAssignment ||
+        a.personaId !== draggedAssignment.personaId ||
+        a.dimensionId !== draggedAssignment.dimensionId ||
+        a.categoryId !== draggedAssignment.categoryId
+      )
       .map(a => personas.find(p => p.id === a.personaId))
       .filter(Boolean)
     return assigned.map((persona, idx) => ({
       persona,
       catId: cat.id,
+      assignment: { personaId: persona.id, dimensionId: activeDimensionId, categoryId: cat.id },
       position: personaSlotPosition(cat.islandPos, idx, assigned.length),
     }))
   })
@@ -356,7 +388,7 @@ function Scene({ activeDimensionId, activeCats = [], personas = [], personaAssig
 
       <fog attach="fog" args={['#f8f8f6', 28, 70]} />
       <Environment preset="dawn" background={false} />
-      <CursorManager dragging={dragId !== null} />
+      <CursorManager dragging={activeDragId !== null} />
       <CameraLock locked={layoutLocked} />
 
       {/* Infinite white floor — sits slightly below y=0 to avoid z-fighting with brick tile bottoms */}
@@ -364,7 +396,7 @@ function Scene({ activeDimensionId, activeCats = [], personas = [], personaAssig
         receiveShadow
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, -0.005, 0]}
-        onClick={dragId === null ? () => onSelect?.(null) : undefined}
+        onClick={activeDragId === null ? () => onSelect?.(null) : undefined}
       >
         <planeGeometry args={[800, 800]} />
         <meshStandardMaterial color="#f8f8f6" roughness={0.92} metalness={0} />
@@ -390,7 +422,7 @@ function Scene({ activeDimensionId, activeCats = [], personas = [], personaAssig
 
       <ContactShadows position={[0, 0.002, 0]} opacity={0.22} scale={20} blur={2.5} far={1} color="#7788aa" />
 
-      {dragId !== null && (
+      {activeDragId !== null && (
         <mesh
           rotation={[-Math.PI / 2, 0, 0]}
           position={[0, 0, 0]}
@@ -402,26 +434,22 @@ function Scene({ activeDimensionId, activeCats = [], personas = [], personaAssig
         </mesh>
       )}
 
-      {personas.map((p, i) => (
+      {activeDragPersona && activeDragPos && (
         <PersonAvatar
-          key={p.id}
-          modelKey={p.modelKey}
-          position={getPos(p, i)}
-          name={p.name}
-          color={keyColor(p.modelKey)}
-          phaseId={i}
-          selected={selected === p.id}
-          dragging={dragId === p.id}
-          onPointerDown={(e) => startDrag(p.id, e)}
-          onClick={(e) => {
-            e.stopPropagation()
-            if (dragMovedRef.current) return
-            onSelect?.(selected === p.id ? null : p.id)
-          }}
+          key={`drag:${activeDragPersona.id}`}
+          modelKey={activeDragPersona.modelKey}
+          position={activeDragPos}
+          name={activeDragPersona.name}
+          color={keyColor(activeDragPersona.modelKey)}
+          phaseId={99}
+          selected
+          dragging
+          onPointerDown={e => e.stopPropagation()}
+          onClick={e => e.stopPropagation()}
         />
-      ))}
+      )}
 
-      {assignedCopies.map(({ persona, catId, position }, i) => (
+      {assignedCopies.map(({ persona, catId, assignment, position }, i) => (
         <PersonAvatar
           key={`${catId}:${persona.id}`}
           modelKey={persona.modelKey}
@@ -430,8 +458,8 @@ function Scene({ activeDimensionId, activeCats = [], personas = [], personaAssig
           color={keyColor(persona.modelKey)}
           phaseId={i + personas.length}
           selected={selected === persona.id}
-          dragging={false}
-          onPointerDown={e => e.stopPropagation()}
+          dragging={dragId === persona.id && dragAssignmentRef.current?.categoryId === catId}
+          onPointerDown={e => startAssignmentDrag(assignment, position, e)}
           onClick={(e) => {
             e.stopPropagation()
             onSelect?.(selected === persona.id ? null : persona.id)
@@ -441,7 +469,7 @@ function Scene({ activeDimensionId, activeCats = [], personas = [], personaAssig
 
       <OrbitControls
         makeDefault
-        enabled={!layoutLocked && dragId === null}
+        enabled={!layoutLocked && activeDragId === null}
         minPolarAngle={0.2}
         maxPolarAngle={Math.PI / 2.1}
         minDistance={3}
@@ -594,7 +622,8 @@ export default function PeoplePage() {
   const [selected, setSelected]         = useState(null)
   const [showAddPanel, setShowAddPanel] = useState(false)
   const [confirmId, setConfirmId]       = useState(null)
-  const [layoutLocked, setLayoutLocked] = useState(true)
+  const [layoutLocked, setLayoutLocked] = useState(false)
+  const [sourceDragPersonaId, setSourceDragPersonaId] = useState(null)
 
   useEffect(() => {
     Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getPersonaAssignments()])
@@ -671,6 +700,19 @@ export default function PeoplePage() {
       .filter(a => a.category)
     : []
 
+  useEffect(() => {
+    if (!sourceDragPersonaId) return
+    const stop = () => setSourceDragPersonaId(null)
+    window.addEventListener('pointerup', stop)
+    return () => window.removeEventListener('pointerup', stop)
+  }, [sourceDragPersonaId])
+
+  const startSourceDrag = (personaId, e) => {
+    e.preventDefault()
+    setSourceDragPersonaId(personaId)
+    setSelected(personaId)
+  }
+
   return (
     <div className={styles.page}>
       <Canvas
@@ -686,8 +728,11 @@ export default function PeoplePage() {
           personas={personas}
           personaAssignments={personaAssignments}
           layoutLocked={layoutLocked}
+          sourceDragPersonaId={sourceDragPersonaId}
+          onSourceDragEnd={() => setSourceDragPersonaId(null)}
           onPositionUpdate={handlePositionUpdate}
           onAssign={handleAssignPersona}
+          onUnassign={handleUnassignPersona}
           onSelect={setSelected}
           selected={selected}
         />
@@ -713,23 +758,51 @@ export default function PeoplePage() {
         )}
       </button>
 
+      {!showAddPanel && (
+      <aside className={styles.personaPanel}>
+        <div className={styles.personaPanelHeader}>
+          <div>
+            <div className={styles.personaPanelTitle}>People</div>
+            <div className={styles.personaPanelSub}>Drag to a category</div>
+          </div>
+          <button
+            className={styles.personaPanelAdd}
+            onClick={() => setShowAddPanel(true)}
+            title="Add persona"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+          </button>
+        </div>
+        <div className={styles.personaList}>
+          {personas.length === 0 ? (
+            <div className={styles.personaEmpty}>No personas yet</div>
+          ) : personas.map(persona => (
+            <button
+              key={persona.id}
+              className={`${styles.personaListItem} ${selected === persona.id ? styles.personaListItemActive : ''}`}
+              onPointerDown={e => startSourceDrag(persona.id, e)}
+              onClick={() => setSelected(selected === persona.id ? null : persona.id)}
+              title="Drag this persona to a category island"
+            >
+              <img
+                src={`/models/previews/character-${persona.modelKey}.png`}
+                alt={persona.modelKey}
+                className={styles.personaListAvatar}
+              />
+              <span>{persona.name}</span>
+            </button>
+          ))}
+        </div>
+      </aside>
+      )}
+
       {showAddPanel && (
         <AddPersonaPanel
           onClose={() => setShowAddPanel(false)}
           onCreate={(persona) => setPersonas(prev => [...prev, persona])}
         />
-      )}
-
-      {!showAddPanel && (
-        <button
-          className={styles.fab}
-          onClick={() => setShowAddPanel(true)}
-          title="Add persona"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
-        </button>
       )}
 
       {selectedPersona && (
@@ -779,7 +852,7 @@ export default function PeoplePage() {
         />
       )}
 
-      <div className={styles.hint}>{layoutLocked ? 'Locked view · Drag personas to assign' : 'Unlocked · Orbit · Zoom · Drag to move'}</div>
+      <div className={styles.hint}>{layoutLocked ? 'Locked view · Drag from panel to assign · Drag off island to unassign' : 'Unlocked · Orbit · Zoom · Drag off island to unassign'}</div>
     </div>
   )
 }
