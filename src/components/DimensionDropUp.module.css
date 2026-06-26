@@ -62,3 +62,32 @@
   color: #1a73e8;
   font-weight: 700;
 }
+
+.dimRow {
+  display: flex;
+  align-items: center;
+}
+
+.dimRowOver {
+  background: #f0f4ff;
+}
+
+.dragHandle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  flex-shrink: 0;
+  color: #ccc;
+  cursor: grab;
+  padding-left: 6px;
+}
+
+.dragHandle:hover {
+  color: #888;
+}
+
+.optionInRow {
+  flex: 1;
+  padding-left: 6px;
+}

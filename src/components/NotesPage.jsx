@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react'
 import styles from './NotesPage.module.css'
 import { api } from '../api'
 import CategoryAssignmentPicker from './CategoryAssignmentPicker'
@@ -365,6 +365,8 @@ function NotesColorLegendWidget({
   colorDimId,
   categoryNoteCounts,
   onColorDimChange,
+  onReorderDims,
+  onApplyToAll,
   paintCat,
   onPaintActivate,
   onExpandCategory,
@@ -388,6 +390,16 @@ function NotesColorLegendWidget({
               >
                 <span className={styles.legendDot} style={{ background: cat.color }} />
                 <span className={styles.legendName}>{cat.name}</span>
+              </button>
+              <button
+                className={styles.legendApplyAllBtn}
+                onClick={() => onApplyToAll(cat.id)}
+                title="Apply to all canvas notes"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="9 11 12 14 22 4"/>
+                  <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+                </svg>
               </button>
               <button
                 className={styles.legendExpandBtn}
@@ -415,6 +427,7 @@ function NotesColorLegendWidget({
             dimensions={dimensions}
             value={colorDimId}
             onChange={onColorDimChange}
+            onReorder={onReorderDims}
             emptyLabel="Color legend"
           />
         </div>
@@ -519,6 +532,10 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   const [floatingPanel, setFloatingPanel] = useState(null)
   const [interactionMode, setInteractionMode] = useState('edit')
   const [selectedIds, setSelectedIds] = useState(new Set())
+  const [gridCols, setGridCols] = useState(6)
+  const [gridHeight, setGridHeight] = useState(180)
+  const [gridPickerOpen, setGridPickerOpen] = useState(false)
+  const [addPanelOpen, setAddPanelOpen] = useState(true)
   const [marquee, setMarquee] = useState(null) // { startX, startY, endX, endY } canvas coords
 
   const editorRef    = useRef(null)
@@ -561,6 +578,48 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     setPaintCat(null)
   }
 
+  const applyCatToAll = async (catId) => {
+    if (!colorDimId || !catId) return
+    const ids = [...openNoteIds]
+    await Promise.all(ids.map(id => api.assign(id, colorDimId, catId).catch(console.error)))
+    setAllAssignments(prev => [
+      ...prev.filter(a => !(ids.includes(a.noteId) && a.dimensionId === colorDimId)),
+      ...ids.map(id => ({ noteId: id, dimensionId: colorDimId, categoryId: catId })),
+    ])
+  }
+
+  const reorderDimensions = async ids => {
+    const ordered = ids.map(id => dimensions.find(d => d.id === id)).filter(Boolean)
+    setDimensions(ordered)
+    try { await api.reorderDimensions(ids) }
+    catch (e) { console.error(e) }
+  }
+
+  const arrangeInGrid = (cols, height) => {
+    const ids = [...openNoteIds]
+    if (ids.length === 0) return
+    const GAP_X = 10
+    const GAP_Y = 10
+    const PAD_X = 20
+    const START_Y = 80
+    const canvasW = canvasRef.current?.offsetWidth || 1200
+    const cardW = Math.floor((canvasW - PAD_X * 2 - GAP_X * (cols - 1)) / cols)
+    const newPositions = {}
+    const newSizes = {}
+    ids.forEach((id, i) => {
+      const col = i % cols
+      const row = Math.floor(i / cols)
+      newPositions[id] = {
+        x: PAD_X + col * (cardW + GAP_X),
+        y: START_Y + row * (height + GAP_Y),
+      }
+      newSizes[id] = { w: cardW, h: height }
+    })
+    setNotePositions(prev => ({ ...prev, ...newPositions }))
+    setNoteSizes(prev => ({ ...prev, ...newSizes }))
+    setGridPickerOpen(false)
+  }
+
   const activatePaint = (catId, color) => {
     setPaintCat(prev => prev?.id === catId ? null : { id: catId, color })
   }
@@ -594,6 +653,19 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     return counts
   }, [allAssignments, colorDimId])
 
+  const [canvasScrollHeight, setCanvasScrollHeight] = useState(0)
+  useLayoutEffect(() => {
+    let maxBottom = 0
+    for (const id of openNoteIds) {
+      const pos = notePositions[id]
+      if (!pos) continue
+      const el = cardRefs.current[id]
+      const h = el ? el.offsetHeight : (noteSizes[id]?.h ?? 0)
+      maxBottom = Math.max(maxBottom, pos.y + h)
+    }
+    setCanvasScrollHeight(maxBottom + 40)
+  }, [openNoteIds, notePositions, noteSizes])
+
   // ── Canvas helpers ───────────────────────────────────────────────────────────
   const randomPos = () => {
     const w = (canvasRef.current?.offsetWidth  || 800)
@@ -617,35 +689,26 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
 
   const layoutNotesOnCanvas = noteIds => {
     if (noteIds.length === 0) return
-    const canvas = canvasRef.current
-    const w = canvas?.offsetWidth || 900
-    const h = canvas?.offsetHeight || 640
-    const cardW = 240
-    const cardH = 150
-    const marginX = 48
-    const top = 72
-    const bottomReserve = 220
-    const usableW = Math.max(cardW, w - marginX * 2 - cardW)
-    const usableH = Math.max(cardH, h - top - bottomReserve - cardH)
-    const cols = Math.max(1, Math.min(noteIds.length, Math.ceil(Math.sqrt(noteIds.length * (usableW / Math.max(usableH, 1))))))
-    const rows = Math.ceil(noteIds.length / cols)
-    const xStep = cols > 1 ? usableW / (cols - 1) : 0
-    const yStep = rows > 1 ? usableH / (rows - 1) : 0
+    const GAP_X = 10
+    const GAP_Y = 10
+    const PAD_X = 20
+    const START_Y = 80
+    const canvasW = canvasRef.current?.offsetWidth || 1200
+    const cardW = Math.floor((canvasW - PAD_X * 2 - GAP_X * (gridCols - 1)) / gridCols)
     const nextPositions = {}
-
-    noteIds.forEach((noteId, idx) => {
-      const row = Math.floor(idx / cols)
-      const col = idx % cols
-      const rowCount = row === rows - 1 ? noteIds.length - row * cols : cols
-      const rowOffset = rowCount < cols ? ((cols - rowCount) * xStep) / 2 : 0
+    const nextSizes = {}
+    noteIds.forEach((noteId, i) => {
+      const col = i % gridCols
+      const row = Math.floor(i / gridCols)
       nextPositions[noteId] = {
-        x: Math.round(marginX + rowOffset + col * xStep),
-        y: Math.round(top + row * yStep),
+        x: PAD_X + col * (cardW + GAP_X),
+        y: START_Y + row * (gridHeight + GAP_Y),
       }
+      nextSizes[noteId] = { w: cardW, h: gridHeight }
     })
-
     setOpenNoteIds(prev => new Set([...prev, ...noteIds]))
     setNotePositions(prev => ({ ...prev, ...nextPositions }))
+    setNoteSizes(prev => ({ ...prev, ...nextSizes }))
   }
 
   const expandCategoryOnCanvas = catId => {
@@ -806,8 +869,9 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     // Empty canvas — deselect all, start marquee
     setSelectedIds(new Set())
     const canvasRect = canvasRef.current.getBoundingClientRect()
+    const scrollTop = canvasRef.current.scrollTop
     const x = e.clientX - canvasRect.left
-    const y = e.clientY - canvasRect.top
+    const y = e.clientY - canvasRect.top + scrollTop
     draggingRef.current = { type: 'marquee', startX: x, startY: y }
     setMarquee({ startX: x, startY: y, endX: x, endY: y })
     e.currentTarget.setPointerCapture(e.pointerId)
@@ -870,8 +934,9 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
 
     if (type === 'marquee') {
       const canvasRect = canvasRef.current.getBoundingClientRect()
+      const scrollTop = canvasRef.current.scrollTop
       const endX = e.clientX - canvasRect.left
-      const endY = e.clientY - canvasRect.top
+      const endY = e.clientY - canvasRect.top + scrollTop
       const { startX, startY } = draggingRef.current
       setMarquee({ startX, startY, endX, endY })
 
@@ -963,7 +1028,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     if (editingTitle) { titleInputRef.current?.focus(); titleInputRef.current?.select() }
   }, [editingTitle])
 
-  useEffect(() => { editorRef.current?.focus() }, [])
+  useEffect(() => { if (addPanelOpen) editorRef.current?.focus() }, [addPanelOpen])
 
   useEffect(() => {
     if (!headlineMode && !editingTitle) return
@@ -1052,6 +1117,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
       >
+        <div style={{ position: 'absolute', top: 0, left: 0, width: 1, height: canvasScrollHeight, pointerEvents: 'none' }} />
         {[...openNoteIds].map(id => {
           const note = notes.find(n => n.id === id)
           if (!note) return null
@@ -1098,6 +1164,44 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
 
       <div className={styles.floatingModeTools}>
         <ModeControls mode={interactionMode} onModeChange={changeInteractionMode} />
+        <div className={styles.gridArrangeWrap}>
+          {gridPickerOpen && (
+            <div className={styles.gridPicker}>
+              <span className={styles.gridPickerLabel}>Cols</span>
+              <button className={styles.gridPickerStep} onClick={() => setGridCols(c => Math.max(1, c - 1))} disabled={gridCols <= 1}>−</button>
+              <span className={styles.gridPickerVal}>{gridCols}</span>
+              <button className={styles.gridPickerStep} onClick={() => setGridCols(c => Math.min(6, c + 1))} disabled={gridCols >= 6}>+</button>
+              <span className={styles.gridPickerDivider} />
+              <span className={styles.gridPickerLabel}>Height</span>
+              <button className={styles.gridPickerStep} onClick={() => setGridHeight(h => Math.max(80, h - 20))} disabled={gridHeight <= 80}>−</button>
+              <span className={styles.gridPickerVal}>{gridHeight}</span>
+              <button className={styles.gridPickerStep} onClick={() => setGridHeight(h => Math.min(500, h + 20))} disabled={gridHeight >= 500}>+</button>
+            </div>
+          )}
+          <div className={styles.gridArrangeBtnGroup}>
+            <button
+              className={styles.gridArrangeBtn}
+              onClick={() => arrangeInGrid(gridCols, gridHeight)}
+              disabled={openNoteIds.size === 0}
+              title={`Arrange in grid (${gridCols} cols, ${gridHeight}px)`}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+                <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+              </svg>
+              Grid
+            </button>
+            <button
+              className={`${styles.gridSettingsBtn} ${gridPickerOpen ? styles.gridSettingsBtnActive : ''}`}
+              onClick={() => setGridPickerOpen(v => !v)}
+              title="Grid settings"
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.01 7.01 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 2h-4c-.25 0-.46.18-.49.42l-.36 2.54a7.3 7.3 0 0 0-1.62.94l-2.39-.96a.48.48 0 0 0-.59.22L2.63 8.48a.48.48 0 0 0 .12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.3.59.22l2.39-.96c.5.36 1.04.67 1.62.94l.36 2.54c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.36-2.54a7.3 7.3 0 0 0 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.03-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className={styles.floatingViewTools}>
@@ -1120,6 +1224,8 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
           colorDimId={colorDimId}
           categoryNoteCounts={categoryNoteCounts}
           onColorDimChange={changeColorDim}
+          onReorderDims={reorderDimensions}
+          onApplyToAll={applyCatToAll}
           paintCat={paintCat}
           onPaintActivate={activatePaint}
           onExpandCategory={expandCategoryOnCanvas}
@@ -1220,58 +1326,81 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
       </div>
 
       {/* Bottom card */}
-      <div className={styles.center}>
-        <div className={styles.titleRow}>
-          {editingTitle ? (
-            <input
-              ref={titleInputRef}
-              className={styles.titleEditInput}
-              value={titleVal}
-              onChange={e => { setTitleVal(e.target.value); setTitleManual(true) }}
-              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submit() } }}
-              placeholder="Title…"
-            />
-          ) : (
-            <div className={styles.titleDisplay} onClick={() => { setEditingTitle(true); setHeadlineMode(true); if (editorRef.current) setWordRects(computeWordRects(editorRef.current)) }}>
-              <span className={titleVal ? styles.titleText : styles.titlePlaceholder}>{titleVal || 'Title…'}</span>
-              <svg className={styles.editIcon} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
-                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
-              </svg>
-            </div>
-          )}
-        </div>
-
-        <div className={styles.editorWrap}>
-          <div
-            ref={editorRef}
-            className={styles.editor}
-            contentEditable={!headlineMode}
-            suppressContentEditableWarning
-            data-placeholder="define notes…"
-            onInput={handleDescInput}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } }}
-          />
-          {headlineMode && (
-            <div className={styles.overlay} onClick={() => { setHeadlineMode(false); setEditingTitle(false) }}>
-              {wordRects.map((w, i) => (
-                <button key={i} className={styles.wordBtn}
-                  style={{ top: w.top, left: w.left, width: w.width, height: w.height }}
-                  onMouseDown={e => e.preventDefault()}
-                  onClick={e => { e.stopPropagation(); handleWordClick(w.word) }}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className={styles.actions}>
-          <button className={styles.categoryBtn} onClick={() => { ensureCategoryData(); setCategoryPickerOpen(true) }}>
-            Categories
+      {addPanelOpen ? (
+        <div className={styles.center}>
+          <button
+            className={styles.centerCollapseBtn}
+            onClick={() => setAddPanelOpen(false)}
+            title="Collapse"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19 15l-7-7-7 7"/>
+            </svg>
           </button>
-          <button className={styles.submitBtn} onClick={submit}>add ↵</button>
+
+          <div className={styles.titleRow}>
+            {editingTitle ? (
+              <input
+                ref={titleInputRef}
+                className={styles.titleEditInput}
+                value={titleVal}
+                onChange={e => { setTitleVal(e.target.value); setTitleManual(true) }}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submit() } }}
+                placeholder="Title…"
+              />
+            ) : (
+              <div className={styles.titleDisplay} onClick={() => { setEditingTitle(true); setHeadlineMode(true); if (editorRef.current) setWordRects(computeWordRects(editorRef.current)) }}>
+                <span className={titleVal ? styles.titleText : styles.titlePlaceholder}>{titleVal || 'Title…'}</span>
+                <svg className={styles.editIcon} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                  <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
+              </div>
+            )}
+          </div>
+
+          <div className={styles.editorWrap}>
+            <div
+              ref={editorRef}
+              className={styles.editor}
+              contentEditable={!headlineMode}
+              suppressContentEditableWarning
+              data-placeholder="define notes…"
+              onInput={handleDescInput}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } }}
+            />
+            {headlineMode && (
+              <div className={styles.overlay} onClick={() => { setHeadlineMode(false); setEditingTitle(false) }}>
+                {wordRects.map((w, i) => (
+                  <button key={i} className={styles.wordBtn}
+                    style={{ top: w.top, left: w.left, width: w.width, height: w.height }}
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={e => { e.stopPropagation(); handleWordClick(w.word) }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className={styles.actions}>
+            <button className={styles.categoryBtn} onClick={() => { ensureCategoryData(); setCategoryPickerOpen(true) }}>
+              Categories
+            </button>
+            <button className={styles.submitBtn} onClick={submit}>add ↵</button>
+          </div>
         </div>
-      </div>
+      ) : (
+        <button
+          className={styles.centerCollapsed}
+          onClick={() => { setAddPanelOpen(true); setTimeout(() => editorRef.current?.focus(), 50) }}
+          title="Add a note"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+          </svg>
+          New note
+        </button>
+      )}
 
       <CategoryAssignmentPicker
         open={categoryPickerOpen}

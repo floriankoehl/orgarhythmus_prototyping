@@ -128,10 +128,11 @@ export const api = {
   reorderNotes: (ids)         => req('PUT',    '/notes/order', { ids }),
 
   // Dimensions
-  getDimensions:   ()         => req('GET',    '/dimensions'),
-  createDimension: (data)     => req('POST',   '/dimensions', data),
-  updateDimension: (id, patch)=> req('PATCH',  `/dimensions/${id}`, patch),
-  deleteDimension: (id)       => req('DELETE', `/dimensions/${id}`),
+  getDimensions:      ()         => req('GET',    '/dimensions'),
+  createDimension:    (data)     => req('POST',   '/dimensions', data),
+  updateDimension:    (id, patch)=> req('PATCH',  `/dimensions/${id}`, patch),
+  deleteDimension:    (id)       => req('DELETE', `/dimensions/${id}`),
+  reorderDimensions:  (ids)      => req('PUT',    '/dimensions/reorder', { ids }),
 
   // Categories
   getAllCategories:    ()         => req('GET',    '/categories'),

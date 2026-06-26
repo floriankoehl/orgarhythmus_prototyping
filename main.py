@@ -283,6 +283,13 @@ def _migrate():
             if 'project_id' not in cols:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default'")
 
+        dim_cols = [r[1] for r in con.execute("PRAGMA table_info(dimensions)").fetchall()]
+        if 'order_idx' not in dim_cols:
+            con.execute("ALTER TABLE dimensions ADD COLUMN order_idx INTEGER NOT NULL DEFAULT 0")
+            rows = con.execute("SELECT id FROM dimensions ORDER BY rowid").fetchall()
+            for i, row in enumerate(rows):
+                con.execute("UPDATE dimensions SET order_idx = ? WHERE id = ?", (i, row[0]))
+
         cols = [r[1] for r in con.execute("PRAGMA table_info(categories)").fetchall()]
         if 'order_idx' not in cols:
             con.execute("ALTER TABLE categories ADD COLUMN order_idx INTEGER NOT NULL DEFAULT 0")
@@ -1354,7 +1361,7 @@ def list_dimensions(project_id: str = Query(default='default'), user: dict = Dep
     assert_project_access(project_id, user)
     with _db() as con:
         rows = con.execute(
-            "SELECT * FROM dimensions WHERE project_id = ?", (project_id,)
+            "SELECT * FROM dimensions WHERE project_id = ? ORDER BY order_idx, rowid", (project_id,)
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -1365,8 +1372,23 @@ def create_dimension(data: DimensionIn, project_id: str = Query(default='default
     with _db() as con:
         if con.execute("SELECT id FROM dimensions WHERE id = ?", (did,)).fetchone():
             raise HTTPException(409, "Dimension already exists")
-        con.execute("INSERT INTO dimensions (id, name, project_id) VALUES (?, ?, ?)", (did, data.name, project_id))
-    return {"id": did, "name": data.name, "project_id": project_id}
+        next_order = con.execute(
+            "SELECT COALESCE(MAX(order_idx), -1) + 1 FROM dimensions WHERE project_id = ?", (project_id,)
+        ).fetchone()[0]
+        con.execute("INSERT INTO dimensions (id, name, project_id, order_idx) VALUES (?, ?, ?, ?)", (did, data.name, project_id, next_order))
+    return {"id": did, "name": data.name, "project_id": project_id, "order_idx": next_order}
+
+@app.put("/dimensions/reorder")
+def reorder_dimensions(data: dict, project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    ids = data.get("ids", [])
+    with _db() as con:
+        for i, dim_id in enumerate(ids):
+            con.execute(
+                "UPDATE dimensions SET order_idx = ? WHERE id = ? AND project_id = ?",
+                (i, dim_id, project_id)
+            )
+    return {"ok": True}
 
 @app.patch("/dimensions/{dim_id}")
 def update_dimension(dim_id: str, data: DimensionPatch, user: dict = Depends(current_user)):

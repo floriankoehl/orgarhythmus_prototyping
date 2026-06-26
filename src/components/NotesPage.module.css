@@ -82,7 +82,8 @@
   position: absolute;
   inset: 0;
   z-index: 3;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   touch-action: none;
 }
 
@@ -366,8 +367,114 @@
   z-index: 45;
   display: flex;
   align-items: flex-end;
+  gap: 8px;
   pointer-events: auto;
 }
+
+.gridArrangeWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.gridArrangeBtnGroup {
+  display: flex;
+  align-items: center;
+  background: rgba(255,255,255,0.88);
+  border: 1px solid #ddd;
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+  backdrop-filter: blur(4px);
+  overflow: hidden;
+}
+
+.gridArrangeBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  color: #555;
+  background: transparent;
+  border: none;
+  border-right: 1px solid #e0e0e0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  transition: background 0.12s, color 0.12s;
+}
+.gridArrangeBtn:hover:not(:disabled) { background: #f5f5f5; color: #222; }
+.gridArrangeBtn:disabled { opacity: 0.4; cursor: default; }
+
+.gridSettingsBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 32px;
+  color: #888;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.gridSettingsBtn:hover { background: #f5f5f5; color: #444; }
+.gridSettingsBtnActive { color: #1a73e8; background: #f0f4ff; }
+
+.gridPicker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  background: rgba(255,255,255,0.96);
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  backdrop-filter: blur(4px);
+}
+
+.gridPickerLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: #555;
+  margin-right: 2px;
+}
+
+.gridPickerDivider {
+  width: 1px;
+  height: 18px;
+  background: #e0e0e0;
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.gridPickerStep {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f5f5f5;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  color: #444;
+  transition: background 0.1s;
+}
+.gridPickerStep:hover { background: #ebebeb; }
+
+.gridPickerVal {
+  min-width: 20px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #222;
+}
+
 
 .modeControls {
   display: flex;
@@ -542,6 +649,25 @@
   border: none;
   cursor: pointer;
   text-align: left;
+}
+
+.legendApplyAllBtn {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #bbb;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+.legendApplyAllBtn:hover {
+  color: #22a05a;
+  background: #e6f4ec;
 }
 
 .legendExpandBtn {
@@ -773,6 +899,50 @@
   border-color: #c8d6f5;
   box-shadow: 0 6px 40px rgba(26,115,232,0.1), 0 1px 6px rgba(0,0,0,0.06);
 }
+
+.centerCollapseBtn {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: #bbb;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.centerCollapseBtn:hover { background: #f0f0f0; color: #555; }
+
+.centerCollapsed {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 18px;
+  background: rgba(255,255,255,0.92);
+  border: 1px solid #e0e0e0;
+  border-radius: 999px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.09);
+  backdrop-filter: blur(4px);
+  color: #666;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+.centerCollapsed:hover { background: #fff; border-color: #c8d6f5; color: #1a73e8; }
 
 /* Title row */
 .titleRow {

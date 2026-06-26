@@ -6,10 +6,13 @@ export default function DimensionDropUp({
   dimensions,
   value,
   onChange,
+  onReorder,
   emptyLabel = 'Color legend',
 }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState(null)
+  const [dragIdx, setDragIdx] = useState(null)
+  const [overIdx, setOverIdx] = useState(null)
   const btnRef = useRef(null)
   const menuRef = useRef(null)
   const wheelAtRef = useRef(0)
@@ -45,6 +48,19 @@ export default function DimensionDropUp({
     onChange(options[(activeIdx + dir + options.length) % options.length])
   }
 
+  const previewDims = onReorder && dragIdx !== null && overIdx !== null && dragIdx !== overIdx
+    ? (() => { const a = [...dimensions]; const [x] = a.splice(dragIdx, 1); a.splice(overIdx, 0, x); return a })()
+    : dimensions
+
+  const handleDrop = (toIdx) => {
+    if (dragIdx === null || dragIdx === toIdx) { setDragIdx(null); setOverIdx(null); return }
+    const arr = [...dimensions]
+    const [item] = arr.splice(dragIdx, 1)
+    arr.splice(toIdx, 0, item)
+    onReorder(arr.map(d => d.id))
+    setDragIdx(null); setOverIdx(null)
+  }
+
   return (
     <div className={styles.wrap}>
       <button
@@ -71,14 +87,32 @@ export default function DimensionDropUp({
           >
             None
           </button>
-          {dimensions.map(dim => (
-            <button
+          {previewDims.map((dim, i) => (
+            <div
               key={dim.id}
-              className={`${styles.option} ${dim.id === value ? styles.active : ''}`}
-              onClick={() => { onChange(dim.id); setOpen(false) }}
+              className={`${styles.dimRow} ${overIdx === i && onReorder ? styles.dimRowOver : ''}`}
+              draggable={!!onReorder}
+              onDragStart={onReorder ? e => { e.dataTransfer.effectAllowed = 'move'; setDragIdx(i) } : undefined}
+              onDragOver={onReorder ? e => { e.preventDefault(); if (dragIdx !== null) setOverIdx(i) } : undefined}
+              onDragEnd={() => { setDragIdx(null); setOverIdx(null) }}
+              onDrop={onReorder ? e => { e.preventDefault(); handleDrop(i) } : undefined}
             >
-              {dim.name}
-            </button>
+              {onReorder && (
+                <span className={styles.dragHandle}>
+                  <svg width="8" height="12" viewBox="0 0 8 12" fill="currentColor">
+                    <circle cx="2" cy="2" r="1.2"/><circle cx="6" cy="2" r="1.2"/>
+                    <circle cx="2" cy="6" r="1.2"/><circle cx="6" cy="6" r="1.2"/>
+                    <circle cx="2" cy="10" r="1.2"/><circle cx="6" cy="10" r="1.2"/>
+                  </svg>
+                </span>
+              )}
+              <button
+                className={`${styles.option} ${styles.optionInRow} ${dim.id === value ? styles.active : ''}`}
+                onClick={() => { onChange(dim.id); setOpen(false) }}
+              >
+                {dim.name}
+              </button>
+            </div>
           ))}
         </div>,
         document.body

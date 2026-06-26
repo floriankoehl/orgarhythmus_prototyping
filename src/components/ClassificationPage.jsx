@@ -273,7 +273,7 @@ function ClassificationVisualSettings({ maxGridCols, onMaxGridColsChange, single
 // ── Classification toolbar ────────────────────────────────────────────────────
 function ClassificationToolbar({
   dimensions, containerDimId, onContainerDimChange, onCreateDim, onRenameDim, onRequestDeleteDim,
-  maxGridCols, onMaxGridColsChange, singleColumnWidth, onSingleColumnWidthChange,
+  onReorderDims, maxGridCols, onMaxGridColsChange, singleColumnWidth, onSingleColumnWidthChange,
 }) {
   const [dimMenuOpen, setDimMenuOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -281,6 +281,8 @@ function ClassificationToolbar({
   const [newDimName, setNewDimName]   = useState('')
   const [editingDimId, setEditingDimId] = useState('')
   const [editingDimName, setEditingDimName] = useState('')
+  const [dragIdx, setDragIdx]         = useState(null)
+  const [overIdx, setOverIdx]         = useState(null)
   const dimMenuRef  = useRef()
   const settingsBtnRef = useRef()
   const addInputRef = useRef()
@@ -370,48 +372,84 @@ function ClassificationToolbar({
           onClick={() => setDimMenuOpen(v => !v)}>
           Dimensions<Chevron open={dimMenuOpen} />
         </button>
-        {dimMenuOpen && (
-          <div className={`${styles.tbDropdown} ${styles.tbDropdownRight}`}>
-            {dimensions.length === 0
-              ? <div className={styles.tbDropdownEmpty}>No dimensions yet</div>
-              : dimensions.map(dim => (
-                  <div key={dim.id} className={styles.tbDimRow}>
-                    {editingDimId === dim.id ? (
-                      <input
-                        className={styles.tbDimRowInput}
-                        value={editingDimName}
-                        autoFocus
-                        onChange={e => setEditingDimName(e.target.value)}
-                        onBlur={commitEditDim}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter') commitEditDim()
-                          if (e.key === 'Escape') { setEditingDimId(''); setEditingDimName('') }
+        {dimMenuOpen && (() => {
+          const realDims = dimensions.filter(d => !d.dynamic)
+          const virtualDims = dimensions.filter(d => d.dynamic)
+          const previewDims = dragIdx !== null && overIdx !== null && dragIdx !== overIdx
+            ? (() => { const a = [...realDims]; const [x] = a.splice(dragIdx, 1); a.splice(overIdx, 0, x); return a })()
+            : realDims
+          const allDims = [...previewDims, ...virtualDims]
+          return (
+            <div className={`${styles.tbDropdown} ${styles.tbDropdownRight}`}>
+              {allDims.length === 0
+                ? <div className={styles.tbDropdownEmpty}>No dimensions yet</div>
+                : allDims.map((dim, i) => {
+                    const realIdx = previewDims.indexOf(dim)
+                    return (
+                      <div
+                        key={dim.id}
+                        className={`${styles.tbDimRow} ${overIdx === realIdx && !dim.dynamic ? styles.tbDimRowOver : ''}`}
+                        draggable={!dim.dynamic}
+                        onDragStart={dim.dynamic ? undefined : e => { e.dataTransfer.effectAllowed = 'move'; setDragIdx(realIdx) }}
+                        onDragOver={dim.dynamic ? undefined : e => { e.preventDefault(); if (dragIdx !== null) setOverIdx(realIdx) }}
+                        onDragEnd={() => { setDragIdx(null); setOverIdx(null) }}
+                        onDrop={dim.dynamic ? undefined : e => {
+                          e.preventDefault()
+                          if (dragIdx === null || dragIdx === realIdx) { setDragIdx(null); setOverIdx(null); return }
+                          const arr = [...realDims]
+                          const [item] = arr.splice(dragIdx, 1)
+                          arr.splice(realIdx, 0, item)
+                          onReorderDims(arr.map(d => d.id))
+                          setDragIdx(null); setOverIdx(null)
                         }}
-                      />
-                    ) : (
-                      <span className={styles.tbDimRowName} onDoubleClick={() => startEditDim(dim)}>
-                        {dim.name}
-                      </span>
-                    )}
-                    {!dim.dynamic && (
-                      <>
-                        <button className={styles.tbDimRowEdit}
-                          title="Rename dimension"
-                          onClick={() => startEditDim(dim)}>
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
-                          </svg>
-                        </button>
-                        <button className={styles.tbDimRowDelete}
-                          title="Delete dimension"
-                          onClick={() => onRequestDeleteDim(dim.id)}>✕</button>
-                      </>
-                    )}
-                  </div>
-                ))
-            }
-          </div>
-        )}
+                      >
+                        {!dim.dynamic && (
+                          <span className={styles.tbDimDragHandle} title="Drag to reorder">
+                            <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
+                              <circle cx="3" cy="2.5" r="1.2"/><circle cx="7" cy="2.5" r="1.2"/>
+                              <circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/>
+                              <circle cx="3" cy="11.5" r="1.2"/><circle cx="7" cy="11.5" r="1.2"/>
+                            </svg>
+                          </span>
+                        )}
+                        {editingDimId === dim.id ? (
+                          <input
+                            className={styles.tbDimRowInput}
+                            value={editingDimName}
+                            autoFocus
+                            onChange={e => setEditingDimName(e.target.value)}
+                            onBlur={commitEditDim}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') commitEditDim()
+                              if (e.key === 'Escape') { setEditingDimId(''); setEditingDimName('') }
+                            }}
+                          />
+                        ) : (
+                          <span className={styles.tbDimRowName} onDoubleClick={() => startEditDim(dim)}>
+                            {dim.name}
+                          </span>
+                        )}
+                        {!dim.dynamic && (
+                          <>
+                            <button className={styles.tbDimRowEdit}
+                              title="Rename dimension"
+                              onClick={() => startEditDim(dim)}>
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                              </svg>
+                            </button>
+                            <button className={styles.tbDimRowDelete}
+                              title="Delete dimension"
+                              onClick={() => onRequestDeleteDim(dim.id)}>✕</button>
+                          </>
+                        )}
+                      </div>
+                    )
+                  })
+              }
+            </div>
+          )
+        })()}
       </div>
 
       {/* Far right: add dimension */}
@@ -1202,6 +1240,13 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     catch (e) { console.error(e) }
   }
 
+  const reorderDimensions = async ids => {
+    const ordered = ids.map(id => dimensions.find(d => d.id === id)).filter(Boolean)
+    setDimensions(ordered)
+    try { await api.reorderDimensions(ids) }
+    catch (e) { console.error(e) }
+  }
+
   const renameDimension = async (id, name) => {
     try {
       const d = await api.updateDimension(id, { name })
@@ -1503,6 +1548,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
         onCreateDim={createDimension}
         onRenameDim={renameDimension}
         onRequestDeleteDim={setConfirmDeleteDimId}
+        onReorderDims={reorderDimensions}
         maxGridCols={maxGridCols}
         onMaxGridColsChange={setMaxGridCols}
         singleColumnWidth={singleColumnWidth}
