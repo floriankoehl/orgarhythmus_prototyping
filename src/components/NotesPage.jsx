@@ -3,6 +3,7 @@ import styles from './NotesPage.module.css'
 import { api } from '../api'
 import CategoryAssignmentPicker from './CategoryAssignmentPicker'
 import DimensionDropUp from './DimensionDropUp'
+import { useProgressiveNoteSearch } from '../useProgressiveNoteSearch'
 
 const DRIFT_VARIANTS = 6
 
@@ -508,15 +509,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   const positionsRef  = useRef({}) // floating background memo
 
   // ── Canvas search results ─────────────────────────────────────────────────────
-  const findResults = useMemo(() => {
-    const q = findQuery.trim()
-    if (!q) return []
-    let re
-    try { re = new RegExp(q, 'i') } catch { return [] }
-    const titleHits = notes.filter(n => re.test(n.title || ''))
-    if (titleHits.length > 0) return titleHits
-    return notes.filter(n => re.test(stripHtml(n.html || '')))
-  }, [findQuery, notes])
+  const { results: findResults, searchingDescriptions, validQuery } = useProgressiveNoteSearch(notes, findQuery)
 
   useEffect(() => {
     if (!findFocused) return
@@ -650,10 +643,15 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     layoutNotesOnCanvas(noteIds)
   }
 
-  const expandSearchResultsOnCanvas = () => {
-    layoutNotesOnCanvas(findResults.map(note => note.id))
+  const expandSearchResultsOnCanvas = (onlyStrong = false) => {
+    const results = onlyStrong
+      ? findResults.filter(result => result.matchType === 'strong')
+      : findResults
+    layoutNotesOnCanvas(results.map(result => result.note.id))
     setFindFocused(false)
   }
+
+  const strongFindCount = findResults.filter(result => result.matchType === 'strong').length
 
   const collapseNote = (id) => {
     setOpenNoteIds(prev => { const n = new Set(prev); n.delete(id); return n })
@@ -1002,28 +1000,52 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
         />
         {findFocused && findQuery.trim() && (
           <div className={styles.canvasSearchResults}>
-            {findResults.length === 0 ? (
+            {!validQuery ? (
+              <div className={styles.findEmpty}>Invalid regex</div>
+            ) : findResults.length === 0 && !searchingDescriptions ? (
               <div className={styles.findEmpty}>No matches</div>
             ) : (
               <>
-                <button
-                  className={styles.findExpandAll}
-                  onMouseDown={e => e.preventDefault()}
-                  onClick={expandSearchResultsOnCanvas}
-                  title="Open all matching notes on canvas"
-                >
-                  <span>Expand all matches</span>
-                  <span className={styles.findBadge}>{findResults.length}</span>
-                </button>
-                {findResults.map(note => (
+                {findResults.length > 0 && (
+                  <div className={styles.findExpandActions}>
+                    <button
+                      className={styles.findExpandBtn}
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={() => expandSearchResultsOnCanvas(false)}
+                      title="Open all matching notes on canvas"
+                    >
+                      <span>Expand all</span>
+                      <span className={styles.findBadge}>{findResults.length}</span>
+                    </button>
+                    <button
+                      className={styles.findExpandBtn}
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={() => expandSearchResultsOnCanvas(true)}
+                      disabled={strongFindCount === 0}
+                      title="Open only headline matches on canvas"
+                    >
+                      <span>Expand headers</span>
+                      <span className={styles.findBadge}>{strongFindCount}</span>
+                    </button>
+                  </div>
+                )}
+                {findResults.map(({ note, matchType }) => (
                   <button key={note.id}
                     className={`${styles.findResult} ${openNoteIds.has(note.id) ? styles.findResultOpen : ''}`}
                     onMouseDown={e => e.preventDefault()}
                     onClick={() => { openOnCanvas(note.id); setFindQuery(''); setFindFocused(false) }}>
-                    <span>{note.title || 'Untitled'}</span>
-                    {openNoteIds.has(note.id) && <span className={styles.findBadge}>on canvas</span>}
+                    <span className={styles.findResultTitle}>{note.title || 'Untitled'}</span>
+                    <span className={styles.findResultMeta}>
+                      <span className={`${styles.findMatchBadge} ${matchType === 'strong' ? styles.findMatchStrong : styles.findMatchWeak}`}>
+                        {matchType === 'strong' ? 'strong' : 'weak'}
+                      </span>
+                      {openNoteIds.has(note.id) && <span className={styles.findBadge}>on canvas</span>}
+                    </span>
                   </button>
                 ))}
+                {searchingDescriptions && (
+                  <div className={styles.findLoading}>Searching descriptions...</div>
+                )}
               </>
             )}
           </div>

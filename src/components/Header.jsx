@@ -1,25 +1,14 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import styles from './Header.module.css'
 import { api } from '../api'
 import CategoryAssignmentPicker from './CategoryAssignmentPicker'
+import { useProgressiveNoteSearch } from '../useProgressiveNoteSearch'
 
 const PAGES = [
   { name: 'Notes', view: 1 },
   { name: 'Classification', view: 2 },
   { name: 'Schedule', view: 3 },
 ]
-
-function stripHtml(html) {
-  return (html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-}
-
-function getSnippet(html, re) {
-  const text = stripHtml(html)
-  const m = re.exec(text)
-  if (!m) return text.slice(0, 120)
-  const start = Math.max(0, m.index - 40)
-  return (start > 0 ? '…' : '') + text.slice(start, start + 120) + (start + 120 < text.length ? '…' : '')
-}
 
 function computeWordRects(el) {
   const base = el.getBoundingClientRect()
@@ -145,19 +134,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
   }
 
   // search logic
-  const searchResults = useMemo(() => {
-    const q = searchQuery.trim()
-    if (!q) return []
-    let re
-    try { re = new RegExp(q, 'i') } catch { return [] }
-
-    const titleHits = notes.filter(n => re.test(n.title || ''))
-    if (titleHits.length > 0) return titleHits.map(n => ({ note: n, matchedTitle: true }))
-
-    return notes
-      .filter(n => re.test(stripHtml(n.html || '')))
-      .map(n => ({ note: n, matchedTitle: false, snippet: getSnippet(n.html, re) }))
-  }, [searchQuery, notes])
+  const { results: searchResults, searchingDescriptions, validQuery } = useProgressiveNoteSearch(notes, searchQuery)
 
   const openResult = (noteId) => {
     setSearchOpen(false)
@@ -217,19 +194,33 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
             />
             {searchQuery.trim() && (
               <div className={styles.searchResults}>
-                {searchResults.length === 0 ? (
+                {!validQuery ? (
+                  <div className={styles.searchEmpty}>Invalid regex</div>
+                ) : searchResults.length === 0 && !searchingDescriptions ? (
                   <div className={styles.searchEmpty}>No results</div>
-                ) : searchResults.map(({ note, matchedTitle, snippet }) => (
-                  <button
-                    key={note.id}
-                    className={styles.searchResultCard}
-                    onClick={() => openResult(note.id)}>
-                    <span className={styles.searchResultTitle}>{note.title || 'Untitled'}</span>
-                    {!matchedTitle && snippet && (
-                      <span className={styles.searchResultSnippet}>{snippet}</span>
+                ) : (
+                  <>
+                    {searchResults.map(({ note, matchType, snippet }) => (
+                      <button
+                        key={note.id}
+                        className={styles.searchResultCard}
+                        onClick={() => openResult(note.id)}>
+                        <span className={styles.searchResultHead}>
+                          <span className={styles.searchResultTitle}>{note.title || 'Untitled'}</span>
+                          <span className={`${styles.searchMatchBadge} ${matchType === 'strong' ? styles.searchMatchStrong : styles.searchMatchWeak}`}>
+                            {matchType === 'strong' ? 'strong' : 'weak'}
+                          </span>
+                        </span>
+                        {matchType === 'weak' && snippet && (
+                          <span className={styles.searchResultSnippet}>{snippet}</span>
+                        )}
+                      </button>
+                    ))}
+                    {searchingDescriptions && (
+                      <div className={styles.searchLoading}>Searching descriptions...</div>
                     )}
-                  </button>
-                ))}
+                  </>
+                )}
               </div>
             )}
           </div>

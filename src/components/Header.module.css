@@ -179,11 +179,42 @@
 .searchResultCard:last-child { border-bottom: none; }
 .searchResultCard:hover { background: #f5f8ff; }
 
+.searchResultHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .searchResultTitle {
+  min-width: 0;
   font-size: 13px;
   font-family: Arial, sans-serif;
   font-weight: 600;
   color: #1a1a1a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchMatchBadge {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-family: Arial, sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.searchMatchStrong {
+  color: #0f766e;
+  background: #ccfbf1;
+}
+
+.searchMatchWeak {
+  color: #7c3aed;
+  background: #ede9fe;
 }
 
 .searchResultSnippet {
@@ -193,6 +224,14 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.searchLoading {
+  padding: 10px 16px;
+  color: #888;
+  background: #fafafa;
+  border-top: 1px solid #f0f0f0;
+  font: 12px Arial, sans-serif;
 }
 
 /* ── Quick-add ─────────────────────────────────────────────────────────────── */

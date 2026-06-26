@@ -610,15 +610,22 @@
   flex-direction: column;
 }
 
-.findExpandAll {
+.findExpandActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: #f4f8ff;
+  border-bottom: 1px solid #dbe7ff;
+}
+
+.findExpandBtn {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 9px 16px;
   color: #1a73e8;
-  background: #f4f8ff;
+  background: transparent;
   border: none;
-  border-bottom: 1px solid #dbe7ff;
   font-family: Arial, sans-serif;
   font-size: 12px;
   font-weight: 700;
@@ -626,12 +633,18 @@
   text-align: left;
   transition: background 0.1s;
 }
-.findExpandAll:hover { background: #e8f0fe; }
+.findExpandBtn + .findExpandBtn { border-left: 1px solid #dbe7ff; }
+.findExpandBtn:hover:not(:disabled) { background: #e8f0fe; }
+.findExpandBtn:disabled {
+  color: #aaa;
+  cursor: default;
+}
 
 .findResult {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   padding: 8px 16px;
   font-size: 13px;
   font-family: Arial, sans-serif;
@@ -648,6 +661,20 @@
 
 .findResultOpen { color: #1a73e8; }
 
+.findResultTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.findResultMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .findBadge {
   font-size: 10px;
   font-family: Arial, sans-serif;
@@ -658,12 +685,39 @@
   flex-shrink: 0;
 }
 
+.findMatchBadge {
+  font-size: 10px;
+  font-family: Arial, sans-serif;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 10px;
+  text-transform: uppercase;
+}
+
+.findMatchStrong {
+  color: #0f766e;
+  background: #ccfbf1;
+}
+
+.findMatchWeak {
+  color: #7c3aed;
+  background: #ede9fe;
+}
+
 .findEmpty {
   padding: 12px 16px;
   font-size: 13px;
   font-family: Arial, sans-serif;
   color: #aaa;
   text-align: center;
+}
+
+.findLoading {
+  padding: 9px 16px;
+  color: #888;
+  background: #fafafa;
+  border-top: 1px solid #f0f0f0;
+  font: 12px Arial, sans-serif;
 }
 
 /* ── Center input area ───────────────────────────────────────────────────── */

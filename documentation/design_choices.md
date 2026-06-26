@@ -23,6 +23,9 @@ The frontend can add fields to perspective state without a DB migration — just
 ## Notes Naming
 The product language is now notes throughout the frontend, backend API, and database schema. `main.py` keeps a migration path for old local databases that still contain `pages` or `goal_id`.
 
+## Progressive note search
+Both the global header search and the Notes canvas search use `useProgressiveNoteSearch`. Title matches are returned synchronously as `strong` hits so the UI responds immediately. Description matches are then scanned asynchronously in small chunks and streamed into the same result list as `weak` hits. A note that matches both title and description is shown once as a strong result.
+
 ---
 
 ## Things that caused problems
