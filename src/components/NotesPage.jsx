@@ -67,6 +67,7 @@ function PostIt({
   size,
   isMergeTarget,
   backgroundColor,
+  zIndex,
   interactionMode,
   paintCat,
   onPaint,
@@ -81,6 +82,7 @@ function PostIt({
   const [cutY, setCutY]               = useState(null) // px from top of card
   const [cutOffset, setCutOffset]     = useState(null) // char index in snippet text
   const [inlineEditing, setInlineEditing] = useState(false)
+  const [inlineEditSize, setInlineEditSize] = useState(null)
   const [draftTitle, setDraftTitle]   = useState(note.title || '')
   const [draftText, setDraftText]     = useState('')
   const cardRef  = useRef(null)
@@ -89,7 +91,7 @@ function PostIt({
   const lineBreaksRef = useRef(null)
 
   const snippet = stripHtml(note.html || '')
-  const splitActive = interactionMode === 'scissor'
+  const splitActive = interactionMode === 'refractor'
 
   useEffect(() => {
     onRegisterCard?.(note.id, cardRef.current)
@@ -193,6 +195,7 @@ function PostIt({
       const maxH = Math.max(120, window.innerHeight - cardRect.top - 24)
       const nextW = Math.min(maxW, Math.max(180, startW + ev.clientX - startX))
       const nextH = Math.min(maxH, Math.max(80, startH + ev.clientY - startY))
+      if (inlineEditing) setInlineEditSize({ w: nextW, h: nextH })
       onResize?.(nextW, nextH)
     }
     const onUp = () => {
@@ -218,6 +221,8 @@ function PostIt({
   }
 
   const startInlineEdit = () => {
+    const card = cardRef.current
+    if (card) setInlineEditSize({ w: card.offsetWidth, h: card.offsetHeight })
     setDraftTitle(note.title || '')
     setDraftText(snippet)
     setInlineEditing(true)
@@ -227,12 +232,15 @@ function PostIt({
     if (!inlineEditing) return
     const nextTitle = draftTitle.trim() || deriveTitle(draftText) || 'Untitled'
     const nextHtml = draftText.replace(/\n/g, '<br>')
+    const editSize = inlineEditSize
     setInlineEditing(false)
+    setInlineEditSize(null)
     if (nextTitle === (note.title || '') && nextHtml === (note.html || '')) return
     try {
       await onInlineUpdate?.(note.id, { title: nextTitle, html: nextHtml })
     } catch (e) {
       console.error('Inline note update failed', e)
+      setInlineEditSize(editSize)
       setInlineEditing(true)
     }
   }
@@ -241,6 +249,7 @@ function PostIt({
     setDraftTitle(note.title || '')
     setDraftText(snippet)
     setInlineEditing(false)
+    setInlineEditSize(null)
   }
 
   const handleDoubleClick = (e) => {
@@ -253,11 +262,13 @@ function PostIt({
     onOpen()
   }
 
+  const renderedSize = inlineEditing && inlineEditSize ? inlineEditSize : size
+
   return (
     <div
       ref={cardRef}
       className={`${styles.postit} ${isMergeTarget ? styles.postitMergeTarget : ''} ${splitActive ? styles.postitSplitMode : ''}`}
-      style={{ left: position.x, top: position.y, backgroundColor, ...(size ? { width: size.w, height: size.h } : {}) }}
+      style={{ left: position.x, top: position.y, backgroundColor, zIndex, ...(renderedSize ? { width: renderedSize.w, height: renderedSize.h } : {}) }}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
       onBlurCapture={e => {
@@ -421,29 +432,12 @@ function ModeControls({ mode, onModeChange }) {
       ),
     },
     {
-      id: 'scissor',
-      label: 'Scissor',
-      title: 'Scissor mode: click the left edge of a note at a line break to split it',
+      id: 'refractor',
+      label: 'Refractor',
+      title: 'Refractor mode: drag notes together to merge, or click the left edge of a note at a line break to split it',
       icon: (
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="6" cy="6" r="3" />
-          <circle cx="6" cy="18" r="3" />
-          <line x1="20" y1="4" x2="8.12" y2="15.88" />
-          <line x1="14.47" y1="14.48" x2="20" y2="20" />
-          <line x1="8.12" y1="8.12" x2="12" y2="12" />
-        </svg>
-      ),
-    },
-    {
-      id: 'merge',
-      label: 'Merge',
-      title: 'Merge mode: drag one note over another to merge them',
-      icon: (
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="3" y="5" width="7" height="7" rx="1.5" />
-          <rect x="14" y="12" width="7" height="7" rx="1.5" />
-          <path d="M10 8.5h4" />
-          <path d="M12.5 6l3 2.5-3 2.5" />
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9l-3.8 3.8z" />
         </svg>
       ),
     },
@@ -475,12 +469,14 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   const [mergeCandidate, setMergeCandidate] = useState(null)
   const [mergeProposal, setMergeProposal]   = useState(null)
   const [noteSizes, setNoteSizes]           = useState({}) // { [id]: { w, h } }
+  const [noteZIndexes, setNoteZIndexes]     = useState({})
 
   // Drag
   const draggingRef   = useRef(null)
   const wasDraggedRef = useRef(false)
   const canvasRef     = useRef(null)
   const cardRefs      = useRef({})
+  const zCounterRef   = useRef(20)
 
   // Canvas search
   const [findQuery, setFindQuery] = useState('')
@@ -652,6 +648,8 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   }
 
   const strongFindCount = findResults.filter(result => result.matchType === 'strong').length
+  const headlineFindResults = findResults.filter(result => result.matchType === 'strong')
+  const descriptionFindResults = findResults.filter(result => result.matchType === 'weak')
 
   const collapseNote = (id) => {
     setOpenNoteIds(prev => { const n = new Set(prev); n.delete(id); return n })
@@ -661,6 +659,19 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     setOpenNoteIds(new Set())
     setMergeCandidate(null)
     setMergeProposal(null)
+  }
+
+  const bringNotesToFront = noteIds => {
+    const ids = noteIds.filter(Boolean)
+    if (!ids.length) return
+    setNoteZIndexes(prev => {
+      const next = { ...prev }
+      ids.forEach(id => {
+        zCounterRef.current += 1
+        next[id] = zCounterRef.current
+      })
+      return next
+    })
   }
 
   const handleInlineUpdate = async (noteId, patch) => {
@@ -702,6 +713,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
       const base = notePositions[noteId] || randomPos()
       setNotePositions(prev => ({ ...prev, [newId]: { x: base.x + 260, y: base.y + 20 } }))
       setOpenNoteIds(prev => new Set([...prev, newId]))
+      bringNotesToFront([noteId, newId])
       onRefresh?.()
     } catch (e) {
       console.error('Split failed', e)
@@ -779,7 +791,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
 
     const newPos = { x: origX + dx, y: origY + dy }
     setNotePositions(prev => ({ ...prev, [id]: newPos }))
-    if (interactionMode === 'merge') {
+    if (interactionMode === 'refractor') {
       setMergeCandidate(findMergeCandidate(id, newPos))
     } else {
       setMergeCandidate(null)
@@ -790,7 +802,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     const { id } = draggingRef.current || {}
     draggingRef.current = null
 
-    if (interactionMode === 'merge' && id && mergeCandidate && wasDraggedRef.current) {
+    if (interactionMode === 'refractor' && id && mergeCandidate && wasDraggedRef.current) {
       const pos = notePositions[id] || { x: 200, y: 200 }
       setMergeProposal({ sourceId: id, targetId: mergeCandidate, x: pos.x + 130, y: pos.y + 70 })
       setMergeCandidate(null)
@@ -932,6 +944,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
               size={noteSizes[id] || null}
               isMergeTarget={mergeCandidate === id}
               backgroundColor={noteBackground}
+              zIndex={noteZIndexes[id] ?? undefined}
               interactionMode={interactionMode}
               onDragStart={e => handlePointerDown(e, id)}
               onCollapse={() => collapseNote(id)}
@@ -1024,25 +1037,43 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
                       disabled={strongFindCount === 0}
                       title="Open only headline matches on canvas"
                     >
-                      <span>Expand headers</span>
+                      <span>Expand headlines</span>
                       <span className={styles.findBadge}>{strongFindCount}</span>
                     </button>
                   </div>
                 )}
-                {findResults.map(({ note, matchType }) => (
-                  <button key={note.id}
-                    className={`${styles.findResult} ${openNoteIds.has(note.id) ? styles.findResultOpen : ''}`}
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={() => { openOnCanvas(note.id); setFindQuery(''); setFindFocused(false) }}>
-                    <span className={styles.findResultTitle}>{note.title || 'Untitled'}</span>
-                    <span className={styles.findResultMeta}>
-                      <span className={`${styles.findMatchBadge} ${matchType === 'strong' ? styles.findMatchStrong : styles.findMatchWeak}`}>
-                        {matchType === 'strong' ? 'strong' : 'weak'}
-                      </span>
-                      {openNoteIds.has(note.id) && <span className={styles.findBadge}>on canvas</span>}
-                    </span>
-                  </button>
-                ))}
+                {headlineFindResults.length > 0 && (
+                  <div className={styles.findResultSection}>
+                    <div className={styles.findResultSectionTitle}>In headline</div>
+                    {headlineFindResults.map(({ note }) => (
+                      <button key={note.id}
+                        className={`${styles.findResult} ${openNoteIds.has(note.id) ? styles.findResultOpen : ''}`}
+                        onMouseDown={e => e.preventDefault()}
+                        onClick={() => { openOnCanvas(note.id); setFindQuery(''); setFindFocused(false) }}>
+                        <span className={styles.findResultTitle}>{note.title || 'Untitled'}</span>
+                        <span className={styles.findResultMeta}>
+                          {openNoteIds.has(note.id) && <span className={styles.findBadge}>on canvas</span>}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {descriptionFindResults.length > 0 && (
+                  <div className={styles.findResultSection}>
+                    <div className={styles.findResultSectionTitle}>In description</div>
+                    {descriptionFindResults.map(({ note }) => (
+                      <button key={note.id}
+                        className={`${styles.findResult} ${openNoteIds.has(note.id) ? styles.findResultOpen : ''}`}
+                        onMouseDown={e => e.preventDefault()}
+                        onClick={() => { openOnCanvas(note.id); setFindQuery(''); setFindFocused(false) }}>
+                        <span className={styles.findResultTitle}>{note.title || 'Untitled'}</span>
+                        <span className={styles.findResultMeta}>
+                          {openNoteIds.has(note.id) && <span className={styles.findBadge}>on canvas</span>}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {searchingDescriptions && (
                   <div className={styles.findLoading}>Searching descriptions...</div>
                 )}

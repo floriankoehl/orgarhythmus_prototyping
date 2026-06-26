@@ -135,6 +135,8 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
 
   // search logic
   const { results: searchResults, searchingDescriptions, validQuery } = useProgressiveNoteSearch(notes, searchQuery)
+  const headlineSearchResults = searchResults.filter(result => result.matchType === 'strong')
+  const descriptionSearchResults = searchResults.filter(result => result.matchType === 'weak')
 
   const openResult = (noteId) => {
     setSearchOpen(false)
@@ -200,22 +202,35 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
                   <div className={styles.searchEmpty}>No results</div>
                 ) : (
                   <>
-                    {searchResults.map(({ note, matchType, snippet }) => (
-                      <button
-                        key={note.id}
-                        className={styles.searchResultCard}
-                        onClick={() => openResult(note.id)}>
-                        <span className={styles.searchResultHead}>
+                    {headlineSearchResults.length > 0 && (
+                      <div className={styles.searchResultSection}>
+                        <div className={styles.searchResultSectionTitle}>In headline</div>
+                        {headlineSearchResults.map(({ note }) => (
+                          <button
+                            key={note.id}
+                            className={styles.searchResultCard}
+                            onClick={() => openResult(note.id)}>
+                            <span className={styles.searchResultTitle}>{note.title || 'Untitled'}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {descriptionSearchResults.length > 0 && (
+                      <div className={styles.searchResultSection}>
+                        <div className={styles.searchResultSectionTitle}>In description</div>
+                        {descriptionSearchResults.map(({ note, snippet }) => (
+                          <button
+                            key={note.id}
+                            className={styles.searchResultCard}
+                            onClick={() => openResult(note.id)}>
                           <span className={styles.searchResultTitle}>{note.title || 'Untitled'}</span>
-                          <span className={`${styles.searchMatchBadge} ${matchType === 'strong' ? styles.searchMatchStrong : styles.searchMatchWeak}`}>
-                            {matchType === 'strong' ? 'strong' : 'weak'}
-                          </span>
-                        </span>
-                        {matchType === 'weak' && snippet && (
-                          <span className={styles.searchResultSnippet}>{snippet}</span>
-                        )}
-                      </button>
-                    ))}
+                            {snippet && (
+                              <span className={styles.searchResultSnippet}>{snippet}</span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     {searchingDescriptions && (
                       <div className={styles.searchLoading}>Searching descriptions...</div>
                     )}
