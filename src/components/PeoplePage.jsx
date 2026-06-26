@@ -55,7 +55,7 @@ function CameraDirector({ locked, focusTarget, resetRevision = 0 }) {
       return
     }
     if (!locked) return
-    camera.position.set(0, 16, 28)
+    camera.position.set(0, 32, 56)
     camera.lookAt(0, 0, 0)
     if (controls?.target) controls.target.set(0, 0, 0)
     controls?.update?.()
@@ -65,11 +65,11 @@ function CameraDirector({ locked, focusTarget, resetRevision = 0 }) {
     if (!movingRef.current) return
     const [x, , z] = focusTarget ?? [0, 0, 0]
     const desiredPosition = overviewRef.current
-      ? new THREE.Vector3(0, 16, 28)
-      : new THREE.Vector3(x + 0.4, 4.8, z + 5.2)
+      ? new THREE.Vector3(0, 32, 56)
+      : new THREE.Vector3(x + 0.8, 9.6, z + 10.4)
     const desiredTarget = overviewRef.current
       ? new THREE.Vector3(0, 0, 0)
-      : new THREE.Vector3(x, ISLAND_H + 0.08, z - 0.6)
+      : new THREE.Vector3(x, ISLAND_H + 0.16, z - 1.2)
     camera.position.lerp(desiredPosition, 0.12)
     if (controls?.target) controls.target.lerp(desiredTarget, 0.12)
     camera.lookAt(controls?.target ?? desiredTarget)
@@ -168,19 +168,19 @@ function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7',
 
       {selected && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
-          <ringGeometry args={[0.26, 0.34, 32]} />
+          <ringGeometry args={[0.52, 0.68, 32]} />
           <meshBasicMaterial color={color} transparent opacity={0.8} />
         </mesh>
       )}
 
       {showName && (
         <Text
-          position={[0, targetHeight + 0.2, 0]}
-          fontSize={0.16}
+          position={[0, targetHeight + 0.4, 0]}
+          fontSize={0.32}
           color={lit ? color : '#444'}
           anchorX="center"
           anchorY="bottom"
-          outlineWidth={0.016}
+          outlineWidth={0.032}
           outlineColor="#fff"
         >
           {name}
@@ -191,16 +191,16 @@ function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7',
 }
 
 // ── Category island ──────────────────────────────────────────────────────────
-const ISLAND_W     = 10.0
-const ISLAND_D     = 10.0
-const ISLAND_H     = 0.42
+const ISLAND_W     = 20.0
+const ISLAND_D     = 20.0
+const ISLAND_H     = 0.84
 const ISLAND_COLS  = 4
-const ISLAND_SLOT_GRID = 10
-const TILE_GRID    = 8
-const ISLAND_RENDER_W = ISLAND_W * TILE_GRID / ISLAND_SLOT_GRID   // 8.0
-const ISLAND_RENDER_D = ISLAND_D * TILE_GRID / ISLAND_SLOT_GRID   // 8.0
-const LOCKED_CATEGORY_X = -15
-const LOCKED_CATEGORY_Z = -15
+const ISLAND_SLOT_GRID = 20
+const TILE_GRID    = 16
+const ISLAND_RENDER_W = ISLAND_W * TILE_GRID / ISLAND_SLOT_GRID   // 16.0
+const ISLAND_RENDER_D = ISLAND_D * TILE_GRID / ISLAND_SLOT_GRID   // 16.0
+const LOCKED_CATEGORY_X = -30
+const LOCKED_CATEGORY_Z = -30
 
 function CategoryIsland({ position, color, name, focused = false, onDoubleClick }) {
   const floorTexture = useMemo(() => {
@@ -260,37 +260,37 @@ function CategoryIsland({ position, color, name, focused = false, onDoubleClick 
     return texture
   }, [focused])
   const dashSegments = useMemo(() => {
-    const dash = 0.34
-    const gap = 0.18
+    const dash = 0.68
+    const gap = 0.36
     const y = ISLAND_H + 0.024
     const segments = []
     const addHorizontal = (z) => {
       for (let x = -ISLAND_RENDER_W / 2; x < ISLAND_RENDER_W / 2; x += dash + gap) {
         const len = Math.min(dash, ISLAND_RENDER_W / 2 - x)
-        if (len > 0.04) segments.push({ pos: [x + len / 2, y, z], size: [len, 0.018], rot: 0 })
+        if (len > 0.08) segments.push({ pos: [x + len / 2, y, z], size: [len, 0.036], rot: 0 })
       }
     }
     const addVertical = (x) => {
       for (let z = -ISLAND_RENDER_D / 2; z < ISLAND_RENDER_D / 2; z += dash + gap) {
         const len = Math.min(dash, ISLAND_RENDER_D / 2 - z)
-        if (len > 0.04) segments.push({ pos: [x, y, z + len / 2], size: [len, 0.018], rot: Math.PI / 2 })
+        if (len > 0.08) segments.push({ pos: [x, y, z + len / 2], size: [len, 0.036], rot: Math.PI / 2 })
       }
     }
-    addHorizontal(ISLAND_RENDER_D / 2 + 0.018)
-    addHorizontal(-ISLAND_RENDER_D / 2 - 0.018)
-    addVertical(ISLAND_RENDER_W / 2 + 0.018)
-    addVertical(-ISLAND_RENDER_W / 2 - 0.018)
+    addHorizontal(ISLAND_RENDER_D / 2 + 0.036)
+    addHorizontal(-ISLAND_RENDER_D / 2 - 0.036)
+    addVertical(ISLAND_RENDER_W / 2 + 0.036)
+    addVertical(-ISLAND_RENDER_W / 2 - 0.036)
     return segments
   }, [])
   const sideLabelY = ISLAND_H / 2
-  const sideLabelOffsetX = ISLAND_RENDER_W / 2 + 0.012
-  const sideLabelOffsetZ = ISLAND_RENDER_D / 2 + 0.012
+  const sideLabelOffsetX = ISLAND_RENDER_W / 2 + 0.024
+  const sideLabelOffsetZ = ISLAND_RENDER_D / 2 + 0.024
   const sideLabelProps = {
-    fontSize: 0.36,
+    fontSize: 0.72,
     color: '#fff',
     anchorX: 'center',
     anchorY: 'middle',
-    outlineWidth: 0.048,
+    outlineWidth: 0.096,
     outlineColor: color,
     outlineOpacity: 1,
   }
@@ -343,12 +343,12 @@ function CategoryIsland({ position, color, name, focused = false, onDoubleClick 
       ))}
       {!focused && (
         <Text
-          position={[0, ISLAND_H + 0.28, 0]}
-          fontSize={0.46}
+          position={[0, ISLAND_H + 0.56, 0]}
+          fontSize={0.92}
           color="#fff"
           anchorX="center"
           anchorY="middle"
-          outlineWidth={0.062}
+          outlineWidth={0.124}
           outlineColor={color}
           outlineOpacity={1}
         >
@@ -398,16 +398,16 @@ function computeIslandLayout(cats, locked = false) {
 }
 
 // ── Note card (rendered on focused island floor) ─────────────────────────────
-const NOTE_W = 2.10
-const NOTE_D = 1.36
-const NOTE_H = 0.10
-const NOTE_SLOT_W = NOTE_W + 0.40
-const NOTE_SLOT_D = NOTE_D + 0.54
-const MINI_TARGET_HEIGHT = 0.52
-const MINI_PERSONA_SPACING = 0.88
-const PLATEAU_W = 6.8
-const PLATEAU_D = 1.9
-const PLATEAU_H = 0.36
+const NOTE_W = 4.20
+const NOTE_D = 2.72
+const NOTE_H = 0.20
+const NOTE_SLOT_W = NOTE_W + 0.80
+const NOTE_SLOT_D = NOTE_D + 1.08
+const MINI_TARGET_HEIGHT = 1.04
+const MINI_PERSONA_SPACING = 1.76
+const PLATEAU_W = 13.6
+const PLATEAU_D = 3.8
+const PLATEAU_H = 0.72
 
 function LeaderPlateau({ islandPos, color, highlighted = false }) {
   const centerZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D / 2
@@ -467,12 +467,12 @@ function NoteCard({ position, title, color = '#888', highlighted = false }) {
         <meshBasicMaterial color={color} transparent opacity={active ? 0.75 : 0.55} depthWrite={false} />
       </mesh>
       <Text
-        position={[0, NOTE_H + 0.006, 0]}
-        fontSize={0.16}
+        position={[0, NOTE_H + 0.012, 0]}
+        fontSize={0.32}
         color={color}
         anchorX="center"
         anchorY="middle"
-        maxWidth={NOTE_W - 0.20}
+        maxWidth={NOTE_W - 0.40}
         onPointerOver={() => setHovered(true)}
         onPointerOut={() => setHovered(false)}
       >
@@ -484,10 +484,10 @@ function NoteCard({ position, title, color = '#888', highlighted = false }) {
 
 function computeNotesOnIsland(islandPos, notes) {
   if (notes.length === 0) return []
-  const availW = ISLAND_RENDER_W - 0.24
+  const availW = ISLAND_RENDER_W - 0.48
   // Notes start after plateau + member row gap
-  const noteStartZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D + 1.30 + NOTE_D / 2
-  const availD = (islandPos[2] + ISLAND_RENDER_D / 2 - 0.50) - noteStartZ
+  const noteStartZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D + 2.60 + NOTE_D / 2
+  const availD = (islandPos[2] + ISLAND_RENDER_D / 2 - 1.00) - noteStartZ
   const cols = Math.max(1, Math.min(notes.length, Math.floor(availW / NOTE_SLOT_W)))
   const maxRows = Math.max(1, Math.floor(availD / NOTE_SLOT_D))
   const usedW = (cols - 1) * NOTE_SLOT_W
@@ -505,7 +505,7 @@ function computeMiniPersonaLine(islandPos, personas) {
   if (personas.length === 0) return []
   const totalW = (personas.length - 1) * MINI_PERSONA_SPACING
   // Members stand just in front of the plateau
-  const memberZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D + 0.62
+  const memberZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D + 1.24
   return personas.map((persona, i) => ({
     ...persona,
     miniPos: [
@@ -722,9 +722,13 @@ function Scene({
     ? computeNotesOnIsland(focusedIsland.islandPos, focusedNotes)
     : []
 
+  const leaderIdsInFocused = new Set(
+    categoryLeaders.filter(l => l.categoryId === focusedCategoryId).map(l => l.personaId)
+  )
   const focusedPersonas = focusedIsland && activeDimensionId
     ? personaAssignments
         .filter(a => a.dimensionId === activeDimensionId && a.categoryId === focusedCategoryId)
+        .filter(a => !leaderIdsInFocused.has(a.personaId))
         .filter(a => !draggedAssignment ||
           a.personaId !== draggedAssignment.personaId ||
           a.dimensionId !== draggedAssignment.dimensionId ||
@@ -879,7 +883,7 @@ function Scene({
                 name={persona.name}
                 color={keyColor(persona.modelKey)}
                 phaseId={i + 400}
-                targetHeight={0.26}
+                targetHeight={0.52}
                 showName={false}
                 selected={selected === persona.id}
                 dragging={false}
@@ -1491,7 +1495,7 @@ export default function PeoplePage() {
     <div className={styles.page}>
       <Canvas
         shadows
-        camera={{ position: [0, 16, 28], fov: 48 }}
+        camera={{ position: [0, 32, 56], fov: 48 }}
         className={styles.canvas}
         gl={{ antialias: true, alpha: true }}
         style={{ background: 'transparent' }}
