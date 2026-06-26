@@ -1635,7 +1635,48 @@ def list_persona_assignments(project_id: str = Query(default='default'), user: d
     assert_project_access(project_id, user)
     with _db() as con:
         rows = con.execute(
-            """SELECT pa.* FROM persona_assignments pa
+            """
+            WITH note_links AS (
+                SELECT pna.persona_id, pna.note_id
+                FROM persona_note_assignments pna
+                JOIN notes n ON n.id = pna.note_id
+                WHERE n.project_id = ?
+
+                UNION
+
+                SELECT pma.persona_id, m.note_id
+                FROM persona_milestone_assignments pma
+                JOIN milestones m ON m.id = pma.milestone_id
+                JOIN notes n ON n.id = m.note_id
+                WHERE n.project_id = ?
+            ),
+            category_links AS (
+                SELECT pa.persona_id, pa.dimension_id, pa.category_id
+                FROM persona_assignments pa
+                JOIN personas p ON p.id = pa.persona_id
+                WHERE p.project_id = ?
+
+                UNION
+
+                SELECT nl.persona_id, a.dimension_id, a.category_id
+                FROM note_links nl
+                JOIN assignments a ON a.note_id = nl.note_id
+            )
+            SELECT persona_id, dimension_id, category_id
+            FROM category_links
+            ORDER BY dimension_id, category_id, persona_id
+            """,
+            (project_id, project_id, project_id),
+        ).fetchall()
+    return [_persona_assign(r) for r in rows]
+
+@app.get("/persona-assignments/direct")
+def list_direct_persona_assignments(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    with _db() as con:
+        rows = con.execute(
+            """SELECT pa.persona_id, pa.dimension_id, pa.category_id
+            FROM persona_assignments pa
             JOIN personas p ON p.id = pa.persona_id
             WHERE p.project_id = ?
             ORDER BY pa.dimension_id, pa.category_id, pa.persona_id""",
@@ -1685,8 +1726,36 @@ def list_persona_note_assignments(project_id: str = Query(default='default'), us
     assert_project_access(project_id, user)
     with _db() as con:
         rows = con.execute(
+            """
+            SELECT persona_id, note_id
+            FROM (
+                SELECT pna.persona_id, pna.note_id
+                FROM persona_note_assignments pna
+                JOIN notes n ON n.id = pna.note_id
+                WHERE n.project_id = ?
+
+                UNION
+
+                SELECT pma.persona_id, m.note_id
+                FROM persona_milestone_assignments pma
+                JOIN milestones m ON m.id = pma.milestone_id
+                JOIN notes n ON n.id = m.note_id
+                WHERE n.project_id = ?
+            )
+            ORDER BY note_id, persona_id
+            """,
+            (project_id, project_id),
+        ).fetchall()
+    return [{"personaId": r["persona_id"], "noteId": r["note_id"]} for r in rows]
+
+@app.get("/persona-note-assignments/direct")
+def list_direct_persona_note_assignments(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    with _db() as con:
+        rows = con.execute(
             "SELECT pna.persona_id, pna.note_id FROM persona_note_assignments pna "
-            "JOIN notes n ON n.id = pna.note_id WHERE n.project_id = ?",
+            "JOIN notes n ON n.id = pna.note_id WHERE n.project_id = ? "
+            "ORDER BY pna.note_id, pna.persona_id",
             (project_id,),
         ).fetchall()
     return [{"personaId": r["persona_id"], "noteId": r["note_id"]} for r in rows]

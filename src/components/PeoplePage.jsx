@@ -1547,6 +1547,43 @@ function PersonaMini({ persona, size = 28 }) {
   )
 }
 
+function uniqueBy(items, keyFn) {
+  const seen = new Set()
+  return items.filter(item => {
+    const key = keyFn(item)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function deriveEffectivePersonaNoteAssignments(directNoteAssignments, milestoneAssignments, milestones) {
+  const milestoneNoteById = new Map(milestones.map(ms => [ms.id, ms.noteId]))
+  return uniqueBy([
+    ...directNoteAssignments,
+    ...milestoneAssignments
+      .map(a => ({ personaId: a.personaId, noteId: milestoneNoteById.get(a.milestoneId) }))
+      .filter(a => a.noteId),
+  ], a => `${a.personaId}:${a.noteId}`)
+}
+
+function deriveEffectivePersonaAssignments(directAssignments, effectiveNoteAssignments, noteAssignments) {
+  const noteCategoryLinks = new Map()
+  noteAssignments.forEach(a => {
+    const list = noteCategoryLinks.get(a.noteId) || []
+    list.push({ dimensionId: a.dimensionId, categoryId: a.categoryId })
+    noteCategoryLinks.set(a.noteId, list)
+  })
+  const inherited = effectiveNoteAssignments.flatMap(a =>
+    (noteCategoryLinks.get(a.noteId) || []).map(link => ({
+      personaId: a.personaId,
+      dimensionId: link.dimensionId,
+      categoryId: link.categoryId,
+    }))
+  )
+  return uniqueBy([...directAssignments, ...inherited], a => `${a.personaId}:${a.dimensionId}:${a.categoryId}`)
+}
+
 function People2DView({
   activeDimension,
   activeCats = [],
@@ -1860,7 +1897,7 @@ export default function PeoplePage() {
   }, [])
 
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getPersonaAssignments(), api.getNotes(), api.getAssignments(), api.getMilestones(), api.getPersonaNoteAssignments(), api.getPersonaMilestoneAssignments(), api.getCategoryLeaders()])
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getDirectPersonaAssignments(), api.getNotes(), api.getAssignments(), api.getMilestones(), api.getDirectPersonaNoteAssignments(), api.getPersonaMilestoneAssignments(), api.getCategoryLeaders()])
       .then(([dims, cats, pers, personaAsns, notesList, noteAsns, ms, pnAsns, pmAsns, leaders]) => {
         setDimensions(dims)
         setCategories(cats)
@@ -1888,6 +1925,15 @@ export default function PeoplePage() {
   const focusedCategory = focusedCategoryId
     ? activeCats.find(c => c.id === focusedCategoryId) ?? null
     : null
+
+  const effectivePersonaNoteAssignments = useMemo(
+    () => deriveEffectivePersonaNoteAssignments(personaNoteAssignments, personaMilestoneAssignments, milestones),
+    [personaNoteAssignments, personaMilestoneAssignments, milestones],
+  )
+  const effectivePersonaAssignments = useMemo(
+    () => deriveEffectivePersonaAssignments(personaAssignments, effectivePersonaNoteAssignments, noteAssignments),
+    [personaAssignments, effectivePersonaNoteAssignments, noteAssignments],
+  )
 
   useEffect(() => {
     if (!focusedCategoryId) return
@@ -2098,13 +2144,13 @@ export default function PeoplePage() {
   const selectedPersona = personas.find(p => p.id === selected) ?? null
   const focusedNote = focusedNoteId ? notes.find(n => n.id === focusedNoteId) ?? null : null
   const selectedAssignments = selectedPersona && activeDimension
-    ? personaAssignments
+    ? effectivePersonaAssignments
       .filter(a => a.personaId === selectedPersona.id && a.dimensionId === activeDimension.id)
       .map(a => ({ ...a, category: categories.find(c => c.id === a.categoryId) }))
       .filter(a => a.category)
     : []
   const selectedNoteAssignments = selectedPersona && focusedCategoryId
-    ? personaNoteAssignments
+    ? effectivePersonaNoteAssignments
       .filter(a => a.personaId === selectedPersona.id)
       .map(a => ({ ...a, note: notes.find(n => n.id === a.noteId) }))
       .filter(a => a.note)
@@ -2159,12 +2205,12 @@ export default function PeoplePage() {
             activeDimensionId={activeDimension?.id ?? null}
             activeCats={activeCats}
             personas={personas}
-            personaAssignments={personaAssignments}
+            personaAssignments={effectivePersonaAssignments}
             assignmentRevision={assignmentRevision}
             notes={notes}
             noteAssignments={noteAssignments}
             milestones={milestones}
-            personaNoteAssignments={personaNoteAssignments}
+            personaNoteAssignments={effectivePersonaNoteAssignments}
             personaMilestoneAssignments={personaMilestoneAssignments}
             categoryLeaders={categoryLeaders}
             focusedCategoryId={focusedCategoryId}
@@ -2191,11 +2237,11 @@ export default function PeoplePage() {
           activeDimension={activeDimension}
           activeCats={activeCats}
           personas={personas}
-          personaAssignments={personaAssignments}
+          personaAssignments={effectivePersonaAssignments}
           notes={notes}
           noteAssignments={noteAssignments}
           milestones={milestones}
-          personaNoteAssignments={personaNoteAssignments}
+          personaNoteAssignments={effectivePersonaNoteAssignments}
           personaMilestoneAssignments={personaMilestoneAssignments}
           categoryLeaders={categoryLeaders}
           focusedCategory={focusedCategory}
@@ -2341,7 +2387,7 @@ export default function PeoplePage() {
       {editPersona && (
         <ProtopersonaModal
           persona={editPersona}
-          assignments={personaAssignments}
+          assignments={effectivePersonaAssignments}
           categories={categories}
           dimensions={dimensions}
           onClose={() => setEditPersonaId(null)}

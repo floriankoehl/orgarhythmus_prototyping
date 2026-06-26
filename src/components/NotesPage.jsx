@@ -30,32 +30,6 @@ function stripHtml(html) {
     .trim()
 }
 
-function colToDate(col) {
-  const d = new Date()
-  d.setHours(0, 0, 0, 0)
-  d.setDate(d.getDate() + Math.max(0, Number(col) || 0))
-  return d
-}
-
-function formatMilestoneDate(ms) {
-  const start = Math.max(0, Number(ms.startCol) || 0)
-  const duration = Math.max(1, Number(ms.duration) || 1)
-  const startLabel = colToDate(start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  if (duration <= 1) return startLabel
-  const endLabel = colToDate(start + duration - 1).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  return `${startLabel} - ${endLabel}`
-}
-
-function getMilestoneLayout(ms, maxCol) {
-  const start = Math.max(0, Number(ms.startCol) || 0)
-  const duration = Math.max(1, Number(ms.duration) || 1)
-  const span = Math.max(1, maxCol)
-  return {
-    left: `${Math.min(92, (start / span) * 100)}%`,
-    width: `${Math.max(8, Math.min(100, (duration / span) * 100))}%`,
-  }
-}
-
 function PaletteIcon({ size = 11 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -105,10 +79,6 @@ function PostIt({
   onResize,
   onRegisterCard,
   onInlineUpdate,
-  onFocus,
-  focusedLayer,
-  dimmedLayer,
-  milestones = [],
 }) {
   const [cutY, setCutY]               = useState(null) // px from top of card
   const [cutOffset, setCutOffset]     = useState(null) // char index in snippet text
@@ -123,9 +93,6 @@ function PostIt({
 
   const snippet = stripHtml(note.html || '')
   const splitActive = interactionMode === 'refractor'
-  const milestoneMaxCol = milestones.reduce((max, ms) => (
-    Math.max(max, (Number(ms.startCol) || 0) + Math.max(1, Number(ms.duration) || 1))
-  ), 1)
 
   useEffect(() => {
     onRegisterCard?.(note.id, cardRef.current)
@@ -289,7 +256,11 @@ function PostIt({
   const handleDoubleClick = (e) => {
     e.stopPropagation()
     if (paintCat) return
-    onFocus?.(note.id)
+    if (interactionMode === 'edit') {
+      startInlineEdit()
+      return
+    }
+    onOpen()
   }
 
   const renderedSize = inlineEditing && inlineEditSize ? inlineEditSize : size
@@ -298,7 +269,7 @@ function PostIt({
   return (
     <div
       ref={cardRef}
-      className={`${styles.postit} ${isMergeTarget ? styles.postitMergeTarget : ''} ${splitActive ? styles.postitSplitMode : ''} ${selected ? styles.postitSelected : ''} ${focusedLayer ? styles.postitFocusedLayer : ''} ${dimmedLayer ? styles.postitLayerDimmed : ''}`}
+      className={`${styles.postit} ${isMergeTarget ? styles.postitMergeTarget : ''} ${splitActive ? styles.postitSplitMode : ''} ${selected ? styles.postitSelected : ''}`}
       style={{ left: position.x, top: position.y, zIndex, ...(renderedSize ? { width: renderedSize.w, height: renderedSize.h } : {}) }}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
@@ -379,36 +350,6 @@ function PostIt({
         />
       ) : (
         snippet && <p ref={bodyRef} className={styles.postitBody} style={hasAccent ? { backgroundColor: backgroundColor + '22' } : undefined}>{snippet}</p>
-      )}
-
-      {focusedLayer && !inlineEditing && (
-        <div className={styles.noteMilestoneLayer}>
-          <div className={styles.noteMilestoneHeader}>
-            <span>Milestones</span>
-            <small>{milestones.length ? `${milestones.length}` : 'None yet'}</small>
-          </div>
-          {milestones.length ? (
-            <div className={styles.noteMilestoneTrack} style={{ minHeight: Math.max(88, milestones.length * 42 + 12) }}>
-              {milestones.map((ms, index) => {
-                const layout = getMilestoneLayout(ms, milestoneMaxCol)
-                const label = ms.title || formatMilestoneDate(ms)
-                return (
-                  <div
-                    key={ms.id}
-                    className={styles.noteMilestoneBar}
-                    title={`${label} · ${formatMilestoneDate(ms)}`}
-                    style={{ ...layout, top: 12 + index * 42, backgroundColor: ms.color || '#1a73e8' }}
-                  >
-                    <span>{label}</span>
-                    <small>{formatMilestoneDate(ms)}</small>
-                  </div>
-                )
-              })}
-            </div>
-          ) : (
-            <div className={styles.noteMilestoneEmpty}>No milestones are attached to this note.</div>
-          )}
-        </div>
       )}
 
       <div className={styles.resizeHandle} onPointerDown={handleResizeDown}>
@@ -529,7 +470,7 @@ function ModeControls({ mode, onModeChange }) {
     {
       id: 'edit',
       label: 'Edit',
-      title: 'Edit mode: drag notes, open the note layer with double-click, or use the pencil to edit inline',
+      title: 'Edit mode: drag notes or double-click a note to edit inline',
       icon: (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 20h9" />
@@ -576,8 +517,6 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   const [mergeProposal, setMergeProposal]   = useState(null)
   const [noteSizes, setNoteSizes]           = useState({}) // { [id]: { w, h } }
   const [noteZIndexes, setNoteZIndexes]     = useState({})
-  const [milestones, setMilestones]         = useState([])
-  const [focusedNoteId, setFocusedNoteId]   = useState(null)
 
   // Drag
   const draggingRef   = useRef(null)
@@ -585,7 +524,6 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   const canvasRef     = useRef(null)
   const cardRefs      = useRef({})
   const zCounterRef   = useRef(20)
-  const focusRestoreRef = useRef(null)
 
   // Canvas search
   const [findQuery, setFindQuery] = useState('')
@@ -621,19 +559,6 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
 
   // ── Canvas search results ─────────────────────────────────────────────────────
   const { results: findResults, searchingDescriptions, validQuery } = useProgressiveNoteSearch(notes, findQuery)
-  const milestonesByNote = useMemo(() => {
-    const grouped = {}
-    milestones.forEach(ms => {
-      if (!grouped[ms.noteId]) grouped[ms.noteId] = []
-      grouped[ms.noteId].push(ms)
-    })
-    Object.values(grouped).forEach(items => {
-      items.sort((a, b) => (a.startCol ?? 0) - (b.startCol ?? 0))
-    })
-    return grouped
-  }, [milestones])
-  const focusedNote = focusedNoteId ? notes.find(note => note.id === focusedNoteId) : null
-
   useEffect(() => {
     if (!findFocused) return
     const handler = e => {
@@ -646,12 +571,11 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
 
   // ── Load category metadata ──────────────────────────────────────────────────
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getMilestones()])
-      .then(([dims, cats, asns, ms]) => {
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments()])
+      .then(([dims, cats, asns]) => {
         setDimensions(dims)
         setCategories(cats)
         setAllAssignments(asns)
-        setMilestones(ms)
       })
       .catch(console.error)
   }, [refreshKey])
@@ -826,10 +750,6 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   const descriptionFindResults = findResults.filter(result => result.matchType === 'weak')
 
   const collapseNote = (id) => {
-    if (focusedNoteId === id) {
-      focusRestoreRef.current = null
-      setFocusedNoteId(null)
-    }
     setOpenNoteIds(prev => { const n = new Set(prev); n.delete(id); return n })
   }
 
@@ -837,8 +757,6 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     setOpenNoteIds(new Set())
     setMergeCandidate(null)
     setMergeProposal(null)
-    setFocusedNoteId(null)
-    focusRestoreRef.current = null
   }
 
   const bringNotesToFront = noteIds => {
@@ -851,63 +769,6 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
         next[id] = zCounterRef.current
       })
       return next
-    })
-  }
-
-  const restoreFocusedNote = () => {
-    const snapshot = focusRestoreRef.current
-    if (!snapshot) return
-    setNotePositions(prev => ({ ...prev, [snapshot.id]: snapshot.position }))
-    setNoteSizes(prev => {
-      const next = { ...prev }
-      if (snapshot.size) next[snapshot.id] = snapshot.size
-      else delete next[snapshot.id]
-      return next
-    })
-    focusRestoreRef.current = null
-  }
-
-  const clearNoteFocus = () => {
-    restoreFocusedNote()
-    setFocusedNoteId(null)
-  }
-
-  const focusNoteOnCanvas = noteId => {
-    if (wasDraggedRef.current || paintCat) return
-    const canvas = canvasRef.current
-    const canvasW = canvas?.clientWidth || 1200
-    const viewportH = canvas?.clientHeight || 720
-    const scrollTop = canvas?.scrollTop || 0
-    const nextW = Math.min(Math.max(520, canvasW - 160), 780)
-    const nextH = Math.min(Math.max(330, Math.round(viewportH * 0.62)), 480)
-    const nextPosition = {
-      x: Math.max(24, Math.round((canvasW - nextW) / 2)),
-      y: scrollTop + Math.max(72, Math.round((viewportH - nextH) / 2)),
-    }
-
-    if (focusRestoreRef.current && focusRestoreRef.current.id !== noteId) {
-      restoreFocusedNote()
-    }
-    if (!focusRestoreRef.current || focusRestoreRef.current.id !== noteId) {
-      focusRestoreRef.current = {
-        id: noteId,
-        position: notePositions[noteId] || randomPos(),
-        size: noteSizes[noteId] ?? null,
-      }
-    }
-
-    setFocusedNoteId(noteId)
-    setOpenNoteIds(prev => {
-      const next = new Set(prev)
-      next.add(noteId)
-      return next
-    })
-    setNotePositions(prev => ({ ...prev, [noteId]: nextPosition }))
-    setNoteSizes(prev => ({ ...prev, [noteId]: { w: nextW, h: nextH } }))
-    setSelectedIds(new Set([noteId]))
-    bringNotesToFront([noteId])
-    requestAnimationFrame(() => {
-      canvas?.scrollTo({ top: Math.max(0, nextPosition.y - 78), behavior: 'smooth' })
     })
   }
 
@@ -1265,7 +1126,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
       {/* Canvas */}
       <div
         ref={canvasRef}
-        className={`${styles.canvas} ${focusedNoteId ? styles.canvasFocusedLayer : ''}`}
+        className={styles.canvas}
         onPointerDown={handleCanvasPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -1296,10 +1157,6 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
               onResize={(w, h) => setNoteSizes(prev => ({ ...prev, [id]: { w, h } }))}
               onRegisterCard={registerCard}
               onInlineUpdate={handleInlineUpdate}
-              onFocus={focusNoteOnCanvas}
-              focusedLayer={focusedNoteId === id}
-              dimmedLayer={Boolean(focusedNoteId && focusedNoteId !== id)}
-              milestones={milestonesByNote[id] || []}
               paintCat={paintCat}
               onPaint={paintNote}
             />
@@ -1318,18 +1175,6 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
           />
         )}
       </div>
-
-      {focusedNote && (
-        <div className={styles.noteFocusPanel}>
-          <div className={styles.noteFocusCopy}>
-            <span>Inside note</span>
-            <strong>{focusedNote.title || 'Untitled'}</strong>
-          </div>
-          <button onClick={clearNoteFocus} title="Back to notes canvas">
-            Back
-          </button>
-        </div>
-      )}
 
       <div className={styles.floatingModeTools}>
         <ModeControls mode={interactionMode} onModeChange={changeInteractionMode} />

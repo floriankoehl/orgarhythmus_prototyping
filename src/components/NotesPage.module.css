@@ -87,10 +87,6 @@
   touch-action: none;
 }
 
-.canvasFocusedLayer .postit {
-  transition: opacity 0.18s, filter 0.18s, box-shadow 0.18s, border-color 0.18s;
-}
-
 .paintMode .postit {
   cursor: inherit;
 }
@@ -129,21 +125,6 @@
 .postitSelected {
   border-color: #1a73e8 !important;
   box-shadow: 0 0 0 2px rgba(26,115,232,0.28), 2px 4px 14px rgba(0,0,0,0.1) !important;
-}
-
-.postitFocusedLayer {
-  border-color: rgba(26,115,232,0.55) !important;
-  box-shadow: 0 0 0 3px rgba(26,115,232,0.18), 8px 16px 42px rgba(0,0,0,0.18) !important;
-}
-
-.postitLayerDimmed {
-  opacity: 0.38;
-  filter: saturate(0.7);
-}
-
-.postitLayerDimmed:hover {
-  opacity: 0.68;
-  filter: saturate(0.9);
 }
 
 /* ── Marquee selection rectangle ─────────────────────────────────────────── */
@@ -289,95 +270,6 @@
   white-space: pre-wrap;
   word-break: break-word;
   overflow-y: auto;
-}
-
-.noteMilestoneLayer {
-  flex-shrink: 0;
-  margin: 0 10px 16px;
-  padding: 9px;
-  background:
-    linear-gradient(90deg, rgba(26,115,232,0.08) 1px, transparent 1px) 0 0 / 42px 100%,
-    rgba(255,255,255,0.76);
-  border: 1px dashed rgba(26,115,232,0.24);
-  border-radius: 6px;
-}
-
-.noteMilestoneHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-  font-family: Arial, sans-serif;
-  color: #222;
-}
-
-.noteMilestoneHeader span {
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.noteMilestoneHeader small {
-  font-size: 10px;
-  color: #777;
-}
-
-.noteMilestoneTrack {
-  position: relative;
-  min-height: 88px;
-  overflow: hidden;
-}
-
-.noteMilestoneTrack::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 31px;
-  border-top: 1px solid rgba(0,0,0,0.12);
-}
-
-.noteMilestoneBar {
-  position: absolute;
-  top: 16px;
-  min-width: 72px;
-  max-width: 100%;
-  min-height: 36px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 1px;
-  padding: 5px 7px;
-  color: #fff;
-  border-radius: 5px;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.16);
-  font-family: Arial, sans-serif;
-  overflow: hidden;
-}
-
-.noteMilestoneBar span,
-.noteMilestoneBar small {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.noteMilestoneBar span {
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.noteMilestoneBar small {
-  font-size: 9px;
-  opacity: 0.9;
-}
-
-.noteMilestoneEmpty {
-  padding: 14px 8px;
-  color: #777;
-  font-family: Arial, sans-serif;
-  font-size: 11px;
-  text-align: center;
 }
 
 .inlineBodyInput {
@@ -618,63 +510,6 @@
   background: #fff;
   border-color: rgba(26,115,232,0.28);
   box-shadow: 0 1px 4px rgba(26,115,232,0.12);
-}
-
-.noteFocusPanel {
-  position: fixed;
-  top: 18px;
-  left: 50%;
-  z-index: 30;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  max-width: min(560px, calc(100vw - 32px));
-  padding: 8px 10px 8px 12px;
-  background: rgba(255,255,255,0.92);
-  border: 1px solid rgba(26,115,232,0.22);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.14);
-  backdrop-filter: blur(6px);
-}
-
-.noteFocusCopy {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  font-family: Arial, sans-serif;
-}
-
-.noteFocusCopy span {
-  font-size: 10px;
-  color: #777;
-}
-
-.noteFocusCopy strong {
-  max-width: 380px;
-  color: #222;
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.noteFocusPanel button {
-  flex-shrink: 0;
-  height: 28px;
-  padding: 0 10px;
-  color: #1a73e8;
-  background: #fff;
-  border: 1px solid rgba(26,115,232,0.24);
-  border-radius: 5px;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.noteFocusPanel button:hover {
-  background: rgba(26,115,232,0.08);
 }
 
 .clearCanvasBtn {
