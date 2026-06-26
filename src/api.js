@@ -141,6 +141,12 @@ export const api = {
   deleteCategory:     (id)       => req('DELETE', `/categories/${id}`),
   reorderCategories:  (ids)      => req('PUT',    '/categories/order', { ids }),
 
+  // Personas
+  getPersonas:    ()           => req('GET',    '/personas'),
+  createPersona:  (data)       => req('POST',   '/personas', data),
+  updatePersona:  (id, patch)  => req('PATCH',  `/personas/${id}`, patch),
+  deletePersona:  (id)         => req('DELETE', `/personas/${id}`),
+
   // Assignments
   getAssignments: ()                      => req('GET',    '/assignments'),
   assign:         (noteId, dimId, catId)  => req('PUT',    `/notes/${noteId}/assign/${dimId}`, { categoryId: catId }),

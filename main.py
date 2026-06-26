@@ -217,6 +217,17 @@ def _init_db():
                 created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS personas (
+                id         TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                name       TEXT NOT NULL,
+                model_key  TEXT NOT NULL DEFAULT 'a',
+                color      TEXT NOT NULL DEFAULT '#4f8ef7',
+                pos_x      REAL NOT NULL DEFAULT 0,
+                pos_z      REAL NOT NULL DEFAULT 0
+            )
+        """)
 
 _init_db()
 
@@ -525,6 +536,21 @@ class SavedFilterPatch(BaseModel):
     selections: Optional[dict[str, list[str]]] = None
     quickKey: Optional[str] = None
 
+class PersonaIn(BaseModel):
+    id:        Optional[str] = None
+    name:      str
+    model_key: str  = 'a'
+    color:     str  = '#4f8ef7'
+    pos_x:     float = 0.0
+    pos_z:     float = 0.0
+
+class PersonaPatch(BaseModel):
+    name:      Optional[str]   = None
+    model_key: Optional[str]   = None
+    color:     Optional[str]   = None
+    pos_x:     Optional[float] = None
+    pos_z:     Optional[float] = None
+
 class SchedulePerspectiveIn(BaseModel):
     id: Optional[str] = None
     name: str
@@ -574,6 +600,12 @@ def _note(row) -> dict:
 def _cat(row) -> dict:
     d = dict(row)
     return {"id": d["id"], "dimensionId": d["dimension_id"], "name": d["name"], "color": d["color"]}
+
+def _persona(row) -> dict:
+    d = dict(row)
+    return {"id": d["id"], "projectId": d["project_id"], "name": d["name"],
+            "modelKey": d["model_key"], "color": d["color"],
+            "posX": d["pos_x"], "posZ": d["pos_z"]}
 
 def _assign(row) -> dict:
     d = dict(row)
@@ -1474,6 +1506,61 @@ def delete_category(cat_id: str, user: dict = Depends(current_user)):
         assert_project_access(_project_id_for_category(con, cat_id), user)
         con.execute("DELETE FROM assignments WHERE category_id = ?", (cat_id,))
         con.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
+
+
+# ── Personas ──────────────────────────────────────────────────────────────────
+@app.get("/personas")
+def list_personas(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    with _db() as con:
+        rows = con.execute(
+            "SELECT * FROM personas WHERE project_id = ? ORDER BY rowid", (project_id,)
+        ).fetchall()
+    return [_persona(r) for r in rows]
+
+@app.post("/personas", status_code=201)
+def create_persona(data: PersonaIn, project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    if not data.name.strip():
+        raise HTTPException(400, "Name required")
+    pid = data.id or str(uuid.uuid4())
+    with _db() as con:
+        con.execute(
+            "INSERT INTO personas (id, project_id, name, model_key, color, pos_x, pos_z) VALUES (?,?,?,?,?,?,?)",
+            (pid, project_id, data.name.strip(), data.model_key, data.color, data.pos_x, data.pos_z),
+        )
+    return _persona({"id": pid, "project_id": project_id, "name": data.name.strip(),
+                     "model_key": data.model_key, "color": data.color,
+                     "pos_x": data.pos_x, "pos_z": data.pos_z})
+
+@app.patch("/personas/{persona_id}")
+def update_persona(persona_id: str, data: PersonaPatch, user: dict = Depends(current_user)):
+    with _db() as con:
+        row = con.execute("SELECT * FROM personas WHERE id = ?", (persona_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Persona not found")
+        assert_project_access(row["project_id"], user)
+        fields: dict = {}
+        if data.name      is not None: fields["name"]      = data.name.strip()
+        if data.model_key is not None: fields["model_key"] = data.model_key
+        if data.color     is not None: fields["color"]     = data.color
+        if data.pos_x     is not None: fields["pos_x"]     = data.pos_x
+        if data.pos_z     is not None: fields["pos_z"]     = data.pos_z
+        if fields:
+            sets = ", ".join(f"{k} = ?" for k in fields)
+            con.execute(f"UPDATE personas SET {sets} WHERE id = ?", (*fields.values(), persona_id))
+        row = con.execute("SELECT * FROM personas WHERE id = ?", (persona_id,)).fetchone()
+    return _persona(row)
+
+@app.delete("/personas/{persona_id}", status_code=204)
+def delete_persona(persona_id: str, user: dict = Depends(current_user)):
+    with _db() as con:
+        row = con.execute("SELECT * FROM personas WHERE id = ?", (persona_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Persona not found")
+        assert_project_access(row["project_id"], user)
+        con.execute("DELETE FROM personas WHERE id = ?", (persona_id,))
+    return Response(status_code=204)
 
 
 # ── Assignments ───────────────────────────────────────────────────────────────

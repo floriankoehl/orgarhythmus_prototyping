@@ -1,24 +1,43 @@
-import { useRef, useState, useEffect, useMemo } from 'react'
-import { Canvas, useFrame } from '@react-three/fiber'
+import { useRef, useState, useEffect, useMemo, useCallback } from 'react'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls, Grid, Environment, Text, ContactShadows, useGLTF, useAnimations } from '@react-three/drei'
 import * as THREE from 'three'
 import { api } from '../api'
 import styles from './PeoplePage.module.css'
 
-// Preload the variants we'll actually render
-;['a', 'd', 'g'].forEach(k => useGLTF.preload(`/models/character-${k}.glb`))
+const CHAR_KEYS = 'abcdefghijklmnopqr'.split('')
+const PALETTE = [
+  '#4f8ef7', '#f77b4f', '#4fc97f', '#f7d44f',
+  '#b44ff7', '#f74f8e', '#4fe0f7', '#f7944f',
+  '#7f4ff7', '#4ff7d4', '#f74f4f', '#4fa8f7',
+]
 
-const TARGET_HEIGHT = 1.15  // normalize every character to this height in scene units
+CHAR_KEYS.forEach(k => useGLTF.preload(`/models/character-${k}.glb`))
+useGLTF.preload('/models/bricks/bevel-hq-plate-2x2.glb')
+
+const TARGET_HEIGHT = 1.7
+
+// ── Cursor sync (must live inside Canvas) ────────────────────────────────────
+function CursorManager({ dragging }) {
+  const { gl } = useThree()
+  useEffect(() => {
+    gl.domElement.style.cursor = dragging ? 'grabbing' : 'default'
+    return () => { gl.domElement.style.cursor = 'default' }
+  }, [dragging, gl])
+  return null
+}
 
 // ── Kenney character avatar ───────────────────────────────────────────────────
-function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7', selected, onClick }) {
+function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7',
+                        selected, dragging, phaseId = 0,
+                        onPointerDown, onClick }) {
   const groupRef = useRef()
   const [hovered, setHovered] = useState(false)
   const lit = hovered || selected
+  const { gl } = useThree()
 
   const { scene, animations } = useGLTF(`/models/character-${modelKey}.glb`)
 
-  // Deep-clone scene + materials once per model so instances don't share state
   const { cloned, scale, yShift } = useMemo(() => {
     const c = scene.clone(true)
     c.traverse(child => {
@@ -31,11 +50,9 @@ function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7', selec
     const box = new THREE.Box3().setFromObject(c)
     const h   = box.max.y - box.min.y
     const s   = TARGET_HEIGHT / h
-    const yOff = -box.min.y * s  // shift so feet land at y=0 in group space
-    return { cloned: c, scale: s, yShift: yOff }
+    return { cloned: c, scale: s, yShift: -box.min.y * s }
   }, [scene])
 
-  // Play first animation if the GLB has any (idle walk cycle etc.)
   const { actions } = useAnimations(animations, cloned)
   useEffect(() => {
     const action = Object.values(actions)[0]
@@ -44,13 +61,13 @@ function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7', selec
     return () => { action.fadeOut(0.3) }
   }, [actions])
 
-  // Gentle float
   useFrame(({ clock }) => {
     if (!groupRef.current) return
-    groupRef.current.position.y = position[1] + Math.sin(clock.elapsedTime * 0.7 + position[0]) * 0.05
+    groupRef.current.position.y = dragging
+      ? position[1] + 0.18
+      : position[1] + Math.sin(clock.elapsedTime * 0.7 + phaseId) * 0.05
   })
 
-  // Emissive highlight on hover / select
   useEffect(() => {
     cloned.traverse(child => {
       if (!child.isMesh) return
@@ -64,17 +81,27 @@ function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7', selec
     })
   }, [cloned, lit, color])
 
+  const handlePointerOver = (e) => {
+    e.stopPropagation()
+    setHovered(true)
+    if (!dragging) gl.domElement.style.cursor = 'grab'
+  }
+  const handlePointerOut = () => {
+    setHovered(false)
+    if (!dragging) gl.domElement.style.cursor = 'default'
+  }
+
   return (
     <group
       ref={groupRef}
       position={position}
+      onPointerDown={onPointerDown}
       onClick={onClick}
-      onPointerOver={() => setHovered(true)}
-      onPointerOut={() => setHovered(false)}
+      onPointerOver={handlePointerOver}
+      onPointerOut={handlePointerOut}
     >
       <primitive object={cloned} scale={scale} position={[0, yShift, 0]} />
 
-      {/* Selection ring at feet level */}
       {selected && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
           <ringGeometry args={[0.26, 0.34, 32]} />
@@ -82,7 +109,6 @@ function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7', selec
         </mesh>
       )}
 
-      {/* Name label just above the character's head */}
       <Text
         position={[0, TARGET_HEIGHT + 0.2, 0]}
         fontSize={0.16}
@@ -98,13 +124,86 @@ function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7', selec
   )
 }
 
-// ── Category island ───────────────────────────────────────────────────────────
-const ISLAND_W    = 3.5
-const ISLAND_D    = 3.5
-const ISLAND_H    = 0.08
-const ISLAND_GAP_X = 1.5
-const ISLAND_GAP_Z = 1.8
+// ── Brick island ─────────────────────────────────────────────────────────────
+const ISLAND_W     = 5.0
+const ISLAND_D     = 5.0
+const ISLAND_H     = 0.22
+const ISLAND_GAP_X = 2.0
+const ISLAND_GAP_Z = 2.4
 const ISLAND_COLS  = 4
+const TILE_GRID    = 10
+
+function darkenColor(hexColor, factor = 0.76) {
+  return new THREE.Color(hexColor).multiplyScalar(factor)
+}
+
+function coloredClone(sourceScene, color, roughness = 0.52) {
+  const c = sourceScene.clone(true)
+  const col = new THREE.Color(color)
+  c.traverse(child => {
+    if (!child.isMesh) return
+    child.castShadow = true
+    child.receiveShadow = true
+    child.material = child.material.clone()
+    child.material.color.copy(col)
+    child.material.roughness = roughness
+    child.material.metalness = 0.0
+  })
+  return c
+}
+
+function BrickIsland({ position, color, name }) {
+  const { scene: plateScene } = useGLTF('/models/bricks/bevel-hq-plate-2x2.glb')
+
+  const parts = useMemo(() => {
+    const plateBox = new THREE.Box3().setFromObject(plateScene)
+    const pW = plateBox.max.x - plateBox.min.x
+    const pD = plateBox.max.z - plateBox.min.z
+
+    const tW = ISLAND_W / TILE_GRID
+    const tD = ISLAND_D / TILE_GRID
+    const sx = tW / pW
+    const sz = tD / pD
+    const sy = sx
+    const yShift = -plateBox.min.y * sy
+    const plateTop = plateBox.max.y * sy + yShift
+
+    const dark = darkenColor(color, 0.76)
+    const floorTiles = []
+    for (let row = 0; row < TILE_GRID; row++) {
+      for (let col = 0; col < TILE_GRID; col++) {
+        const tileColor = (row + col) % 2 === 0 ? color : `#${dark.getHexString()}`
+        floorTiles.push({
+          scene: coloredClone(plateScene, tileColor),
+          pos: [(col - (TILE_GRID - 1) / 2) * tW, yShift, (row - (TILE_GRID - 1) / 2) * tD],
+          scale: [sx, sy, sz],
+        })
+      }
+    }
+
+    return { floorTiles, labelY: plateTop + 0.3 }
+  }, [plateScene, color])
+
+  return (
+    <group position={position}>
+      {parts.floorTiles.map((t, i) => (
+        <primitive key={i} object={t.scene} position={t.pos} scale={t.scale} />
+      ))}
+      <Text
+        position={[0, parts.labelY, 0]}
+        fontSize={0.24}
+        color="#fff"
+        anchorX="center"
+        anchorY="middle"
+        outlineWidth={0.034}
+        outlineColor={color}
+        outlineOpacity={1}
+      >
+        {name}
+      </Text>
+    </group>
+  )
+}
 
 function computeIslandLayout(cats) {
   if (cats.length === 0) return []
@@ -121,37 +220,50 @@ function computeIslandLayout(cats) {
   })
 }
 
-function CategoryIsland({ position, color, name }) {
-  return (
-    <group position={position}>
-      <mesh receiveShadow position={[0, ISLAND_H / 2, 0]}>
-        <boxGeometry args={[ISLAND_W, ISLAND_H, ISLAND_D]} />
-        <meshStandardMaterial color={color} roughness={0.68} metalness={0.04} />
-      </mesh>
-      <Text
-        position={[0, ISLAND_H + 0.22, 0]}
-        fontSize={0.21}
-        color="#222"
-        anchorX="center"
-        anchorY="middle"
-        outlineWidth={0.026}
-        outlineColor="#fff"
-      >
-        {name}
-      </Text>
-    </group>
-  )
-}
-
 // ── Scene ─────────────────────────────────────────────────────────────────────
-function Scene({ activeCats = [] }) {
-  const [selected, setSelected] = useState(null)
+function Scene({ activeCats = [], personas = [], onPositionUpdate, onSelect, selected }) {
+  const [dragId, setDragId]       = useState(null)
+  const [posOverrides, setPosOverrides] = useState({})
+  const dragIdRef      = useRef(null)
+  const posOverridesRef = useRef({})
+  const dragMovedRef   = useRef(false)
 
-  const people = [
-    { id: 1, name: 'Alice',   color: '#4f8ef7', modelKey: 'a', position: [-2.5, ISLAND_H, 0.5] },
-    { id: 2, name: 'Bob',     color: '#f77b4f', modelKey: 'd', position: [ 0,   ISLAND_H, 0  ] },
-    { id: 3, name: 'Charlie', color: '#4fc97f', modelKey: 'g', position: [ 2.5, ISLAND_H, -0.5] },
-  ]
+  const getPos = useCallback((p) => {
+    return posOverrides[p.id] ?? [p.posX ?? 0, ISLAND_H, p.posZ ?? 0]
+  }, [posOverrides])
+
+  const stopDrag = useCallback(() => {
+    const id = dragIdRef.current
+    if (id !== null) {
+      const pos = posOverridesRef.current[id]
+      if (pos) onPositionUpdate?.(id, pos[0], pos[2])
+    }
+    dragIdRef.current = null
+    setDragId(null)
+  }, [onPositionUpdate])
+
+  useEffect(() => {
+    window.addEventListener('pointerup', stopDrag)
+    return () => window.removeEventListener('pointerup', stopDrag)
+  }, [stopDrag])
+
+  const startDrag = (id, e) => {
+    e.stopPropagation()
+    dragMovedRef.current = false
+    dragIdRef.current = id
+    setDragId(id)
+    onSelect?.(id)
+  }
+
+  const handleDragMove = (e) => {
+    if (dragIdRef.current === null) return
+    e.stopPropagation()
+    dragMovedRef.current = true
+    const id = dragIdRef.current
+    const newPos = [e.point.x, ISLAND_H, e.point.z]
+    posOverridesRef.current = { ...posOverridesRef.current, [id]: newPos }
+    setPosOverrides(prev => ({ ...prev, [id]: newPos }))
+  }
 
   const islands = computeIslandLayout(activeCats)
 
@@ -162,14 +274,19 @@ function Scene({ activeCats = [] }) {
       <pointLight position={[-4, 6, -4]} intensity={0.3} color="#c8d8ff" />
 
       <Environment preset="dawn" background={false} />
+      <CursorManager dragging={dragId !== null} />
 
       {/* Base floor */}
-      <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} onClick={() => setSelected(null)}>
+      <mesh
+        receiveShadow
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0, 0]}
+        onClick={dragId === null ? () => onSelect?.(null) : undefined}
+      >
         <planeGeometry args={[30, 22]} />
         <meshStandardMaterial color="#e8e6e0" roughness={0.88} metalness={0} />
       </mesh>
 
-      {/* Grid on base floor */}
       <Grid
         position={[0, 0.001, 0]}
         args={[30, 22]}
@@ -183,27 +300,46 @@ function Scene({ activeCats = [] }) {
         fadeStrength={0}
       />
 
-      {/* Category islands */}
       {islands.map(cat => (
-        <CategoryIsland key={cat.id} position={cat.islandPos} color={cat.color || '#aaa'} name={cat.name} />
+        <BrickIsland key={cat.id} position={cat.islandPos} color={cat.color || '#aaa'} name={cat.name} />
       ))}
 
       <ContactShadows position={[0, 0.002, 0]} opacity={0.22} scale={20} blur={2.5} far={1} color="#7788aa" />
 
-      {people.map(p => (
+      {dragId !== null && (
+        <mesh
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, 0, 0]}
+          onPointerMove={handleDragMove}
+          onPointerUp={stopDrag}
+        >
+          <planeGeometry args={[200, 200]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
+      )}
+
+      {personas.map((p, i) => (
         <PersonAvatar
           key={p.id}
           modelKey={p.modelKey}
-          position={p.position}
+          position={getPos(p)}
           name={p.name}
           color={p.color}
+          phaseId={i}
           selected={selected === p.id}
-          onClick={(e) => { e.stopPropagation(); setSelected(s => s === p.id ? null : p.id) }}
+          dragging={dragId === p.id}
+          onPointerDown={(e) => startDrag(p.id, e)}
+          onClick={(e) => {
+            e.stopPropagation()
+            if (dragMovedRef.current) return
+            onSelect?.(selected === p.id ? null : p.id)
+          }}
         />
       ))}
 
       <OrbitControls
         makeDefault
+        enabled={dragId === null}
         minPolarAngle={0.2}
         maxPolarAngle={Math.PI / 2.1}
         minDistance={3}
@@ -211,6 +347,92 @@ function Scene({ activeCats = [] }) {
         target={[0, 0, 0]}
       />
     </>
+  )
+}
+
+// ── Add Persona panel ─────────────────────────────────────────────────────────
+function AddPersonaPanel({ onClose, onCreate }) {
+  const [name, setName]         = useState('')
+  const [modelKey, setModelKey] = useState('a')
+  const [color, setColor]       = useState(PALETTE[0])
+  const [saving, setSaving]     = useState(false)
+
+  const handleSubmit = async () => {
+    if (!name.trim()) return
+    setSaving(true)
+    try {
+      const persona = await api.createPersona({
+        name: name.trim(), model_key: modelKey, color, pos_x: 0, pos_z: 0,
+      })
+      onCreate(persona)
+      onClose()
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className={styles.addPanel}>
+      <div className={styles.addPanelHeader}>
+        <span className={styles.addPanelTitle}>New Persona</span>
+        <button className={styles.addPanelClose} onClick={onClose} title="Close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <label className={styles.addPanelLabel}>Name</label>
+      <input
+        className={styles.addPanelInput}
+        placeholder="Persona name"
+        value={name}
+        onChange={e => setName(e.target.value)}
+        onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+        autoFocus
+      />
+
+      <label className={styles.addPanelLabel}>Character</label>
+      <div className={styles.charGrid}>
+        {CHAR_KEYS.map(k => (
+          <button
+            key={k}
+            className={`${styles.charCard} ${modelKey === k ? styles.charCardSelected : ''}`}
+            onClick={() => setModelKey(k)}
+            title={`Character ${k.toUpperCase()}`}
+          >
+            <img
+              src={`/models/previews/character-${k}.png`}
+              alt={`character-${k}`}
+              className={styles.charImg}
+            />
+          </button>
+        ))}
+      </div>
+
+      <label className={styles.addPanelLabel}>Color</label>
+      <div className={styles.colorGrid}>
+        {PALETTE.map(c => (
+          <button
+            key={c}
+            className={`${styles.colorSwatch} ${color === c ? styles.colorSwatchSelected : ''}`}
+            style={{ background: c }}
+            onClick={() => setColor(c)}
+            title={c}
+          />
+        ))}
+      </div>
+
+      <button
+        className={styles.addBtn}
+        onClick={handleSubmit}
+        disabled={!name.trim() || saving}
+      >
+        {saving ? 'Adding…' : 'Add Persona'}
+      </button>
+    </div>
   )
 }
 
@@ -259,13 +481,21 @@ function DimensionScroller({ dimensions, index, onChange }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function PeoplePage() {
-  const [dimensions, setDimensions] = useState([])
-  const [dimIndex, setDimIndex]     = useState(0)
-  const [categories, setCategories] = useState([])
+  const [dimensions, setDimensions]   = useState([])
+  const [dimIndex, setDimIndex]       = useState(0)
+  const [categories, setCategories]   = useState([])
+  const [personas, setPersonas]       = useState([])
+  const [selected, setSelected]       = useState(null)
+  const [showAddPanel, setShowAddPanel] = useState(false)
 
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories()])
-      .then(([dims, cats]) => { setDimensions(dims); setCategories(cats); setDimIndex(0) })
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas()])
+      .then(([dims, cats, pers]) => {
+        setDimensions(dims)
+        setCategories(cats)
+        setDimIndex(0)
+        setPersonas(pers)
+      })
       .catch(console.error)
   }, [])
 
@@ -274,21 +504,81 @@ export default function PeoplePage() {
     ? categories.filter(c => c.dimensionId === activeDimension.id)
     : []
 
+  const handlePositionUpdate = async (id, x, z) => {
+    try {
+      await api.updatePersona(id, { posX: x, posZ: z })
+    } catch (e) { console.error(e) }
+  }
+
+  const handleDelete = async () => {
+    if (!selected) return
+    try {
+      await api.deletePersona(selected)
+      setPersonas(prev => prev.filter(p => p.id !== selected))
+      setSelected(null)
+    } catch (e) { console.error(e) }
+  }
+
+  const selectedPersona = personas.find(p => p.id === selected) ?? null
+
   return (
     <div className={styles.page}>
       <Canvas
         shadows
-        camera={{ position: [0, 6, 11], fov: 50 }}
+        camera={{ position: [0, 8, 14], fov: 48 }}
         className={styles.canvas}
         gl={{ antialias: true, alpha: true }}
         style={{ background: 'transparent' }}
       >
-        <Scene activeCats={activeCats} />
+        <Scene
+          activeCats={activeCats}
+          personas={personas}
+          onPositionUpdate={handlePositionUpdate}
+          onSelect={setSelected}
+          selected={selected}
+        />
       </Canvas>
 
       <DimensionScroller dimensions={dimensions} index={dimIndex} onChange={setDimIndex} />
 
-      <div className={styles.hint}>Orbit · Zoom · Click to select</div>
+      {showAddPanel && (
+        <AddPersonaPanel
+          onClose={() => setShowAddPanel(false)}
+          onCreate={(persona) => setPersonas(prev => [...prev, persona])}
+        />
+      )}
+
+      {!showAddPanel && (
+        <button
+          className={styles.fab}
+          onClick={() => setShowAddPanel(true)}
+          title="Add persona"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </button>
+      )}
+
+      {selectedPersona && (
+        <div className={styles.selectionBar}>
+          <div className={styles.selectionInfo}>
+            <div
+              className={styles.selectionDot}
+              style={{ background: selectedPersona.color }}
+            />
+            <span className={styles.selectionName}>{selectedPersona.name}</span>
+          </div>
+          <button className={styles.deleteBtn} onClick={handleDelete} title="Delete persona">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>
+            </svg>
+            Delete
+          </button>
+        </div>
+      )}
+
+      <div className={styles.hint}>Orbit · Zoom · Drag to move</div>
     </div>
   )
 }
