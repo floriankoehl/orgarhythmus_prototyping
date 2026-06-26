@@ -146,6 +146,9 @@ export const api = {
   createPersona:  (data)       => req('POST',   '/personas', data),
   updatePersona:  (id, patch)  => req('PATCH',  `/personas/${id}`, patch),
   deletePersona:  (id)         => req('DELETE', `/personas/${id}`),
+  getPersonaAssignments: ()              => req('GET',    '/persona-assignments'),
+  assignPersona:        (id, dimId, catId) => req('PUT',  `/personas/${id}/assign`, { dimensionId: dimId, categoryId: catId }),
+  unassignPersona:      (id, dimId, catId) => req('DELETE', `/personas/${id}/assign/${dimId}/${catId}`),
 
   // Assignments
   getAssignments: ()                      => req('GET',    '/assignments'),

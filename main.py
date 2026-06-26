@@ -228,6 +228,14 @@ def _init_db():
                 pos_z      REAL NOT NULL DEFAULT 0
             )
         """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS persona_assignments (
+                persona_id   TEXT NOT NULL,
+                dimension_id TEXT NOT NULL,
+                category_id  TEXT NOT NULL,
+                PRIMARY KEY (persona_id, dimension_id, category_id)
+            )
+        """)
 
 _init_db()
 
@@ -342,6 +350,14 @@ def _migrate():
                 before_json      TEXT NOT NULL,
                 after_json       TEXT NOT NULL,
                 created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS persona_assignments (
+                persona_id   TEXT NOT NULL,
+                dimension_id TEXT NOT NULL,
+                category_id  TEXT NOT NULL,
+                PRIMARY KEY (persona_id, dimension_id, category_id)
             )
         """)
 
@@ -551,6 +567,10 @@ class PersonaPatch(BaseModel):
     pos_x:     Optional[float] = None
     pos_z:     Optional[float] = None
 
+class PersonaAssignIn(BaseModel):
+    dimensionId: str
+    categoryId: str
+
 class SchedulePerspectiveIn(BaseModel):
     id: Optional[str] = None
     name: str
@@ -606,6 +626,10 @@ def _persona(row) -> dict:
     return {"id": d["id"], "projectId": d["project_id"], "name": d["name"],
             "modelKey": d["model_key"], "color": d["color"],
             "posX": d["pos_x"], "posZ": d["pos_z"]}
+
+def _persona_assign(row) -> dict:
+    d = dict(row)
+    return {"personaId": d["persona_id"], "dimensionId": d["dimension_id"], "categoryId": d["category_id"]}
 
 def _assign(row) -> dict:
     d = dict(row)
@@ -699,6 +723,12 @@ def _project_id_for_category(con, cat_id: str) -> str:
     ).fetchone()
     if not row:
         raise HTTPException(404, "Category not found")
+    return row["project_id"]
+
+def _project_id_for_persona(con, persona_id: str) -> str:
+    row = con.execute("SELECT project_id FROM personas WHERE id = ?", (persona_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Persona not found")
     return row["project_id"]
 
 def _project_id_for_milestone(con, ms_id: str) -> str:
@@ -1317,8 +1347,11 @@ def delete_project(project_id: str, user: dict = Depends(current_user)):
         if dim_ids:
             ph = ','.join('?' * len(dim_ids))
             con.execute(f"DELETE FROM assignments WHERE dimension_id IN ({ph})", dim_ids)
+            con.execute(f"DELETE FROM persona_assignments WHERE dimension_id IN ({ph})", dim_ids)
             con.execute(f"DELETE FROM categories WHERE dimension_id IN ({ph})", dim_ids)
             con.execute(f"DELETE FROM dimensions WHERE id IN ({ph})", dim_ids)
+        con.execute("DELETE FROM persona_assignments WHERE persona_id IN (SELECT id FROM personas WHERE project_id = ?)", (project_id,))
+        con.execute("DELETE FROM personas WHERE project_id = ?", (project_id,))
         con.execute("DELETE FROM saved_filters WHERE project_id = ?", (project_id,))
         con.execute("DELETE FROM schedule_perspectives WHERE project_id = ?", (project_id,))
         con.execute("DELETE FROM classification_perspectives WHERE project_id = ?", (project_id,))
@@ -1440,6 +1473,7 @@ def delete_dimension(dim_id: str, user: dict = Depends(current_user)):
     with _db() as con:
         assert_project_access(_project_id_for_dimension(con, dim_id), user)
         con.execute("DELETE FROM assignments WHERE dimension_id = ?", (dim_id,))
+        con.execute("DELETE FROM persona_assignments WHERE dimension_id = ?", (dim_id,))
         con.execute("DELETE FROM categories WHERE dimension_id = ?", (dim_id,))
         con.execute("DELETE FROM dimensions WHERE id = ?", (dim_id,))
 
@@ -1505,6 +1539,7 @@ def delete_category(cat_id: str, user: dict = Depends(current_user)):
     with _db() as con:
         assert_project_access(_project_id_for_category(con, cat_id), user)
         con.execute("DELETE FROM assignments WHERE category_id = ?", (cat_id,))
+        con.execute("DELETE FROM persona_assignments WHERE category_id = ?", (cat_id,))
         con.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
 
 
@@ -1559,7 +1594,57 @@ def delete_persona(persona_id: str, user: dict = Depends(current_user)):
         if not row:
             raise HTTPException(404, "Persona not found")
         assert_project_access(row["project_id"], user)
+        con.execute("DELETE FROM persona_assignments WHERE persona_id = ?", (persona_id,))
         con.execute("DELETE FROM personas WHERE id = ?", (persona_id,))
+    return Response(status_code=204)
+
+@app.get("/persona-assignments")
+def list_persona_assignments(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    with _db() as con:
+        rows = con.execute(
+            """SELECT pa.* FROM persona_assignments pa
+            JOIN personas p ON p.id = pa.persona_id
+            WHERE p.project_id = ?
+            ORDER BY pa.dimension_id, pa.category_id, pa.persona_id""",
+            (project_id,),
+        ).fetchall()
+    return [_persona_assign(r) for r in rows]
+
+@app.put("/personas/{persona_id}/assign")
+def assign_persona(persona_id: str, data: PersonaAssignIn, user: dict = Depends(current_user)):
+    with _db() as con:
+        persona_project = _project_id_for_persona(con, persona_id)
+        category_project = _project_id_for_category(con, data.categoryId)
+        dimension_project = _project_id_for_dimension(con, data.dimensionId)
+        assert_project_access(persona_project, user)
+        if persona_project != category_project or persona_project != dimension_project:
+            raise HTTPException(400, "Cannot assign persona across projects")
+        row = con.execute("SELECT dimension_id FROM categories WHERE id = ?", (data.categoryId,)).fetchone()
+        if not row or row["dimension_id"] != data.dimensionId:
+            raise HTTPException(400, "Category does not belong to dimension")
+        con.execute(
+            "INSERT OR IGNORE INTO persona_assignments (persona_id, dimension_id, category_id) VALUES (?, ?, ?)",
+            (persona_id, data.dimensionId, data.categoryId),
+        )
+        out = con.execute(
+            "SELECT * FROM persona_assignments WHERE persona_id = ? AND dimension_id = ? AND category_id = ?",
+            (persona_id, data.dimensionId, data.categoryId),
+        ).fetchone()
+    return _persona_assign(out)
+
+@app.delete("/personas/{persona_id}/assign/{dim_id}/{cat_id}", status_code=204)
+def unassign_persona(persona_id: str, dim_id: str, cat_id: str, user: dict = Depends(current_user)):
+    with _db() as con:
+        persona_project = _project_id_for_persona(con, persona_id)
+        category_project = _project_id_for_category(con, cat_id)
+        assert_project_access(persona_project, user)
+        if persona_project != category_project:
+            raise HTTPException(400, "Cannot unassign persona across projects")
+        con.execute(
+            "DELETE FROM persona_assignments WHERE persona_id = ? AND dimension_id = ? AND category_id = ?",
+            (persona_id, dim_id, cat_id),
+        )
     return Response(status_code=204)
 
 

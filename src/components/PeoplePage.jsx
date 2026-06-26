@@ -28,6 +28,20 @@ function CursorManager({ dragging }) {
   return null
 }
 
+function CameraLock({ locked }) {
+  const { camera, controls } = useThree()
+  useEffect(() => {
+    if (!locked) return
+    camera.position.set(0, 8, 14)
+    camera.lookAt(0, 0, 0)
+    if (controls?.target) {
+      controls.target.set(0, 0, 0)
+      controls.update()
+    }
+  }, [camera, controls, locked])
+  return null
+}
+
 // ── Kenney character avatar ───────────────────────────────────────────────────
 function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7',
                         selected, dragging, phaseId = 0,
@@ -130,7 +144,12 @@ const ISLAND_W     = 5.0
 const ISLAND_D     = 5.0
 const ISLAND_H     = 0.22
 const ISLAND_COLS  = 4
-const TILE_GRID    = 10
+const ISLAND_SLOT_GRID = 10
+const TILE_GRID    = 8
+const LOCKED_CATEGORY_X = -7.5
+const LOCKED_CATEGORY_Z = -7.5
+const LOCKED_PERSONA_X = 7.5
+const LOCKED_PERSONA_Z = 6.5
 
 function darkenColor(hexColor, factor = 0.76) {
   return new THREE.Color(hexColor).multiplyScalar(factor)
@@ -159,8 +178,8 @@ function BrickIsland({ position, color, name }) {
     const pW = plateBox.max.x - plateBox.min.x
     const pD = plateBox.max.z - plateBox.min.z
 
-    const tW = ISLAND_W / TILE_GRID
-    const tD = ISLAND_D / TILE_GRID
+    const tW = ISLAND_W / ISLAND_SLOT_GRID
+    const tD = ISLAND_D / ISLAND_SLOT_GRID
     const sx = tW / pW
     const sz = tD / pD
     const sy = sx
@@ -204,10 +223,17 @@ function BrickIsland({ position, color, name }) {
   )
 }
 
-function computeIslandLayout(cats) {
+function computeIslandLayout(cats, locked = false) {
   if (cats.length === 0) return []
   const cols     = Math.min(cats.length, ISLAND_COLS)
   const rows     = Math.ceil(cats.length / cols)
+  if (locked) {
+    return cats.map((cat, i) => {
+      const col = i % cols
+      const row = Math.floor(i / cols)
+      return { ...cat, islandPos: [LOCKED_CATEGORY_X + col * ISLAND_W, 0, LOCKED_CATEGORY_Z + row * ISLAND_D] }
+    })
+  }
   // Snap to section-cell midpoints so thick grid lines form island borders.
   // Section lines land at multiples of ISLAND_W (= sectionSize = 5).
   // Cell midpoints are at 5k + 2.5; startCol/Row picks the leftmost cell index
@@ -224,26 +250,68 @@ function computeIslandLayout(cats) {
 }
 
 // ── Scene ─────────────────────────────────────────────────────────────────────
-function Scene({ activeCats = [], personas = [], onPositionUpdate, onSelect, selected }) {
+function personaSlotPosition(islandPos, idx, total) {
+  const cols = Math.min(4, total)
+  const rows = Math.ceil(total / cols)
+  const col = idx % cols
+  const row = Math.floor(idx / cols)
+  const spacing = 0.78
+  return [
+    islandPos[0] + (col - (cols - 1) / 2) * spacing,
+    ISLAND_H,
+    islandPos[2] + (row - (rows - 1) / 2) * spacing,
+  ]
+}
+
+function personaPoolPosition(idx) {
+  const cols = 4
+  const spacing = 0.9
+  const col = idx % cols
+  const row = Math.floor(idx / cols)
+  return [LOCKED_PERSONA_X + col * spacing, ISLAND_H, LOCKED_PERSONA_Z + row * spacing]
+}
+
+function Scene({ activeDimensionId, activeCats = [], personas = [], personaAssignments = [], layoutLocked = true, onPositionUpdate, onAssign, onSelect, selected }) {
   const [dragId, setDragId]       = useState(null)
   const [posOverrides, setPosOverrides] = useState({})
   const dragIdRef      = useRef(null)
   const posOverridesRef = useRef({})
   const dragMovedRef   = useRef(false)
 
-  const getPos = useCallback((p) => {
+  const getPos = useCallback((p, index) => {
+    if (layoutLocked) return posOverrides[p.id] ?? personaPoolPosition(index)
     return posOverrides[p.id] ?? [p.posX ?? 0, ISLAND_H, p.posZ ?? 0]
-  }, [posOverrides])
+  }, [layoutLocked, posOverrides])
+
+  const islands = computeIslandLayout(activeCats, layoutLocked)
 
   const stopDrag = useCallback(() => {
     const id = dragIdRef.current
     if (id !== null) {
       const pos = posOverridesRef.current[id]
-      if (pos) onPositionUpdate?.(id, pos[0], pos[2])
+      if (pos) {
+        if (!layoutLocked) onPositionUpdate?.(id, pos[0], pos[2])
+        const targetIsland = islands.find(cat =>
+          Math.abs(pos[0] - cat.islandPos[0]) <= ISLAND_W / 2 &&
+          Math.abs(pos[2] - cat.islandPos[2]) <= ISLAND_D / 2
+        )
+        if (targetIsland && activeDimensionId) {
+          onAssign?.(id, activeDimensionId, targetIsland.id)
+        }
+      }
+    }
+    if (id !== null && layoutLocked) {
+      posOverridesRef.current = { ...posOverridesRef.current }
+      delete posOverridesRef.current[id]
+      setPosOverrides(prev => {
+        const next = { ...prev }
+        delete next[id]
+        return next
+      })
     }
     dragIdRef.current = null
     setDragId(null)
-  }, [onPositionUpdate])
+  }, [activeDimensionId, islands, layoutLocked, onAssign, onPositionUpdate])
 
   useEffect(() => {
     window.addEventListener('pointerup', stopDrag)
@@ -268,7 +336,17 @@ function Scene({ activeCats = [], personas = [], onPositionUpdate, onSelect, sel
     setPosOverrides(prev => ({ ...prev, [id]: newPos }))
   }
 
-  const islands = computeIslandLayout(activeCats)
+  const assignedCopies = islands.flatMap(cat => {
+    const assigned = personaAssignments
+      .filter(a => a.dimensionId === activeDimensionId && a.categoryId === cat.id)
+      .map(a => personas.find(p => p.id === a.personaId))
+      .filter(Boolean)
+    return assigned.map((persona, idx) => ({
+      persona,
+      catId: cat.id,
+      position: personaSlotPosition(cat.islandPos, idx, assigned.length),
+    }))
+  })
 
   return (
     <>
@@ -279,6 +357,7 @@ function Scene({ activeCats = [], personas = [], onPositionUpdate, onSelect, sel
       <fog attach="fog" args={['#f8f8f6', 28, 70]} />
       <Environment preset="dawn" background={false} />
       <CursorManager dragging={dragId !== null} />
+      <CameraLock locked={layoutLocked} />
 
       {/* Infinite white floor — sits slightly below y=0 to avoid z-fighting with brick tile bottoms */}
       <mesh
@@ -327,7 +406,7 @@ function Scene({ activeCats = [], personas = [], onPositionUpdate, onSelect, sel
         <PersonAvatar
           key={p.id}
           modelKey={p.modelKey}
-          position={getPos(p)}
+          position={getPos(p, i)}
           name={p.name}
           color={keyColor(p.modelKey)}
           phaseId={i}
@@ -342,14 +421,32 @@ function Scene({ activeCats = [], personas = [], onPositionUpdate, onSelect, sel
         />
       ))}
 
+      {assignedCopies.map(({ persona, catId, position }, i) => (
+        <PersonAvatar
+          key={`${catId}:${persona.id}`}
+          modelKey={persona.modelKey}
+          position={position}
+          name={persona.name}
+          color={keyColor(persona.modelKey)}
+          phaseId={i + personas.length}
+          selected={selected === persona.id}
+          dragging={false}
+          onPointerDown={e => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            onSelect?.(selected === persona.id ? null : persona.id)
+          }}
+        />
+      ))}
+
       <OrbitControls
         makeDefault
-        enabled={dragId === null}
+        enabled={!layoutLocked && dragId === null}
         minPolarAngle={0.2}
         maxPolarAngle={Math.PI / 2.1}
         minDistance={3}
         maxDistance={30}
-        target={[0, 0, 0]}
+        target={layoutLocked ? [0, 0, 0] : [0, 0, 0]}
       />
     </>
   )
@@ -493,17 +590,20 @@ export default function PeoplePage() {
   const [dimIndex, setDimIndex]       = useState(0)
   const [categories, setCategories]   = useState([])
   const [personas, setPersonas]         = useState([])
+  const [personaAssignments, setPersonaAssignments] = useState([])
   const [selected, setSelected]         = useState(null)
   const [showAddPanel, setShowAddPanel] = useState(false)
   const [confirmId, setConfirmId]       = useState(null)
+  const [layoutLocked, setLayoutLocked] = useState(true)
 
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas()])
-      .then(([dims, cats, pers]) => {
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getPersonaAssignments()])
+      .then(([dims, cats, pers, personaAsns]) => {
         setDimensions(dims)
         setCategories(cats)
         setDimIndex(0)
         setPersonas(pers)
+        setPersonaAssignments(personaAsns)
       })
       .catch(console.error)
   }, [])
@@ -519,6 +619,32 @@ export default function PeoplePage() {
     } catch (e) { console.error(e) }
   }
 
+  const handleAssignPersona = async (personaId, dimId, catId) => {
+    if (personaAssignments.some(a => a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId)) return
+    const optimistic = { personaId, dimensionId: dimId, categoryId: catId }
+    setPersonaAssignments(prev => [...prev, optimistic])
+    try {
+      const saved = await api.assignPersona(personaId, dimId, catId)
+      setPersonaAssignments(prev => prev.map(a =>
+        a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId ? saved : a
+      ))
+    } catch (e) {
+      console.error(e)
+      setPersonaAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId)))
+    }
+  }
+
+  const handleUnassignPersona = async (personaId, dimId, catId) => {
+    const removed = personaAssignments.find(a => a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId)
+    setPersonaAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId)))
+    try {
+      await api.unassignPersona(personaId, dimId, catId)
+    } catch (e) {
+      console.error(e)
+      if (removed) setPersonaAssignments(prev => [...prev, removed])
+    }
+  }
+
   const confirmPersona = confirmId ? personas.find(p => p.id === confirmId) : null
 
   const handleDeleteConfirmed = async () => {
@@ -526,6 +652,7 @@ export default function PeoplePage() {
     setConfirmId(null)
     // Optimistic: remove immediately
     setPersonas(prev => prev.filter(p => p.id !== id))
+    setPersonaAssignments(prev => prev.filter(a => a.personaId !== id))
     setSelected(null)
     try {
       await api.deletePersona(id)
@@ -537,6 +664,12 @@ export default function PeoplePage() {
   }
 
   const selectedPersona = personas.find(p => p.id === selected) ?? null
+  const selectedAssignments = selectedPersona && activeDimension
+    ? personaAssignments
+      .filter(a => a.personaId === selectedPersona.id && a.dimensionId === activeDimension.id)
+      .map(a => ({ ...a, category: categories.find(c => c.id === a.categoryId) }))
+      .filter(a => a.category)
+    : []
 
   return (
     <div className={styles.page}>
@@ -548,15 +681,37 @@ export default function PeoplePage() {
         style={{ background: 'transparent' }}
       >
         <Scene
+          activeDimensionId={activeDimension?.id ?? null}
           activeCats={activeCats}
           personas={personas}
+          personaAssignments={personaAssignments}
+          layoutLocked={layoutLocked}
           onPositionUpdate={handlePositionUpdate}
+          onAssign={handleAssignPersona}
           onSelect={setSelected}
           selected={selected}
         />
       </Canvas>
 
       <DimensionScroller dimensions={dimensions} index={dimIndex} onChange={setDimIndex} />
+
+      <button
+        className={`${styles.layoutLockBtn} ${layoutLocked ? styles.layoutLockBtnActive : ''}`}
+        onClick={() => setLayoutLocked(v => !v)}
+        title={layoutLocked ? 'Unlock camera and free persona placement' : 'Lock camera and fixed persona pool'}
+      >
+        {layoutLocked ? (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="5" y="11" width="14" height="10" rx="2" />
+            <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+          </svg>
+        ) : (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="5" y="11" width="14" height="10" rx="2" />
+            <path d="M8 11V7a4 4 0 0 1 7.5-2" />
+          </svg>
+        )}
+      </button>
 
       {showAddPanel && (
         <AddPersonaPanel
@@ -587,6 +742,22 @@ export default function PeoplePage() {
             />
             <span className={styles.selectionName}>{selectedPersona.name}</span>
           </div>
+          {selectedAssignments.length > 0 && (
+            <div className={styles.assignmentChips}>
+              {selectedAssignments.map(({ category, dimensionId, categoryId }) => (
+                <button
+                  key={categoryId}
+                  className={styles.assignmentChip}
+                  style={{ borderColor: category.color, color: category.color }}
+                  onClick={() => handleUnassignPersona(selectedPersona.id, dimensionId, categoryId)}
+                  title={`Remove from ${category.name}`}
+                >
+                  {category.name}
+                  <span>×</span>
+                </button>
+              ))}
+            </div>
+          )}
           <button
             className={styles.deleteBtn}
             onClick={() => setConfirmId(selectedPersona.id)}
@@ -608,7 +779,7 @@ export default function PeoplePage() {
         />
       )}
 
-      <div className={styles.hint}>Orbit · Zoom · Drag to move</div>
+      <div className={styles.hint}>{layoutLocked ? 'Locked view · Drag personas to assign' : 'Unlocked · Orbit · Zoom · Drag to move'}</div>
     </div>
   )
 }
