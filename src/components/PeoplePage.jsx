@@ -538,7 +538,7 @@ function NoteCard({ position, title, color = '#888', highlighted = false, focuse
       <Text
         position={[0, NOTE_H + 0.012, focused ? -NOTE_D * 0.34 : 0]}
         rotation={[-Math.PI / 2, 0, 0]}
-        fontSize={focused ? 0.13 : 0.18}
+        fontSize={focused ? 0.17 : 0.24}
         color="#111"
         anchorX="center"
         anchorY="middle"
@@ -1534,6 +1534,296 @@ function DimensionScroller({ dimensions, index, onChange }) {
   )
 }
 
+function PersonaMini({ persona, size = 28 }) {
+  return (
+    <span className={styles.people2dPersonaMini} title={persona.name}>
+      <img
+        src={`/models/previews/character-${resolveModelKey(persona.modelKey)}.png`}
+        alt={resolveModelKey(persona.modelKey)}
+        style={{ width: size, height: size }}
+      />
+      <span>{persona.name}</span>
+    </span>
+  )
+}
+
+function People2DView({
+  activeDimension,
+  activeCats = [],
+  personas = [],
+  personaAssignments = [],
+  notes = [],
+  noteAssignments = [],
+  milestones = [],
+  personaNoteAssignments = [],
+  personaMilestoneAssignments = [],
+  categoryLeaders = [],
+  focusedCategory,
+  focusedNote,
+  onFocusCategory,
+  onFocusNote,
+  onClearCategory,
+  onClearNote,
+  onAssign,
+  onUnassign,
+  onMoveAssignment,
+  onAssignPersonaToNote,
+  onAssignPersonaToMilestone,
+  onAssignLeader,
+  onSelect,
+  selected,
+}) {
+  const readDragPayload = (e) => {
+    try {
+      return JSON.parse(e.dataTransfer.getData('application/x-persona') || 'null')
+    } catch {
+      return null
+    }
+  }
+  const allowDrop = e => e.preventDefault()
+  const dropOnVoid = e => {
+    const payload = readDragPayload(e)
+    if (payload?.source === 'category-assignment') {
+      e.preventDefault()
+      onUnassign?.(payload.personaId, payload.dimensionId, payload.categoryId)
+    }
+  }
+  const dragPersona = (personaId, e) => {
+    e.dataTransfer.effectAllowed = 'copyMove'
+    e.dataTransfer.setData('application/x-persona', JSON.stringify({ source: 'panel', personaId }))
+  }
+  const dragCategoryAssignment = (personaId, dimensionId, categoryId, e) => {
+    e.stopPropagation()
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('application/x-persona', JSON.stringify({
+      source: 'category-assignment',
+      personaId,
+      dimensionId,
+      categoryId,
+    }))
+  }
+  const handleCategoryDrop = (catId, e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const payload = readDragPayload(e)
+    if (!payload || !activeDimension) return
+    if (payload.source === 'category-assignment') {
+      if (payload.categoryId !== catId) onMoveAssignment?.(payload.personaId, payload.dimensionId, payload.categoryId, catId)
+    } else {
+      onAssign?.(payload.personaId, activeDimension.id, catId)
+    }
+  }
+  const handleLeaderDrop = e => {
+    e.preventDefault()
+    e.stopPropagation()
+    const payload = readDragPayload(e)
+    if (payload?.personaId && focusedCategory) onAssignLeader?.(payload.personaId, focusedCategory.id)
+  }
+  const handleNoteDrop = (noteId, e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const payload = readDragPayload(e)
+    if (payload?.personaId) onAssignPersonaToNote?.(payload.personaId, noteId)
+  }
+  const handleMilestoneDrop = (milestoneId, e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const payload = readDragPayload(e)
+    if (payload?.personaId) onAssignPersonaToMilestone?.(payload.personaId, milestoneId)
+  }
+
+  const categoryPersonas = catId => personaAssignments
+    .filter(a => a.dimensionId === activeDimension?.id && a.categoryId === catId)
+    .map(a => personas.find(p => p.id === a.personaId))
+    .filter(Boolean)
+  const notePersonas = noteId => personaNoteAssignments
+    .filter(a => a.noteId === noteId)
+    .map(a => personas.find(p => p.id === a.personaId))
+    .filter(Boolean)
+  const milestonePersonas = milestoneId => personaMilestoneAssignments
+    .filter(a => a.milestoneId === milestoneId)
+    .map(a => personas.find(p => p.id === a.personaId))
+    .filter(Boolean)
+  const leaderPersonas = focusedCategory
+    ? categoryLeaders
+      .filter(l => l.categoryId === focusedCategory.id)
+      .map(l => personas.find(p => p.id === l.personaId))
+      .filter(Boolean)
+    : []
+  const leaderIds = new Set(leaderPersonas.map(p => p.id))
+  const focusedCategoryPersonas = focusedCategory
+    ? categoryPersonas(focusedCategory.id).filter(p => !leaderIds.has(p.id))
+    : []
+  const focusedNotes = focusedCategory && activeDimension
+    ? noteAssignments
+      .filter(a => a.dimensionId === activeDimension.id && a.categoryId === focusedCategory.id)
+      .map(a => notes.find(n => n.id === a.noteId))
+      .filter(Boolean)
+    : []
+  const focusedMilestones = focusedNote
+    ? milestones
+      .filter(ms => ms.noteId === focusedNote.id)
+      .sort((a, b) => (a.startCol ?? 0) - (b.startCol ?? 0))
+    : []
+
+  return (
+    <main className={styles.people2d} onDragOver={allowDrop} onDrop={dropOnVoid}>
+      {!focusedCategory && (
+        <div className={styles.people2dCategoryGrid}>
+          {activeCats.map(cat => {
+            const assigned = categoryPersonas(cat.id)
+            return (
+              <section
+                key={cat.id}
+                className={styles.people2dCategory}
+                style={{ '--cat-color': cat.color || '#888' }}
+                onDoubleClick={() => onFocusCategory?.(cat.id)}
+                onDragOver={allowDrop}
+                onDrop={e => handleCategoryDrop(cat.id, e)}
+              >
+                <div className={styles.people2dCategoryHead}>
+                  <span>{cat.name}</span>
+                  <span>{assigned.length}</span>
+                </div>
+                <div className={styles.people2dPersonaCloud}>
+                  {assigned.map(persona => (
+                    <button
+                      key={persona.id}
+                      className={`${styles.people2dPersonaButton} ${selected === persona.id ? styles.people2dPersonaButtonActive : ''}`}
+                      draggable
+                      onDragStart={e => dragCategoryAssignment(persona.id, activeDimension.id, cat.id, e)}
+                      onClick={e => {
+                        e.stopPropagation()
+                        onSelect?.(selected === persona.id ? null : persona.id)
+                      }}
+                    >
+                      <PersonaMini persona={persona} />
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )
+          })}
+        </div>
+      )}
+
+      {focusedCategory && !focusedNote && (
+        <div className={styles.people2dFocus}>
+          <section
+            className={styles.people2dLeaderLane}
+            style={{ '--cat-color': focusedCategory.color || '#888' }}
+          >
+            <div className={styles.people2dLaneTitle}>People in {focusedCategory.name}</div>
+            <div className={styles.people2dPersonaCloud}>
+              {focusedCategoryPersonas.length === 0 ? <span className={styles.people2dEmpty}>No people assigned yet</span> : focusedCategoryPersonas.map(persona => (
+                <button
+                  key={persona.id}
+                  className={styles.people2dPersonaButton}
+                  draggable
+                  onDragStart={e => dragPersona(persona.id, e)}
+                  onClick={() => onSelect?.(selected === persona.id ? null : persona.id)}
+                >
+                  <PersonaMini persona={persona} />
+                </button>
+              ))}
+            </div>
+          </section>
+          <section
+            className={styles.people2dLeaderLane}
+            style={{ '--cat-color': focusedCategory.color || '#888' }}
+            onDragOver={allowDrop}
+            onDrop={handleLeaderDrop}
+          >
+            <div className={styles.people2dLaneTitle}>Leaders</div>
+            <div className={styles.people2dPersonaCloud}>
+              {leaderPersonas.length === 0 ? <span className={styles.people2dEmpty}>Drop people here</span> : leaderPersonas.map(persona => (
+                <button
+                  key={persona.id}
+                  className={styles.people2dPersonaButton}
+                  onClick={() => onSelect?.(selected === persona.id ? null : persona.id)}
+                >
+                  <PersonaMini persona={persona} />
+                </button>
+              ))}
+            </div>
+          </section>
+          <div className={styles.people2dNotesGrid}>
+            {focusedNotes.map(note => {
+              const assigned = notePersonas(note.id)
+              return (
+                <section
+                  key={note.id}
+                  className={styles.people2dNote}
+                  style={{ '--cat-color': focusedCategory.color || '#888' }}
+                  onDoubleClick={() => onFocusNote?.(note.id)}
+                  onDragOver={allowDrop}
+                  onDrop={e => handleNoteDrop(note.id, e)}
+                >
+                  <h3>{note.title || 'Untitled'}</h3>
+                  <p>{note.description || ''}</p>
+                  <div className={styles.people2dPersonaCloud}>
+                    {assigned.map(persona => (
+                      <button
+                        key={persona.id}
+                        className={styles.people2dPersonaButton}
+                        onClick={e => {
+                          e.stopPropagation()
+                          onSelect?.(selected === persona.id ? null : persona.id)
+                        }}
+                      >
+                        <PersonaMini persona={persona} size={24} />
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )
+            })}
+            {focusedNotes.length === 0 && <div className={styles.people2dBlank}>No notes assigned to this category yet.</div>}
+          </div>
+        </div>
+      )}
+
+      {focusedCategory && focusedNote && (
+        <div className={styles.people2dNoteFocus} style={{ '--cat-color': focusedCategory.color || '#888' }}>
+          <section className={styles.people2dFocusedNote}>
+            <h2>{focusedNote.title || 'Untitled'}</h2>
+            <p>{focusedNote.description || ''}</p>
+            <div className={styles.people2dMilestoneGrid}>
+              {focusedMilestones.map(ms => {
+                const assigned = milestonePersonas(ms.id)
+                return (
+                  <section
+                    key={ms.id}
+                    className={styles.people2dMilestone}
+                    style={{ '--milestone-color': ms.color || focusedCategory.color || '#888' }}
+                    onDragOver={allowDrop}
+                    onDrop={e => handleMilestoneDrop(ms.id, e)}
+                  >
+                    <div className={styles.people2dMilestoneDate}>{formatMilestoneDate(ms)}</div>
+                    <div className={styles.people2dMilestoneTitle}>{ms.title || 'Milestone'}</div>
+                    <div className={styles.people2dPersonaCloud}>
+                      {assigned.map(persona => (
+                        <button
+                          key={persona.id}
+                          className={styles.people2dPersonaButton}
+                          onClick={() => onSelect?.(selected === persona.id ? null : persona.id)}
+                        >
+                          <PersonaMini persona={persona} size={22} />
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )
+              })}
+              {focusedMilestones.length === 0 && <div className={styles.people2dBlank}>No milestones yet.</div>}
+            </div>
+          </section>
+        </div>
+      )}
+    </main>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function PeoplePage() {
   const [dimensions, setDimensions]   = useState([])
@@ -1553,6 +1843,7 @@ export default function PeoplePage() {
   const [showAddPanel, setShowAddPanel] = useState(false)
   const [editPersonaId, setEditPersonaId] = useState(null)
   const [layoutLocked, setLayoutLocked] = useState(false)
+  const [viewMode, setViewMode] = useState('3d')
   const [sourceDragPersonaId, setSourceDragPersonaId] = useState(null)
   const [focusedCategoryId, setFocusedCategoryId] = useState(null)
   const [focusedNoteId, setFocusedNoteId] = useState(null)
@@ -1836,6 +2127,7 @@ export default function PeoplePage() {
   }, [sourceDragPersonaId])
 
   const startSourceDrag = (personaId, e) => {
+    if (viewMode !== '3d') return
     if (e.detail > 1) return
     e.preventDefault()
     setSourceDragPersonaId(personaId)
@@ -1855,46 +2147,93 @@ export default function PeoplePage() {
 
   return (
     <div className={styles.page}>
-      <Canvas
-        shadows
-        camera={{ position: [0, 32, 56], fov: 48 }}
-        className={styles.canvas}
-        gl={{ antialias: true, alpha: true }}
-        style={{ background: 'transparent' }}
-      >
-        <Scene
-          activeDimensionId={activeDimension?.id ?? null}
+      {viewMode === '3d' ? (
+        <Canvas
+          shadows
+          camera={{ position: [0, 32, 56], fov: 48 }}
+          className={styles.canvas}
+          gl={{ antialias: true, alpha: true }}
+          style={{ background: 'transparent' }}
+        >
+          <Scene
+            activeDimensionId={activeDimension?.id ?? null}
+            activeCats={activeCats}
+            personas={personas}
+            personaAssignments={personaAssignments}
+            assignmentRevision={assignmentRevision}
+            notes={notes}
+            noteAssignments={noteAssignments}
+            milestones={milestones}
+            personaNoteAssignments={personaNoteAssignments}
+            personaMilestoneAssignments={personaMilestoneAssignments}
+            categoryLeaders={categoryLeaders}
+            focusedCategoryId={focusedCategoryId}
+            focusedNoteId={focusedNoteId}
+            viewResetRevision={viewResetRevision}
+            layoutLocked={layoutLocked}
+            sourceDragPersonaId={sourceDragPersonaId}
+            onSourceDragEnd={() => setSourceDragPersonaId(null)}
+            onPositionUpdate={handlePositionUpdate}
+            onAssign={handleAssignPersona}
+            onUnassign={handleUnassignPersona}
+            onMoveAssignment={handleMovePersonaAssignment}
+            onFocusCategory={handleFocusCategory}
+            onFocusNote={setFocusedNoteId}
+            onSelect={setSelected}
+            onAssignPersonaToNote={handleAssignPersonaToNote}
+            onAssignPersonaToMilestone={handleAssignPersonaToMilestone}
+            onAssignLeader={handleAssignLeader}
+            selected={selected}
+          />
+        </Canvas>
+      ) : (
+        <People2DView
+          activeDimension={activeDimension}
           activeCats={activeCats}
           personas={personas}
           personaAssignments={personaAssignments}
-          assignmentRevision={assignmentRevision}
           notes={notes}
           noteAssignments={noteAssignments}
           milestones={milestones}
           personaNoteAssignments={personaNoteAssignments}
           personaMilestoneAssignments={personaMilestoneAssignments}
           categoryLeaders={categoryLeaders}
-          focusedCategoryId={focusedCategoryId}
-          focusedNoteId={focusedNoteId}
-          viewResetRevision={viewResetRevision}
-          layoutLocked={layoutLocked}
-          sourceDragPersonaId={sourceDragPersonaId}
-          onSourceDragEnd={() => setSourceDragPersonaId(null)}
-          onPositionUpdate={handlePositionUpdate}
+          focusedCategory={focusedCategory}
+          focusedNote={focusedNote}
+          onFocusCategory={handleFocusCategory}
+          onFocusNote={setFocusedNoteId}
+          onClearCategory={clearCategoryFocus}
+          onClearNote={clearNoteFocus}
           onAssign={handleAssignPersona}
           onUnassign={handleUnassignPersona}
           onMoveAssignment={handleMovePersonaAssignment}
-          onFocusCategory={handleFocusCategory}
-          onFocusNote={setFocusedNoteId}
-          onSelect={setSelected}
           onAssignPersonaToNote={handleAssignPersonaToNote}
           onAssignPersonaToMilestone={handleAssignPersonaToMilestone}
           onAssignLeader={handleAssignLeader}
+          onSelect={setSelected}
           selected={selected}
         />
-      </Canvas>
+      )}
 
       <DimensionScroller dimensions={dimensions} index={dimIndex} onChange={setDimIndex} />
+
+      <div className={styles.viewModeToggle} role="group" aria-label="People page view">
+        <span className={styles.viewModeLabel}>View</span>
+        <button
+          className={viewMode === '2d' ? styles.viewModeButtonActive : styles.viewModeButton}
+          onClick={() => setViewMode('2d')}
+          title="Use the practical 2D board"
+        >
+          2D
+        </button>
+        <button
+          className={viewMode === '3d' ? styles.viewModeButtonActive : styles.viewModeButton}
+          onClick={() => setViewMode('3d')}
+          title="Use the spatial 3D board"
+        >
+          3D
+        </button>
+      </div>
 
       {focusedCategory && (
         <div className={styles.categoryFocusPanel}>
@@ -1924,23 +2263,25 @@ export default function PeoplePage() {
         </div>
       )}
 
-      <button
-        className={`${styles.layoutLockBtn} ${layoutLocked ? styles.layoutLockBtnActive : ''}`}
-        onClick={() => setLayoutLocked(v => !v)}
-        title={layoutLocked ? 'Unlock camera and free persona placement' : 'Lock camera and fixed persona pool'}
-      >
-        {layoutLocked ? (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="5" y="11" width="14" height="10" rx="2" />
-            <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-          </svg>
-        ) : (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="5" y="11" width="14" height="10" rx="2" />
-            <path d="M8 11V7a4 4 0 0 1 7.5-2" />
-          </svg>
-        )}
-      </button>
+      {viewMode === '3d' && (
+        <button
+          className={`${styles.layoutLockBtn} ${layoutLocked ? styles.layoutLockBtnActive : ''}`}
+          onClick={() => setLayoutLocked(v => !v)}
+          title={layoutLocked ? 'Unlock camera and free persona placement' : 'Lock camera and fixed persona pool'}
+        >
+          {layoutLocked ? (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="5" y="11" width="14" height="10" rx="2" />
+              <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+            </svg>
+          ) : (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="5" y="11" width="14" height="10" rx="2" />
+              <path d="M8 11V7a4 4 0 0 1 7.5-2" />
+            </svg>
+          )}
+        </button>
+      )}
 
       {!showAddPanel && (
       <aside className={styles.personaPanel}>
@@ -1968,6 +2309,11 @@ export default function PeoplePage() {
             <button
               key={persona.id}
               className={`${styles.personaListItem} ${selected === persona.id ? styles.personaListItemActive : ''}`}
+              draggable={viewMode === '2d'}
+              onDragStart={e => {
+                e.dataTransfer.effectAllowed = 'copyMove'
+                e.dataTransfer.setData('application/x-persona', JSON.stringify({ source: 'panel', personaId: persona.id }))
+              }}
               onPointerDown={e => startSourceDrag(persona.id, e)}
               onDoubleClick={e => openProtopersona(persona.id, e)}
               onClick={() => setSelected(selected === persona.id ? null : persona.id)}
@@ -2068,7 +2414,13 @@ export default function PeoplePage() {
         </div>
       )}
 
-      <div className={styles.hint}>{layoutLocked ? 'Locked view · Drag from panel to assign · Drag off island to unassign' : 'Unlocked · Orbit · Zoom · Drag off island to unassign'}</div>
+      <div className={styles.hint}>
+        {viewMode === '2d'
+          ? '2D view · Double-click to drill in · Drag people to assign'
+          : layoutLocked
+            ? 'Locked view · Drag from panel to assign · Drag off island to unassign'
+            : 'Unlocked · Orbit · Zoom · Drag off island to unassign'}
+      </div>
     </div>
   )
 }

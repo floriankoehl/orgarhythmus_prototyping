@@ -11,6 +11,273 @@
   height: 100% !important;
 }
 
+.viewModeToggle {
+  position: absolute;
+  top: 18px;
+  left: 220px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  background: rgba(255,255,255,0.88);
+  border: 1px solid #e1e1e1;
+  border-radius: 10px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+  backdrop-filter: blur(8px);
+}
+
+.viewModeLabel {
+  padding: 0 8px 0 6px;
+  color: #999;
+  font: 800 10px Arial, sans-serif;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.viewModeButton,
+.viewModeButtonActive {
+  min-width: 42px;
+  height: 30px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 7px;
+  color: #666;
+  background: transparent;
+  font: 800 12px Arial, sans-serif;
+  cursor: pointer;
+}
+
+.viewModeButton:hover {
+  color: #222;
+  background: #f2f2f2;
+}
+
+.viewModeButtonActive {
+  color: #fff;
+  background: #1a73e8;
+  box-shadow: 0 1px 6px rgba(26,115,232,0.22);
+}
+
+.people2d {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 104px 284px 92px 24px;
+  background:
+    linear-gradient(rgba(0,0,0,0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,0,0,0.035) 1px, transparent 1px),
+    #f8f8f6;
+  background-size: 28px 28px;
+}
+
+.people2dCategoryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  align-content: start;
+  min-height: 100%;
+}
+
+.people2dCategory {
+  min-height: 210px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--cat-color), #fff 75%), #fff 66%);
+  border: 2px solid color-mix(in srgb, var(--cat-color), #fff 34%);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.07);
+}
+
+.people2dCategory:hover {
+  border-color: var(--cat-color);
+}
+
+.people2dCategoryHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #111;
+  font: 800 17px Arial, sans-serif;
+}
+
+.people2dCategoryHead span:last-child {
+  min-width: 28px;
+  padding: 4px 8px;
+  color: var(--cat-color);
+  background: #fff;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.people2dPersonaCloud {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.people2dPersonaButton {
+  max-width: 160px;
+  padding: 4px 7px 4px 4px;
+  color: #222;
+  background: rgba(255,255,255,0.86);
+  border: 1px solid #e4e4e4;
+  border-radius: 999px;
+  cursor: grab;
+}
+
+.people2dPersonaButton:hover,
+.people2dPersonaButtonActive {
+  border-color: #1a73e8;
+  background: #e8f0fe;
+}
+
+.people2dPersonaMini {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 700 12px Arial, sans-serif;
+}
+
+.people2dPersonaMini img {
+  object-fit: contain;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+.people2dPersonaMini span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.people2dFocus,
+.people2dNoteFocus {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 100%;
+}
+
+.people2dLeaderLane,
+.people2dFocusedNote {
+  padding: 14px;
+  background: rgba(255,255,255,0.9);
+  border: 2px solid color-mix(in srgb, var(--cat-color), #fff 32%);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+}
+
+.people2dLaneTitle {
+  margin-bottom: 9px;
+  color: var(--cat-color);
+  font: 800 13px Arial, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.people2dNotesGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.people2dNote {
+  min-height: 170px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 13px;
+  background: #fff;
+  border: 2px solid color-mix(in srgb, var(--cat-color), #fff 44%);
+  border-radius: 8px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.06);
+}
+
+.people2dNote:hover {
+  border-color: var(--cat-color);
+}
+
+.people2dNote h3,
+.people2dFocusedNote h2 {
+  margin: 0;
+  color: #111;
+  font: 800 16px Arial, sans-serif;
+  overflow-wrap: anywhere;
+}
+
+.people2dFocusedNote h2 {
+  font-size: 22px;
+}
+
+.people2dNote p,
+.people2dFocusedNote p {
+  margin: 0;
+  color: #555;
+  font: 13px/1.4 Arial, sans-serif;
+  overflow: hidden;
+}
+
+.people2dNote p {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+
+.people2dMilestoneGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.people2dMilestone {
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--milestone-color), #fff 82%);
+  border: 2px solid color-mix(in srgb, var(--milestone-color), #fff 36%);
+  border-radius: 8px;
+}
+
+.people2dMilestone:hover {
+  border-color: var(--milestone-color);
+}
+
+.people2dMilestoneDate {
+  color: var(--milestone-color);
+  font: 800 12px Arial, sans-serif;
+}
+
+.people2dMilestoneTitle {
+  color: #222;
+  font: 800 14px Arial, sans-serif;
+}
+
+.people2dEmpty,
+.people2dBlank {
+  color: #aaa;
+  font: 12px Arial, sans-serif;
+}
+
+.people2dBlank {
+  padding: 16px;
+  background: rgba(255,255,255,0.72);
+  border: 1px dashed #d8d8d8;
+  border-radius: 8px;
+}
+
 /* ── Dimension scroller ──────────────────────────────────────────────────────── */
 .dimScroller {
   position: absolute;
@@ -94,7 +361,7 @@
 .layoutLockBtn {
   position: absolute;
   top: 18px;
-  left: 220px;
+  left: 370px;
   z-index: 10;
   width: 40px;
   height: 40px;
@@ -122,14 +389,15 @@
 
 .categoryFocusPanel {
   position: absolute;
-  top: 70px;
-  left: 18px;
-  z-index: 10;
+  top: 18px;
+  left: 50%;
+  z-index: 31;
   display: flex;
   align-items: center;
   gap: 8px;
   max-width: min(360px, calc(100vw - 36px));
   padding: 8px 10px;
+  transform: translateX(-50%);
   background: rgba(255,255,255,0.86);
   border: 1px solid #e4e4e4;
   border-radius: 10px;
