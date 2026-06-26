@@ -149,6 +149,9 @@ export const api = {
   getPersonaAssignments: ()              => req('GET',    '/persona-assignments'),
   assignPersona:        (id, dimId, catId) => req('PUT',  `/personas/${id}/assign`, { dimensionId: dimId, categoryId: catId }),
   unassignPersona:      (id, dimId, catId) => req('DELETE', `/personas/${id}/assign/${dimId}/${catId}`),
+  getPersonaNoteAssignments: ()            => req('GET',    '/persona-note-assignments'),
+  assignPersonaToNote:  (personaId, noteId) => req('PUT',  `/personas/${personaId}/note-assign/${noteId}`),
+  unassignPersonaFromNote: (personaId, noteId) => req('DELETE', `/personas/${personaId}/note-assign/${noteId}`),
 
   // Assignments
   getAssignments: ()                      => req('GET',    '/assignments'),

@@ -55,7 +55,7 @@ function CameraDirector({ locked, focusTarget, resetRevision = 0 }) {
       return
     }
     if (!locked) return
-    camera.position.set(0, 8, 14)
+    camera.position.set(0, 16, 28)
     camera.lookAt(0, 0, 0)
     if (controls?.target) controls.target.set(0, 0, 0)
     controls?.update?.()
@@ -65,11 +65,11 @@ function CameraDirector({ locked, focusTarget, resetRevision = 0 }) {
     if (!movingRef.current) return
     const [x, , z] = focusTarget ?? [0, 0, 0]
     const desiredPosition = overviewRef.current
-      ? new THREE.Vector3(0, 8, 14)
-      : new THREE.Vector3(x + 0.45, 3.85, z + 3.55)
+      ? new THREE.Vector3(0, 16, 28)
+      : new THREE.Vector3(x + 0.4, 4.8, z + 5.2)
     const desiredTarget = overviewRef.current
       ? new THREE.Vector3(0, 0, 0)
-      : new THREE.Vector3(x, ISLAND_H + 0.06, z)
+      : new THREE.Vector3(x, ISLAND_H + 0.08, z - 0.6)
     camera.position.lerp(desiredPosition, 0.12)
     if (controls?.target) controls.target.lerp(desiredTarget, 0.12)
     camera.lookAt(controls?.target ?? desiredTarget)
@@ -91,7 +91,8 @@ function CameraDirector({ locked, focusTarget, resetRevision = 0 }) {
 
 // ── Kenney character avatar ───────────────────────────────────────────────────
 function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7',
-                        selected, dragging, phaseId = 0,
+                        selected, dragging, phaseId = 0, targetHeight = TARGET_HEIGHT,
+                        showName = true,
                         onPointerDown, onClick }) {
   const groupRef = useRef()
   const [hovered, setHovered] = useState(false)
@@ -112,9 +113,9 @@ function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7',
     })
     const box = new THREE.Box3().setFromObject(c)
     const h   = box.max.y - box.min.y
-    const s   = TARGET_HEIGHT / h
+    const s   = targetHeight / h
     return { cloned: c, scale: s, yShift: -box.min.y * s }
-  }, [scene])
+  }, [scene, targetHeight])
 
   const { actions } = useAnimations(animations, cloned)
   useEffect(() => {
@@ -172,32 +173,34 @@ function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7',
         </mesh>
       )}
 
-      <Text
-        position={[0, TARGET_HEIGHT + 0.2, 0]}
-        fontSize={0.16}
-        color={lit ? color : '#444'}
-        anchorX="center"
-        anchorY="bottom"
-        outlineWidth={0.016}
-        outlineColor="#fff"
-      >
-        {name}
-      </Text>
+      {showName && (
+        <Text
+          position={[0, targetHeight + 0.2, 0]}
+          fontSize={0.16}
+          color={lit ? color : '#444'}
+          anchorX="center"
+          anchorY="bottom"
+          outlineWidth={0.016}
+          outlineColor="#fff"
+        >
+          {name}
+        </Text>
+      )}
     </group>
   )
 }
 
 // ── Category island ──────────────────────────────────────────────────────────
-const ISLAND_W     = 5.0
-const ISLAND_D     = 5.0
+const ISLAND_W     = 10.0
+const ISLAND_D     = 10.0
 const ISLAND_H     = 0.42
 const ISLAND_COLS  = 4
 const ISLAND_SLOT_GRID = 10
 const TILE_GRID    = 8
-const ISLAND_RENDER_W = ISLAND_W * TILE_GRID / ISLAND_SLOT_GRID
-const ISLAND_RENDER_D = ISLAND_D * TILE_GRID / ISLAND_SLOT_GRID
-const LOCKED_CATEGORY_X = -7.5
-const LOCKED_CATEGORY_Z = -7.5
+const ISLAND_RENDER_W = ISLAND_W * TILE_GRID / ISLAND_SLOT_GRID   // 8.0
+const ISLAND_RENDER_D = ISLAND_D * TILE_GRID / ISLAND_SLOT_GRID   // 8.0
+const LOCKED_CATEGORY_X = -15
+const LOCKED_CATEGORY_Z = -15
 
 function CategoryIsland({ position, color, name, focused = false, onDoubleClick }) {
   const floorTexture = useMemo(() => {
@@ -283,11 +286,11 @@ function CategoryIsland({ position, color, name, focused = false, onDoubleClick 
   const sideLabelOffsetX = ISLAND_RENDER_W / 2 + 0.012
   const sideLabelOffsetZ = ISLAND_RENDER_D / 2 + 0.012
   const sideLabelProps = {
-    fontSize: 0.19,
+    fontSize: 0.36,
     color: '#fff',
     anchorX: 'center',
     anchorY: 'middle',
-    outlineWidth: 0.026,
+    outlineWidth: 0.048,
     outlineColor: color,
     outlineOpacity: 1,
   }
@@ -338,18 +341,20 @@ function CategoryIsland({ position, color, name, focused = false, onDoubleClick 
           <meshBasicMaterial color="#ffffff" transparent opacity={0.9} depthWrite={false} />
         </mesh>
       ))}
-      <Text
-        position={[0, ISLAND_H + 0.16, 0]}
-        fontSize={0.24}
-        color="#fff"
-        anchorX="center"
-        anchorY="middle"
-        outlineWidth={0.034}
-        outlineColor={color}
-        outlineOpacity={1}
-      >
-        {name}
-      </Text>
+      {!focused && (
+        <Text
+          position={[0, ISLAND_H + 0.28, 0]}
+          fontSize={0.46}
+          color="#fff"
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={0.062}
+          outlineColor={color}
+          outlineOpacity={1}
+        >
+          {name}
+        </Text>
+      )}
       <Text position={[0, sideLabelY, sideLabelOffsetZ]} rotation={[0, 0, 0]} {...sideLabelProps}>
         {name}
       </Text>
@@ -378,8 +383,8 @@ function computeIslandLayout(cats, locked = false) {
     })
   }
   // Snap to section-cell midpoints so thick grid lines form island borders.
-  // Section lines land at multiples of ISLAND_W (= sectionSize = 5).
-  // Cell midpoints are at 5k + 2.5; startCol/Row picks the leftmost cell index
+  // Section lines land at multiples of ISLAND_W (= sectionSize = 10).
+  // Cell midpoints are at 10k + 5; startCol/Row picks the leftmost cell index
   // for a layout that is as centered around the origin as possible.
   const startCol = -Math.floor(cols / 2)
   const startRow = -Math.floor(rows / 2)
@@ -392,13 +397,89 @@ function computeIslandLayout(cats, locked = false) {
   })
 }
 
+// ── Note card (rendered on focused island floor) ─────────────────────────────
+const NOTE_W = 2.10
+const NOTE_D = 1.36
+const NOTE_H = 0.10
+const NOTE_SLOT_W = NOTE_W + 0.40
+const NOTE_SLOT_D = NOTE_D + 0.54
+const MINI_TARGET_HEIGHT = 0.52
+const MINI_PERSONA_SPACING = 0.88
+
+function NoteCard({ position, title, color = '#888', highlighted = false }) {
+  const [hovered, setHovered] = useState(false)
+  const active = highlighted || hovered
+  return (
+    <group position={position}>
+      <mesh castShadow position={[0, NOTE_H / 2, 0]}>
+        <boxGeometry args={[NOTE_W, NOTE_H, NOTE_D]} />
+        <meshStandardMaterial
+          color={active ? '#eef4ff' : '#ffffff'}
+          roughness={0.55}
+          metalness={0}
+          emissive={highlighted ? '#3366ff' : '#000'}
+          emissiveIntensity={highlighted ? 0.08 : 0}
+        />
+      </mesh>
+      {/* Thin colored accent strip on front face */}
+      <mesh position={[0, NOTE_H * 0.5, NOTE_D / 2 + 0.001]}>
+        <planeGeometry args={[NOTE_W, NOTE_H]} />
+        <meshBasicMaterial color={color} transparent opacity={active ? 0.75 : 0.55} depthWrite={false} />
+      </mesh>
+      <Text
+        position={[0, NOTE_H + 0.05, 0]}
+        fontSize={0.16}
+        color={color}
+        anchorX="center"
+        anchorY="bottom"
+        maxWidth={NOTE_W - 0.20}
+        onPointerOver={() => setHovered(true)}
+        onPointerOut={() => setHovered(false)}
+      >
+        {title}
+      </Text>
+    </group>
+  )
+}
+
+function computeNotesOnIsland(islandPos, notes) {
+  if (notes.length === 0) return []
+  const availW = ISLAND_RENDER_W - 0.24
+  const cols = Math.max(1, Math.min(notes.length, Math.floor(availW / NOTE_SLOT_W)))
+  const usedW = (cols - 1) * NOTE_SLOT_W
+  // Notes start near the back edge; front ~1.1 units reserved for mini persona row
+  const backZ = islandPos[2] - ISLAND_RENDER_D / 2 + 0.55 + NOTE_D / 2
+  return notes.map((note, i) => ({
+    ...note,
+    notePos: [
+      islandPos[0] - usedW / 2 + (i % cols) * NOTE_SLOT_W,
+      ISLAND_H + 0.006,
+      backZ + Math.floor(i / cols) * NOTE_SLOT_D,
+    ],
+  }))
+}
+
+function computeMiniPersonaLine(islandPos, personas) {
+  if (personas.length === 0) return []
+  const totalW = (personas.length - 1) * MINI_PERSONA_SPACING
+  const frontZ = islandPos[2] + ISLAND_RENDER_D / 2 - 0.64
+  return personas.map((persona, i) => ({
+    ...persona,
+    miniPos: [
+      islandPos[0] - totalW / 2 + i * MINI_PERSONA_SPACING,
+      ISLAND_H,
+      frontZ,
+    ],
+  }))
+}
+
 // ── Scene ─────────────────────────────────────────────────────────────────────
 function personaSlotPosition(islandPos, idx, total) {
   const cols = Math.min(4, total)
   const rows = Math.ceil(total / cols)
   const col = idx % cols
   const row = Math.floor(idx / cols)
-  const spacing = 0.78
+  const spacing = 1.5
   return [
     islandPos[0] + (col - (cols - 1) / 2) * spacing,
     ISLAND_H,
@@ -412,6 +493,9 @@ function Scene({
   personas = [],
   personaAssignments = [],
   assignmentRevision = 0,
+  notes = [],
+  noteAssignments = [],
+  personaNoteAssignments = [],
   focusedCategoryId = null,
   viewResetRevision = 0,
   layoutLocked = true,
@@ -423,14 +507,19 @@ function Scene({
   onMoveAssignment,
   onFocusCategory,
   onSelect,
+  onAssignPersonaToNote,
   selected,
 }) {
   const [dragId, setDragId]       = useState(null)
   const [posOverrides, setPosOverrides] = useState({})
+  const [hoveredNoteId, setHoveredNoteId] = useState(null)
   const dragIdRef      = useRef(null)
   const dragAssignmentRef = useRef(null)
   const posOverridesRef = useRef({})
   const dragMovedRef   = useRef(false)
+  const focusedNotesRef = useRef([])
+  const focusedCategoryIdRef = useRef(focusedCategoryId)
+  useEffect(() => { focusedCategoryIdRef.current = focusedCategoryId }, [focusedCategoryId])
 
   const islands = computeIslandLayout(activeCats, layoutLocked)
   const focusedIsland = islands.find(cat => cat.id === focusedCategoryId)
@@ -444,22 +533,31 @@ function Scene({
     if (id !== null) {
       const pos = posOverridesRef.current[id]
       if (pos) {
-        if (dragIdRef.current && !layoutLocked) onPositionUpdate?.(id, pos[0], pos[2])
-        const targetIsland = islands.find(cat =>
-          Math.abs(pos[0] - cat.islandPos[0]) <= ISLAND_RENDER_W / 2 &&
-          Math.abs(pos[2] - cat.islandPos[2]) <= ISLAND_RENDER_D / 2
-        )
-        const assignment = dragAssignmentRef.current
-        if (targetIsland && activeDimensionId) {
-          if (assignment && assignment.categoryId !== targetIsland.id) {
+        if (focusedCategoryIdRef.current) {
+          // Focused mode: only note assignment drops count
+          const targetNote = focusedNotesRef.current.find(note =>
+            Math.abs(pos[0] - note.notePos[0]) <= NOTE_W / 2 &&
+            Math.abs(pos[2] - note.notePos[2]) <= NOTE_D / 2
+          )
+          if (targetNote) onAssignPersonaToNote?.(id, targetNote.id)
+        } else {
+          if (dragIdRef.current && !layoutLocked) onPositionUpdate?.(id, pos[0], pos[2])
+          const targetIsland = islands.find(cat =>
+            Math.abs(pos[0] - cat.islandPos[0]) <= ISLAND_RENDER_W / 2 &&
+            Math.abs(pos[2] - cat.islandPos[2]) <= ISLAND_RENDER_D / 2
+          )
+          const assignment = dragAssignmentRef.current
+          if (targetIsland && activeDimensionId) {
+            if (assignment && assignment.categoryId !== targetIsland.id) {
+              dragAssignmentRef.current = null
+              onMoveAssignment?.(assignment.personaId, assignment.dimensionId, assignment.categoryId, targetIsland.id)
+            } else if (!assignment) {
+              onAssign?.(id, activeDimensionId, targetIsland.id)
+            }
+          } else if (assignment) {
             dragAssignmentRef.current = null
-            onMoveAssignment?.(assignment.personaId, assignment.dimensionId, assignment.categoryId, targetIsland.id)
-          } else if (!assignment) {
-            onAssign?.(id, activeDimensionId, targetIsland.id)
+            onUnassign?.(assignment.personaId, assignment.dimensionId, assignment.categoryId)
           }
-        } else if (assignment) {
-          dragAssignmentRef.current = null
-          onUnassign?.(assignment.personaId, assignment.dimensionId, assignment.categoryId)
         }
       }
     }
@@ -474,9 +572,10 @@ function Scene({
     }
     dragIdRef.current = null
     dragAssignmentRef.current = null
+    setHoveredNoteId(null)
     setDragId(null)
     onSourceDragEnd?.()
-  }, [activeDimensionId, islands, layoutLocked, onAssign, onMoveAssignment, onPositionUpdate, onSourceDragEnd, onUnassign, sourceDragPersonaId])
+  }, [activeDimensionId, islands, layoutLocked, onAssign, onAssignPersonaToNote, onMoveAssignment, onPositionUpdate, onSourceDragEnd, onUnassign, sourceDragPersonaId])
 
   useEffect(() => {
     window.addEventListener('pointerup', stopDrag)
@@ -511,9 +610,18 @@ function Scene({
     const newPos = [e.point.x, ISLAND_H, e.point.z]
     posOverridesRef.current = { ...posOverridesRef.current, [id]: newPos }
     setPosOverrides(prev => ({ ...prev, [id]: newPos }))
+    if (focusedCategoryIdRef.current) {
+      const hn = focusedNotesRef.current.find(note =>
+        Math.abs(e.point.x - note.notePos[0]) <= NOTE_W / 2 &&
+        Math.abs(e.point.z - note.notePos[2]) <= NOTE_D / 2
+      )
+      setHoveredNoteId(hn?.id ?? null)
+    }
   }
 
   const assignedCopies = islands.flatMap(cat => {
+    // Focused island personas are rendered separately as mini figures
+    if (cat.id === focusedCategoryId) return []
     const assigned = personaAssignments
       .filter(a => a.dimensionId === activeDimensionId && a.categoryId === cat.id)
       .filter(a => !draggedAssignment ||
@@ -531,13 +639,48 @@ function Scene({
     }))
   })
 
+  const focusedNotes = focusedIsland && activeDimensionId
+    ? noteAssignments
+        .filter(a => a.dimensionId === activeDimensionId && a.categoryId === focusedCategoryId)
+        .map(a => notes.find(n => n.id === a.noteId))
+        .filter(Boolean)
+    : []
+  const focusedNotesOnIsland = focusedIsland
+    ? computeNotesOnIsland(focusedIsland.islandPos, focusedNotes)
+    : []
+
+  const focusedPersonas = focusedIsland && activeDimensionId
+    ? personaAssignments
+        .filter(a => a.dimensionId === activeDimensionId && a.categoryId === focusedCategoryId)
+        .filter(a => !draggedAssignment ||
+          a.personaId !== draggedAssignment.personaId ||
+          a.dimensionId !== draggedAssignment.dimensionId ||
+          a.categoryId !== draggedAssignment.categoryId
+        )
+        .map(a => personas.find(p => p.id === a.personaId))
+        .filter(Boolean)
+    : []
+  const miniPersonas = computeMiniPersonaLine(focusedIsland?.islandPos ?? [0,0,0], focusedPersonas)
+
+  // Keep ref in sync so stopDrag/handleDragMove always see latest notes
+  focusedNotesRef.current = focusedNotesOnIsland
+
+  // Map noteId → [persona, …] for rendering tiny figures on each note
+  const notePersonaMap = {}
+  personaNoteAssignments.forEach(a => {
+    const p = personas.find(px => px.id === a.personaId)
+    if (!p) return
+    if (!notePersonaMap[a.noteId]) notePersonaMap[a.noteId] = []
+    notePersonaMap[a.noteId].push(p)
+  })
+
   return (
     <>
       <ambientLight intensity={1.8} />
       <directionalLight position={[6, 10, 4]} intensity={1.0} castShadow />
       <pointLight position={[-4, 6, -4]} intensity={0.3} color="#c8d8ff" />
 
-      <fog attach="fog" args={['#f8f8f6', 28, 70]} />
+      <fog attach="fog" args={['#f8f8f6', 55, 140]} />
       <Environment preset="dawn" background={false} />
       <CursorManager dragging={activeDragId !== null} />
       <CameraDirector
@@ -564,10 +707,10 @@ function Scene({
         cellSize={0.5}
         cellThickness={0.9}
         cellColor="#c8c8c8"
-        sectionSize={5}
+        sectionSize={10}
         sectionThickness={1.6}
         sectionColor="#aaaaaa"
-        fadeDistance={60}
+        fadeDistance={120}
         fadeStrength={1}
       />
 
@@ -582,7 +725,7 @@ function Scene({
         />
       ))}
 
-      <ContactShadows position={[0, 0.002, 0]} opacity={0.22} scale={20} blur={2.5} far={1} color="#7788aa" />
+      <ContactShadows position={[0, 0.002, 0]} opacity={0.22} scale={40} blur={2.5} far={1} color="#7788aa" />
 
       {activeDragId !== null && (
         <mesh
@@ -604,6 +747,8 @@ function Scene({
           name={activeDragPersona.name}
           color={keyColor(activeDragPersona.modelKey)}
           phaseId={99}
+          targetHeight={focusedCategoryId ? MINI_TARGET_HEIGHT : TARGET_HEIGHT}
+          showName={!focusedCategoryId}
           selected
           dragging
           onPointerDown={e => e.stopPropagation()}
@@ -629,13 +774,71 @@ function Scene({
         />
       ))}
 
+      {focusedNotesOnIsland.map(note => {
+        const notePersonas = notePersonaMap[note.id] || []
+        const spacing = 0.45
+        return (
+          <group key={note.id}>
+            <NoteCard
+              position={note.notePos}
+              title={note.title}
+              color={focusedIsland?.color || '#888'}
+              highlighted={hoveredNoteId === note.id}
+            />
+            {notePersonas.map((persona, i) => (
+              <PersonAvatar
+                key={`np:${note.id}:${persona.id}`}
+                modelKey={persona.modelKey}
+                position={[
+                  note.notePos[0] - (notePersonas.length - 1) * spacing / 2 + i * spacing,
+                  note.notePos[1] + NOTE_H,
+                  note.notePos[2],
+                ]}
+                name={persona.name}
+                color={keyColor(persona.modelKey)}
+                phaseId={i + 400}
+                targetHeight={0.26}
+                showName={false}
+                selected={selected === persona.id}
+                dragging={false}
+                onPointerDown={e => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onSelect?.(selected === persona.id ? null : persona.id)
+                }}
+              />
+            ))}
+          </group>
+        )
+      })}
+
+      {miniPersonas.map((persona, i) => (
+        <PersonAvatar
+          key={`mini:${assignmentRevision}:${persona.id}`}
+          modelKey={persona.modelKey}
+          position={persona.miniPos}
+          name={persona.name}
+          color={keyColor(persona.modelKey)}
+          phaseId={i + 200}
+          targetHeight={MINI_TARGET_HEIGHT}
+          showName={false}
+          selected={selected === persona.id}
+          dragging={false}
+          onPointerDown={e => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            onSelect?.(selected === persona.id ? null : persona.id)
+          }}
+        />
+      ))}
+
       <OrbitControls
         makeDefault
         enabled={!layoutLocked && activeDragId === null}
         minPolarAngle={0.2}
         maxPolarAngle={Math.PI / 2.1}
-        minDistance={3}
-        maxDistance={30}
+        minDistance={6}
+        maxDistance={60}
         target={layoutLocked ? [0, 0, 0] : [0, 0, 0]}
       />
     </>
@@ -925,6 +1128,9 @@ export default function PeoplePage() {
   const [dimIndex, setDimIndex]       = useState(0)
   const [categories, setCategories]   = useState([])
   const [personas, setPersonas]         = useState([])
+  const [notes, setNotes]               = useState([])
+  const [noteAssignments, setNoteAssignments] = useState([])
+  const [personaNoteAssignments, setPersonaNoteAssignments] = useState([])
   const [personaAssignments, setPersonaAssignments] = useState([])
   const personaAssignmentsRef = useRef([])
   const [assignmentRevision, setAssignmentRevision] = useState(0)
@@ -947,13 +1153,16 @@ export default function PeoplePage() {
   }, [])
 
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getPersonaAssignments()])
-      .then(([dims, cats, pers, personaAsns]) => {
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getPersonaAssignments(), api.getNotes(), api.getAssignments(), api.getPersonaNoteAssignments()])
+      .then(([dims, cats, pers, personaAsns, notesList, noteAsns, pnAsns]) => {
         setDimensions(dims)
         setCategories(cats)
         setDimIndex(0)
         setPersonas(pers)
         replacePersonaAssignments(personaAsns, { revise: true })
+        setNotes(notesList)
+        setNoteAssignments(noteAsns)
+        setPersonaNoteAssignments(pnAsns)
       })
       .catch(console.error)
   }, [replacePersonaAssignments])
@@ -1051,6 +1260,27 @@ export default function PeoplePage() {
     }
   }
 
+  const handleAssignPersonaToNote = async (personaId, noteId) => {
+    if (personaNoteAssignments.some(a => a.personaId === personaId && a.noteId === noteId)) return
+    setPersonaNoteAssignments(prev => [...prev, { personaId, noteId }])
+    try {
+      await api.assignPersonaToNote(personaId, noteId)
+    } catch (e) {
+      console.error(e)
+      setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.noteId === noteId)))
+    }
+  }
+
+  const handleUnassignPersonaFromNote = async (personaId, noteId) => {
+    setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.noteId === noteId)))
+    try {
+      await api.unassignPersonaFromNote(personaId, noteId)
+    } catch (e) {
+      console.error(e)
+      setPersonaNoteAssignments(prev => [...prev, { personaId, noteId }])
+    }
+  }
+
   const handleUpdatePersona = async (id, patch) => {
     const previous = personas.find(p => p.id === id)
     setPersonas(prev => prev.map(p => p.id === id
@@ -1089,6 +1319,12 @@ export default function PeoplePage() {
       .map(a => ({ ...a, category: categories.find(c => c.id === a.categoryId) }))
       .filter(a => a.category)
     : []
+  const selectedNoteAssignments = selectedPersona && focusedCategoryId
+    ? personaNoteAssignments
+      .filter(a => a.personaId === selectedPersona.id)
+      .map(a => ({ ...a, note: notes.find(n => n.id === a.noteId) }))
+      .filter(a => a.note)
+    : []
 
   useEffect(() => {
     if (!sourceDragPersonaId) return
@@ -1119,7 +1355,7 @@ export default function PeoplePage() {
     <div className={styles.page}>
       <Canvas
         shadows
-        camera={{ position: [0, 8, 14], fov: 48 }}
+        camera={{ position: [0, 16, 28], fov: 48 }}
         className={styles.canvas}
         gl={{ antialias: true, alpha: true }}
         style={{ background: 'transparent' }}
@@ -1130,6 +1366,9 @@ export default function PeoplePage() {
           personas={personas}
           personaAssignments={personaAssignments}
           assignmentRevision={assignmentRevision}
+          notes={notes}
+          noteAssignments={noteAssignments}
+          personaNoteAssignments={personaNoteAssignments}
           focusedCategoryId={focusedCategoryId}
           viewResetRevision={viewResetRevision}
           layoutLocked={layoutLocked}
@@ -1141,6 +1380,7 @@ export default function PeoplePage() {
           onMoveAssignment={handleMovePersonaAssignment}
           onFocusCategory={setFocusedCategoryId}
           onSelect={setSelected}
+          onAssignPersonaToNote={handleAssignPersonaToNote}
           selected={selected}
         />
       </Canvas>
@@ -1252,7 +1492,7 @@ export default function PeoplePage() {
             />
             <span className={styles.selectionName}>{selectedPersona.name}</span>
           </div>
-          {selectedAssignments.length > 0 && (
+          {(selectedAssignments.length > 0 || selectedNoteAssignments.length > 0) && (
             <div className={styles.assignmentChips}>
               {selectedAssignments.map(({ category, dimensionId, categoryId }) => (
                 <button
@@ -1263,6 +1503,18 @@ export default function PeoplePage() {
                   title={`Remove from ${category.name}`}
                 >
                   {category.name}
+                  <span>×</span>
+                </button>
+              ))}
+              {selectedNoteAssignments.map(({ note, noteId }) => (
+                <button
+                  key={noteId}
+                  className={styles.assignmentChip}
+                  style={{ borderColor: focusedCategory?.color || '#888', color: focusedCategory?.color || '#888' }}
+                  onClick={() => handleUnassignPersonaFromNote(selectedPersona.id, noteId)}
+                  title={`Remove from note "${note.title}"`}
+                >
+                  {note.title || 'Untitled'}
                   <span>×</span>
                 </button>
               ))}

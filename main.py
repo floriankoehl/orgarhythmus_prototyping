@@ -236,6 +236,13 @@ def _init_db():
                 PRIMARY KEY (persona_id, dimension_id, category_id)
             )
         """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS persona_note_assignments (
+                persona_id TEXT NOT NULL,
+                note_id    TEXT NOT NULL,
+                PRIMARY KEY (persona_id, note_id)
+            )
+        """)
 
 _init_db()
 
@@ -1402,6 +1409,7 @@ def update_note(note_id: str, data: NotePatch, user: dict = Depends(current_user
 def delete_note(note_id: str, user: dict = Depends(current_user)):
     with _db() as con:
         assert_project_access(_project_id_for_note(con, note_id), user)
+        con.execute("DELETE FROM persona_note_assignments WHERE note_id = ?", (note_id,))
         con.execute("DELETE FROM notes WHERE id = ?", (note_id,))
 
 @app.put("/notes/order")
@@ -1595,6 +1603,7 @@ def delete_persona(persona_id: str, user: dict = Depends(current_user)):
             raise HTTPException(404, "Persona not found")
         assert_project_access(row["project_id"], user)
         con.execute("DELETE FROM persona_assignments WHERE persona_id = ?", (persona_id,))
+        con.execute("DELETE FROM persona_note_assignments WHERE persona_id = ?", (persona_id,))
         con.execute("DELETE FROM personas WHERE id = ?", (persona_id,))
     return Response(status_code=204)
 
@@ -1644,6 +1653,49 @@ def unassign_persona(persona_id: str, dim_id: str, cat_id: str, user: dict = Dep
         con.execute(
             "DELETE FROM persona_assignments WHERE persona_id = ? AND dimension_id = ? AND category_id = ?",
             (persona_id, dim_id, cat_id),
+        )
+    return Response(status_code=204)
+
+
+@app.get("/persona-note-assignments")
+def list_persona_note_assignments(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    with _db() as con:
+        rows = con.execute(
+            "SELECT pna.persona_id, pna.note_id FROM persona_note_assignments pna "
+            "JOIN notes n ON n.id = pna.note_id WHERE n.project_id = ?",
+            (project_id,),
+        ).fetchall()
+    return [{"personaId": r["persona_id"], "noteId": r["note_id"]} for r in rows]
+
+@app.put("/personas/{persona_id}/note-assign/{note_id}", status_code=204)
+def assign_persona_to_note(persona_id: str, note_id: str, user: dict = Depends(current_user)):
+    with _db() as con:
+        note_row = con.execute("SELECT project_id FROM notes WHERE id = ?", (note_id,)).fetchone()
+        if not note_row:
+            raise HTTPException(404, "Note not found")
+        assert_project_access(note_row["project_id"], user)
+        persona_row = con.execute("SELECT project_id FROM personas WHERE id = ?", (persona_id,)).fetchone()
+        if not persona_row:
+            raise HTTPException(404, "Persona not found")
+        if persona_row["project_id"] != note_row["project_id"]:
+            raise HTTPException(400, "Cannot assign persona across projects")
+        con.execute(
+            "INSERT OR IGNORE INTO persona_note_assignments (persona_id, note_id) VALUES (?, ?)",
+            (persona_id, note_id),
+        )
+    return Response(status_code=204)
+
+@app.delete("/personas/{persona_id}/note-assign/{note_id}", status_code=204)
+def unassign_persona_from_note(persona_id: str, note_id: str, user: dict = Depends(current_user)):
+    with _db() as con:
+        note_row = con.execute("SELECT project_id FROM notes WHERE id = ?", (note_id,)).fetchone()
+        if not note_row:
+            raise HTTPException(404, "Note not found")
+        assert_project_access(note_row["project_id"], user)
+        con.execute(
+            "DELETE FROM persona_note_assignments WHERE persona_id = ? AND note_id = ?",
+            (persona_id, note_id),
         )
     return Response(status_code=204)
 
