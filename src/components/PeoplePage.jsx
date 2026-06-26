@@ -152,7 +152,7 @@ function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7',
 // ── Category island ──────────────────────────────────────────────────────────
 const ISLAND_W     = 5.0
 const ISLAND_D     = 5.0
-const ISLAND_H     = 0.04
+const ISLAND_H     = 0.42
 const ISLAND_COLS  = 4
 const ISLAND_SLOT_GRID = 10
 const TILE_GRID    = 8
@@ -194,20 +194,40 @@ function CategoryIsland({ position, color, name }) {
     texture.needsUpdate = true
     return texture
   }, [])
+  const sideLabelY = ISLAND_H / 2
+  const sideLabelOffsetX = ISLAND_RENDER_W / 2 + 0.012
+  const sideLabelOffsetZ = ISLAND_RENDER_D / 2 + 0.012
+  const sideLabelProps = {
+    fontSize: 0.19,
+    color: '#fff',
+    anchorX: 'center',
+    anchorY: 'middle',
+    outlineWidth: 0.026,
+    outlineColor: color,
+    outlineOpacity: 1,
+  }
 
   return (
     <group position={position}>
       <mesh
+        castShadow
+        receiveShadow
+        position={[0, ISLAND_H / 2, 0]}
+      >
+        <boxGeometry args={[ISLAND_RENDER_W, ISLAND_H, ISLAND_RENDER_D]} />
+        <meshStandardMaterial color={color} roughness={0.88} metalness={0} />
+      </mesh>
+      <mesh
         receiveShadow
         rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, 0.035, 0]}
+        position={[0, ISLAND_H + 0.006, 0]}
       >
         <planeGeometry args={[ISLAND_RENDER_W, ISLAND_RENDER_D]} />
         <meshStandardMaterial color={color} roughness={0.86} metalness={0} />
       </mesh>
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, 0.041, 0]}
+        position={[0, ISLAND_H + 0.012, 0]}
       >
         <planeGeometry args={[ISLAND_RENDER_W, ISLAND_RENDER_D]} />
         <meshBasicMaterial
@@ -218,7 +238,7 @@ function CategoryIsland({ position, color, name }) {
         />
       </mesh>
       <Text
-        position={[0, 0.24, 0]}
+        position={[0, ISLAND_H + 0.16, 0]}
         fontSize={0.24}
         color="#fff"
         anchorX="center"
@@ -227,6 +247,18 @@ function CategoryIsland({ position, color, name }) {
         outlineColor={color}
         outlineOpacity={1}
       >
+        {name}
+      </Text>
+      <Text position={[0, sideLabelY, sideLabelOffsetZ]} rotation={[0, 0, 0]} {...sideLabelProps}>
+        {name}
+      </Text>
+      <Text position={[0, sideLabelY, -sideLabelOffsetZ]} rotation={[0, Math.PI, 0]} {...sideLabelProps}>
+        {name}
+      </Text>
+      <Text position={[sideLabelOffsetX, sideLabelY, 0]} rotation={[0, Math.PI / 2, 0]} {...sideLabelProps}>
+        {name}
+      </Text>
+      <Text position={[-sideLabelOffsetX, sideLabelY, 0]} rotation={[0, -Math.PI / 2, 0]} {...sideLabelProps}>
         {name}
       </Text>
     </group>
