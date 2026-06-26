@@ -152,6 +152,9 @@ export const api = {
   getPersonaNoteAssignments: ()            => req('GET',    '/persona-note-assignments'),
   assignPersonaToNote:  (personaId, noteId) => req('PUT',  `/personas/${personaId}/note-assign/${noteId}`),
   unassignPersonaFromNote: (personaId, noteId) => req('DELETE', `/personas/${personaId}/note-assign/${noteId}`),
+  getCategoryLeaders:     ()               => req('GET',    '/category-leaders'),
+  addCategoryLeader:    (catId, personaId) => req('PUT',    `/categories/${catId}/leaders/${personaId}`),
+  removeCategoryLeader: (catId, personaId) => req('DELETE', `/categories/${catId}/leaders/${personaId}`),
 
   // Assignments
   getAssignments: ()                      => req('GET',    '/assignments'),

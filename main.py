@@ -243,6 +243,13 @@ def _init_db():
                 PRIMARY KEY (persona_id, note_id)
             )
         """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS category_leaders (
+                persona_id  TEXT NOT NULL,
+                category_id TEXT NOT NULL,
+                PRIMARY KEY (persona_id, category_id)
+            )
+        """)
 
 _init_db()
 
@@ -1548,6 +1555,7 @@ def delete_category(cat_id: str, user: dict = Depends(current_user)):
         assert_project_access(_project_id_for_category(con, cat_id), user)
         con.execute("DELETE FROM assignments WHERE category_id = ?", (cat_id,))
         con.execute("DELETE FROM persona_assignments WHERE category_id = ?", (cat_id,))
+        con.execute("DELETE FROM category_leaders WHERE category_id = ?", (cat_id,))
         con.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
 
 
@@ -1604,6 +1612,7 @@ def delete_persona(persona_id: str, user: dict = Depends(current_user)):
         assert_project_access(row["project_id"], user)
         con.execute("DELETE FROM persona_assignments WHERE persona_id = ?", (persona_id,))
         con.execute("DELETE FROM persona_note_assignments WHERE persona_id = ?", (persona_id,))
+        con.execute("DELETE FROM category_leaders WHERE persona_id = ?", (persona_id,))
         con.execute("DELETE FROM personas WHERE id = ?", (persona_id,))
     return Response(status_code=204)
 
@@ -1696,6 +1705,46 @@ def unassign_persona_from_note(persona_id: str, note_id: str, user: dict = Depen
         con.execute(
             "DELETE FROM persona_note_assignments WHERE persona_id = ? AND note_id = ?",
             (persona_id, note_id),
+        )
+    return Response(status_code=204)
+
+
+@app.get("/category-leaders")
+def list_category_leaders(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    with _db() as con:
+        rows = con.execute(
+            "SELECT cl.persona_id, cl.category_id FROM category_leaders cl "
+            "JOIN categories c ON c.id = cl.category_id "
+            "JOIN dimensions d ON d.id = c.dimension_id "
+            "WHERE d.project_id = ?",
+            (project_id,),
+        ).fetchall()
+    return [{"personaId": r["persona_id"], "categoryId": r["category_id"]} for r in rows]
+
+@app.put("/categories/{cat_id}/leaders/{persona_id}", status_code=204)
+def add_category_leader(cat_id: str, persona_id: str, user: dict = Depends(current_user)):
+    with _db() as con:
+        cat_project = _project_id_for_category(con, cat_id)
+        persona_row = con.execute("SELECT project_id FROM personas WHERE id = ?", (persona_id,)).fetchone()
+        if not persona_row:
+            raise HTTPException(404, "Persona not found")
+        assert_project_access(cat_project, user)
+        if persona_row["project_id"] != cat_project:
+            raise HTTPException(400, "Cannot assign leader across projects")
+        con.execute(
+            "INSERT OR IGNORE INTO category_leaders (persona_id, category_id) VALUES (?, ?)",
+            (persona_id, cat_id),
+        )
+    return Response(status_code=204)
+
+@app.delete("/categories/{cat_id}/leaders/{persona_id}", status_code=204)
+def remove_category_leader(cat_id: str, persona_id: str, user: dict = Depends(current_user)):
+    with _db() as con:
+        assert_project_access(_project_id_for_category(con, cat_id), user)
+        con.execute(
+            "DELETE FROM category_leaders WHERE persona_id = ? AND category_id = ?",
+            (persona_id, cat_id),
         )
     return Response(status_code=204)
 

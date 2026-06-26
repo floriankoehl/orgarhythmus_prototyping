@@ -405,6 +405,46 @@ const NOTE_SLOT_W = NOTE_W + 0.40
 const NOTE_SLOT_D = NOTE_D + 0.54
 const MINI_TARGET_HEIGHT = 0.52
 const MINI_PERSONA_SPACING = 0.88
+const PLATEAU_W = 6.8
+const PLATEAU_D = 1.9
+const PLATEAU_H = 0.36
+
+function LeaderPlateau({ islandPos, color, highlighted = false }) {
+  const centerZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D / 2
+  return (
+    <group position={[islandPos[0], 0, centerZ]}>
+      <mesh castShadow receiveShadow position={[0, ISLAND_H + PLATEAU_H / 2, 0]}>
+        <boxGeometry args={[PLATEAU_W, PLATEAU_H, PLATEAU_D]} />
+        <meshStandardMaterial
+          color={color}
+          roughness={0.72}
+          metalness={0.04}
+          emissive={color}
+          emissiveIntensity={highlighted ? 0.28 : 0.06}
+        />
+      </mesh>
+      {/* Subtle grid on top surface */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, ISLAND_H + PLATEAU_H + 0.004, 0]}>
+        <planeGeometry args={[PLATEAU_W, PLATEAU_D]} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={highlighted ? 0.22 : 0.10} depthWrite={false} />
+      </mesh>
+    </group>
+  )
+}
+
+function computeLeaderPositions(islandPos, leaders) {
+  if (leaders.length === 0) return []
+  const centerZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D / 2
+  const totalW = (leaders.length - 1) * MINI_PERSONA_SPACING
+  return leaders.map((persona, i) => ({
+    ...persona,
+    leaderPos: [
+      islandPos[0] - totalW / 2 + i * MINI_PERSONA_SPACING,
+      ISLAND_H + PLATEAU_H,
+      centerZ,
+    ],
+  }))
+}
 
 function NoteCard({ position, title, color = '#888', highlighted = false }) {
   const [hovered, setHovered] = useState(false)
@@ -427,11 +467,11 @@ function NoteCard({ position, title, color = '#888', highlighted = false }) {
         <meshBasicMaterial color={color} transparent opacity={active ? 0.75 : 0.55} depthWrite={false} />
       </mesh>
       <Text
-        position={[0, NOTE_H + 0.05, 0]}
+        position={[0, NOTE_H + 0.006, 0]}
         fontSize={0.16}
         color={color}
         anchorX="center"
-        anchorY="bottom"
+        anchorY="middle"
         maxWidth={NOTE_W - 0.20}
         onPointerOver={() => setHovered(true)}
         onPointerOut={() => setHovered(false)}
@@ -445,16 +485,18 @@ function NoteCard({ position, title, color = '#888', highlighted = false }) {
 function computeNotesOnIsland(islandPos, notes) {
   if (notes.length === 0) return []
   const availW = ISLAND_RENDER_W - 0.24
+  // Notes start after plateau + member row gap
+  const noteStartZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D + 1.30 + NOTE_D / 2
+  const availD = (islandPos[2] + ISLAND_RENDER_D / 2 - 0.50) - noteStartZ
   const cols = Math.max(1, Math.min(notes.length, Math.floor(availW / NOTE_SLOT_W)))
+  const maxRows = Math.max(1, Math.floor(availD / NOTE_SLOT_D))
   const usedW = (cols - 1) * NOTE_SLOT_W
-  // Notes start near the back edge; front ~1.1 units reserved for mini persona row
-  const backZ = islandPos[2] - ISLAND_RENDER_D / 2 + 0.55 + NOTE_D / 2
-  return notes.map((note, i) => ({
+  return notes.slice(0, cols * maxRows).map((note, i) => ({
     ...note,
     notePos: [
       islandPos[0] - usedW / 2 + (i % cols) * NOTE_SLOT_W,
       ISLAND_H + 0.006,
-      backZ + Math.floor(i / cols) * NOTE_SLOT_D,
+      noteStartZ + Math.floor(i / cols) * NOTE_SLOT_D,
     ],
   }))
 }
@@ -462,13 +504,14 @@ function computeNotesOnIsland(islandPos, notes) {
 function computeMiniPersonaLine(islandPos, personas) {
   if (personas.length === 0) return []
   const totalW = (personas.length - 1) * MINI_PERSONA_SPACING
-  const frontZ = islandPos[2] + ISLAND_RENDER_D / 2 - 0.64
+  // Members stand just in front of the plateau
+  const memberZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D + 0.62
   return personas.map((persona, i) => ({
     ...persona,
     miniPos: [
       islandPos[0] - totalW / 2 + i * MINI_PERSONA_SPACING,
       ISLAND_H,
-      frontZ,
+      memberZ,
     ],
   }))
 }
@@ -496,6 +539,7 @@ function Scene({
   notes = [],
   noteAssignments = [],
   personaNoteAssignments = [],
+  categoryLeaders = [],
   focusedCategoryId = null,
   viewResetRevision = 0,
   layoutLocked = true,
@@ -508,16 +552,19 @@ function Scene({
   onFocusCategory,
   onSelect,
   onAssignPersonaToNote,
+  onAssignLeader,
   selected,
 }) {
   const [dragId, setDragId]       = useState(null)
   const [posOverrides, setPosOverrides] = useState({})
   const [hoveredNoteId, setHoveredNoteId] = useState(null)
+  const [hoveringPlateau, setHoveringPlateau] = useState(false)
   const dragIdRef      = useRef(null)
   const dragAssignmentRef = useRef(null)
   const posOverridesRef = useRef({})
   const dragMovedRef   = useRef(false)
   const focusedNotesRef = useRef([])
+  const focusedIslandRef = useRef(null)
   const focusedCategoryIdRef = useRef(focusedCategoryId)
   useEffect(() => { focusedCategoryIdRef.current = focusedCategoryId }, [focusedCategoryId])
 
@@ -534,12 +581,24 @@ function Scene({
       const pos = posOverridesRef.current[id]
       if (pos) {
         if (focusedCategoryIdRef.current) {
-          // Focused mode: only note assignment drops count
-          const targetNote = focusedNotesRef.current.find(note =>
-            Math.abs(pos[0] - note.notePos[0]) <= NOTE_W / 2 &&
-            Math.abs(pos[2] - note.notePos[2]) <= NOTE_D / 2
-          )
-          if (targetNote) onAssignPersonaToNote?.(id, targetNote.id)
+          // Check plateau drop first
+          const fi = focusedIslandRef.current
+          if (fi) {
+            const plateauCZ = fi.islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D / 2
+            const onPlateau =
+              Math.abs(pos[0] - fi.islandPos[0]) <= PLATEAU_W / 2 &&
+              Math.abs(pos[2] - plateauCZ) <= PLATEAU_D / 2
+            if (onPlateau) {
+              onAssignLeader?.(id, focusedCategoryIdRef.current)
+            } else {
+              // Then check note drop
+              const targetNote = focusedNotesRef.current.find(note =>
+                Math.abs(pos[0] - note.notePos[0]) <= NOTE_W / 2 &&
+                Math.abs(pos[2] - note.notePos[2]) <= NOTE_D / 2
+              )
+              if (targetNote) onAssignPersonaToNote?.(id, targetNote.id)
+            }
+          }
         } else {
           if (dragIdRef.current && !layoutLocked) onPositionUpdate?.(id, pos[0], pos[2])
           const targetIsland = islands.find(cat =>
@@ -573,9 +632,10 @@ function Scene({
     dragIdRef.current = null
     dragAssignmentRef.current = null
     setHoveredNoteId(null)
+    setHoveringPlateau(false)
     setDragId(null)
     onSourceDragEnd?.()
-  }, [activeDimensionId, islands, layoutLocked, onAssign, onAssignPersonaToNote, onMoveAssignment, onPositionUpdate, onSourceDragEnd, onUnassign, sourceDragPersonaId])
+  }, [activeDimensionId, islands, layoutLocked, onAssign, onAssignLeader, onAssignPersonaToNote, onMoveAssignment, onPositionUpdate, onSourceDragEnd, onUnassign, sourceDragPersonaId])
 
   useEffect(() => {
     window.addEventListener('pointerup', stopDrag)
@@ -611,11 +671,24 @@ function Scene({
     posOverridesRef.current = { ...posOverridesRef.current, [id]: newPos }
     setPosOverrides(prev => ({ ...prev, [id]: newPos }))
     if (focusedCategoryIdRef.current) {
-      const hn = focusedNotesRef.current.find(note =>
-        Math.abs(e.point.x - note.notePos[0]) <= NOTE_W / 2 &&
-        Math.abs(e.point.z - note.notePos[2]) <= NOTE_D / 2
-      )
-      setHoveredNoteId(hn?.id ?? null)
+      const fi = focusedIslandRef.current
+      let onPlat = false
+      if (fi) {
+        const plateauCZ = fi.islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D / 2
+        onPlat =
+          Math.abs(e.point.x - fi.islandPos[0]) <= PLATEAU_W / 2 &&
+          Math.abs(e.point.z - plateauCZ) <= PLATEAU_D / 2
+      }
+      setHoveringPlateau(onPlat)
+      if (!onPlat) {
+        const hn = focusedNotesRef.current.find(note =>
+          Math.abs(e.point.x - note.notePos[0]) <= NOTE_W / 2 &&
+          Math.abs(e.point.z - note.notePos[2]) <= NOTE_D / 2
+        )
+        setHoveredNoteId(hn?.id ?? null)
+      } else {
+        setHoveredNoteId(null)
+      }
     }
   }
 
@@ -662,8 +735,17 @@ function Scene({
     : []
   const miniPersonas = computeMiniPersonaLine(focusedIsland?.islandPos ?? [0,0,0], focusedPersonas)
 
-  // Keep ref in sync so stopDrag/handleDragMove always see latest notes
+  const leaderPersonas = focusedIsland && focusedCategoryId
+    ? categoryLeaders
+        .filter(l => l.categoryId === focusedCategoryId)
+        .map(l => personas.find(p => p.id === l.personaId))
+        .filter(Boolean)
+    : []
+  const leaderPositions = computeLeaderPositions(focusedIsland?.islandPos ?? [0,0,0], leaderPersonas)
+
+  // Keep refs in sync so stopDrag/handleDragMove always see latest state
   focusedNotesRef.current = focusedNotesOnIsland
+  focusedIslandRef.current = focusedIsland ?? null
 
   // Map noteId → [persona, …] for rendering tiny figures on each note
   const notePersonaMap = {}
@@ -811,6 +893,34 @@ function Scene({
           </group>
         )
       })}
+
+      {focusedIsland && (
+        <LeaderPlateau
+          islandPos={focusedIsland.islandPos}
+          color={focusedIsland.color || '#888'}
+          highlighted={hoveringPlateau}
+        />
+      )}
+
+      {leaderPositions.map((persona, i) => (
+        <PersonAvatar
+          key={`leader:${persona.id}`}
+          modelKey={persona.modelKey}
+          position={persona.leaderPos}
+          name={persona.name}
+          color={keyColor(persona.modelKey)}
+          phaseId={i + 300}
+          targetHeight={MINI_TARGET_HEIGHT}
+          showName={false}
+          selected={selected === persona.id}
+          dragging={false}
+          onPointerDown={e => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            onSelect?.(selected === persona.id ? null : persona.id)
+          }}
+        />
+      ))}
 
       {miniPersonas.map((persona, i) => (
         <PersonAvatar
@@ -1131,6 +1241,7 @@ export default function PeoplePage() {
   const [notes, setNotes]               = useState([])
   const [noteAssignments, setNoteAssignments] = useState([])
   const [personaNoteAssignments, setPersonaNoteAssignments] = useState([])
+  const [categoryLeaders, setCategoryLeaders] = useState([])
   const [personaAssignments, setPersonaAssignments] = useState([])
   const personaAssignmentsRef = useRef([])
   const [assignmentRevision, setAssignmentRevision] = useState(0)
@@ -1153,8 +1264,8 @@ export default function PeoplePage() {
   }, [])
 
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getPersonaAssignments(), api.getNotes(), api.getAssignments(), api.getPersonaNoteAssignments()])
-      .then(([dims, cats, pers, personaAsns, notesList, noteAsns, pnAsns]) => {
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getPersonaAssignments(), api.getNotes(), api.getAssignments(), api.getPersonaNoteAssignments(), api.getCategoryLeaders()])
+      .then(([dims, cats, pers, personaAsns, notesList, noteAsns, pnAsns, leaders]) => {
         setDimensions(dims)
         setCategories(cats)
         setDimIndex(0)
@@ -1163,6 +1274,7 @@ export default function PeoplePage() {
         setNotes(notesList)
         setNoteAssignments(noteAsns)
         setPersonaNoteAssignments(pnAsns)
+        setCategoryLeaders(leaders)
       })
       .catch(console.error)
   }, [replacePersonaAssignments])
@@ -1260,6 +1372,27 @@ export default function PeoplePage() {
     }
   }
 
+  const handleAssignLeader = async (personaId, catId) => {
+    if (categoryLeaders.some(l => l.personaId === personaId && l.categoryId === catId)) return
+    setCategoryLeaders(prev => [...prev, { personaId, categoryId: catId }])
+    try {
+      await api.addCategoryLeader(catId, personaId)
+    } catch (e) {
+      console.error(e)
+      setCategoryLeaders(prev => prev.filter(l => !(l.personaId === personaId && l.categoryId === catId)))
+    }
+  }
+
+  const handleRemoveLeader = async (personaId, catId) => {
+    setCategoryLeaders(prev => prev.filter(l => !(l.personaId === personaId && l.categoryId === catId)))
+    try {
+      await api.removeCategoryLeader(catId, personaId)
+    } catch (e) {
+      console.error(e)
+      setCategoryLeaders(prev => [...prev, { personaId, categoryId: catId }])
+    }
+  }
+
   const handleAssignPersonaToNote = async (personaId, noteId) => {
     if (personaNoteAssignments.some(a => a.personaId === personaId && a.noteId === noteId)) return
     setPersonaNoteAssignments(prev => [...prev, { personaId, noteId }])
@@ -1325,6 +1458,9 @@ export default function PeoplePage() {
       .map(a => ({ ...a, note: notes.find(n => n.id === a.noteId) }))
       .filter(a => a.note)
     : []
+  const isSelectedLeader = selectedPersona && focusedCategoryId
+    ? categoryLeaders.some(l => l.personaId === selectedPersona.id && l.categoryId === focusedCategoryId)
+    : false
 
   useEffect(() => {
     if (!sourceDragPersonaId) return
@@ -1369,6 +1505,7 @@ export default function PeoplePage() {
           notes={notes}
           noteAssignments={noteAssignments}
           personaNoteAssignments={personaNoteAssignments}
+          categoryLeaders={categoryLeaders}
           focusedCategoryId={focusedCategoryId}
           viewResetRevision={viewResetRevision}
           layoutLocked={layoutLocked}
@@ -1381,6 +1518,7 @@ export default function PeoplePage() {
           onFocusCategory={setFocusedCategoryId}
           onSelect={setSelected}
           onAssignPersonaToNote={handleAssignPersonaToNote}
+          onAssignLeader={handleAssignLeader}
           selected={selected}
         />
       </Canvas>
@@ -1492,8 +1630,19 @@ export default function PeoplePage() {
             />
             <span className={styles.selectionName}>{selectedPersona.name}</span>
           </div>
-          {(selectedAssignments.length > 0 || selectedNoteAssignments.length > 0) && (
+          {(selectedAssignments.length > 0 || selectedNoteAssignments.length > 0 || isSelectedLeader) && (
             <div className={styles.assignmentChips}>
+              {isSelectedLeader && (
+                <button
+                  className={styles.assignmentChip}
+                  style={{ borderColor: focusedCategory?.color || '#888', color: focusedCategory?.color || '#888', fontWeight: 800 }}
+                  onClick={() => handleRemoveLeader(selectedPersona.id, focusedCategoryId)}
+                  title="Remove as leader"
+                >
+                  ★ Leader
+                  <span>×</span>
+                </button>
+              )}
               {selectedAssignments.map(({ category, dimensionId, categoryId }) => (
                 <button
                   key={categoryId}
