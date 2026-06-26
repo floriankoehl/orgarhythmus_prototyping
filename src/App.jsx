@@ -8,6 +8,7 @@ import NotePopup from './components/NotePopup'
 import ProjectsPage from './components/ProjectsPage'
 import ProjectDashboard from './components/ProjectDashboard'
 import AuthPage from './components/AuthPage'
+import PeoplePage from './components/PeoplePage'
 import { api, authApi, hasAuthSession, setProjectId } from './api'
 import styles from './App.module.css'
 
@@ -250,6 +251,9 @@ export default function App() {
             defaultMetric={activeProject?.metric ?? 'days'}
             refreshKey={noteDataVersion}
           />
+        </div>
+        <div className={styles.view} style={{ display: view === 4 ? 'flex' : 'none' }}>
+          <PeoplePage />
         </div>
       </div>
 

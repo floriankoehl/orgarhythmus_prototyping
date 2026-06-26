@@ -8,6 +8,7 @@ const PAGES = [
   { name: 'Notes', view: 1 },
   { name: 'Classification', view: 2 },
   { name: 'Schedule', view: 3 },
+  { name: 'People', view: 4 },
 ]
 
 function computeWordRects(el) {
