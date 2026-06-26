@@ -246,9 +246,10 @@ export default function App() {
         <div className={styles.view} style={{ display: view === 3 ? 'flex' : 'none' }}>
           <SchedulePage
             notes={notes}
+            project={activeProject}
             isActive={view === 3}
             onNoteOpen={openNotePopup}
-            defaultMetric={activeProject?.metric ?? 'days'}
+            onProjectUpdate={handleProjectUpdate}
             refreshKey={noteDataVersion}
           />
         </div>

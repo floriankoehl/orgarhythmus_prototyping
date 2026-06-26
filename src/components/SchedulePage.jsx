@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import styles from './SchedulePage.module.css'
-import { api } from '../api'
+import { api, projectsApi } from '../api'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const HEADER_H     = 52
@@ -21,7 +21,21 @@ const FILTER_CATEGORY_PREFIX = 'filter:'
 const NONE_PERSPECTIVE_ID = '__none__'
 const SCHEDULE_DEFAULT_PERSPECTIVE_KEY = 'schedule.defaultPerspectiveId'
 
-const METRIC_LABELS = { days: 'Days', weeks: 'Weeks', months: 'Months', hours: 'Hours', order: 'Order' }
+const TIME_ZOOM_LEVELS = [
+  { value: 'minutes', label: '15 min', short: '15m', unit: 15 },
+  { value: 'hours', label: 'Hours', short: 'h', unit: 60 },
+  { value: 'days', label: 'Days', short: 'd', unit: 60 * 24 },
+  { value: 'weeks', label: 'Weeks', short: 'wk', unit: 60 * 24 * 7 },
+  { value: 'months', label: 'Months', short: 'mo', unit: 60 * 24 * 30 },
+]
+const TIME_ZOOM_BY_VALUE = Object.fromEntries(TIME_ZOOM_LEVELS.map(level => [level.value, level]))
+const DEFAULT_TIME_ZOOM = 'days'
+const MIN_MILESTONE_DURATION = 15
+const DEFAULT_WARNING_SETTINGS = {
+  resizeWarnOrderThreshold: 2,
+  resizeBlockOrderThreshold: 2,
+  resizeScaleCrossingWarningEnabled: true,
+}
 
 function makeColorCursor(color) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="10" fill="${color}" stroke="white" stroke-width="2"/></svg>`
@@ -42,10 +56,10 @@ function filterCategoryId(filterId) {
 
 // ── Axis / label helpers ───────────────────────────────────────────────────────
 
-// col 0 = today; col N = N calendar days from today (only used for 'days' metric)
-function colToDate(col) {
+// minute 0 = today at 00:00.
+function minuteToDate(minute) {
   const d = new Date(); d.setHours(0, 0, 0, 0)
-  d.setDate(d.getDate() + col)
+  d.setMinutes(d.getMinutes() + minute)
   return d
 }
 
@@ -58,22 +72,84 @@ function isoWeekInfo(date) {
   return { week, year: d.getUTCFullYear() }
 }
 
-// Short label for a column index given the current metric (used in tooltips / context menus)
-function colToLabel(col, metric) {
-  switch (metric) {
-    case 'weeks':  return `Wk ${col + 1}`
-    case 'months': return `Mo ${col + 1}`
-    case 'hours':  return `h${col + 1}`
-    case 'order':  return `#${col + 1}`
-    default:       return colToDate(col).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+function getZoomUnit(timeZoom) {
+  return TIME_ZOOM_BY_VALUE[timeZoom]?.unit ?? TIME_ZOOM_BY_VALUE[DEFAULT_TIME_ZOOM].unit
+}
+
+function zoomColToMinute(col, timeZoom) {
+  return col * getZoomUnit(timeZoom)
+}
+
+function minuteToZoomCol(minute, timeZoom) {
+  return Math.floor(Math.max(0, Number(minute) || 0) / getZoomUnit(timeZoom))
+}
+
+function minuteEndToZoomCol(minute, timeZoom) {
+  return Math.ceil(Math.max(0, Number(minute) || 0) / getZoomUnit(timeZoom))
+}
+
+function getVisualRange(item, timeZoom) {
+  const start = Math.max(0, Number(item.startCol) || 0)
+  const end = start + Math.max(MIN_MILESTONE_DURATION, Number(item.duration) || MIN_MILESTONE_DURATION)
+  const startCol = minuteToZoomCol(start, timeZoom)
+  const endCol = Math.max(startCol + 1, minuteEndToZoomCol(end, timeZoom))
+  return { startCol, endCol, duration: endCol - startCol }
+}
+
+function minuteToLabel(minute, timeZoom) {
+  const date = minuteToDate(minute)
+  switch (timeZoom) {
+    case 'minutes':
+      return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+    case 'hours':
+      return date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit' })
+    case 'weeks': {
+      const { week, year } = isoWeekInfo(date)
+      return `KW ${week} ${year}`
+    }
+    case 'months':
+      return `${MONTH_ABR[date.getMonth()]} ${date.getFullYear()}`
+    default:
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   }
 }
 
+function zoomColToLabel(col, timeZoom) {
+  return minuteToLabel(zoomColToMinute(col, timeZoom), timeZoom)
+}
+
+function durationOrderMagnitudeChange(originalDuration, nextDuration) {
+  const original = Math.max(MIN_MILESTONE_DURATION, Number(originalDuration) || MIN_MILESTONE_DURATION)
+  const next = Math.max(MIN_MILESTONE_DURATION, Number(nextDuration) || MIN_MILESTONE_DURATION)
+  const ratio = Math.max(original, next) / Math.min(original, next)
+  return Math.log10(ratio)
+}
+
+function durationScaleBucket(duration) {
+  const value = Math.max(MIN_MILESTONE_DURATION, Number(duration) || MIN_MILESTONE_DURATION)
+  if (value < 60) return 'minute'
+  if (value < 1440) return 'hour'
+  if (value < 10080) return 'day'
+  if (value < 43200) return 'week'
+  return 'month'
+}
+
+function durationScaleBucketIndex(bucket) {
+  return ['minute', 'hour', 'day', 'week', 'month'].indexOf(bucket)
+}
+
+function formatMinutesDuration(minutes) {
+  const value = Math.max(MIN_MILESTONE_DURATION, Number(minutes) || MIN_MILESTONE_DURATION)
+  if (value < 60) return `${value} min`
+  if (value < 60 * 24) return `${(value / 60).toFixed(value % 60 === 0 ? 0 : 1)} h`
+  return `${(value / (60 * 24)).toFixed(value % (60 * 24) === 0 ? 0 : 1)} d`
+}
+
 // Build axis band segments by grouping consecutive cols sharing the same key (date-based, for 'days')
-function buildAxisSegments(cols, getKey, getLabel) {
+function buildAxisSegments(cols, getDate, getKey, getLabel) {
   const segments = []
   cols.forEach(col => {
-    const date = colToDate(col)
+    const date = getDate(col)
     const key = getKey(date)
     const last = segments[segments.length - 1]
     if (last?.key === key) {
@@ -85,7 +161,7 @@ function buildAxisSegments(cols, getKey, getLabel) {
   return segments
 }
 
-// Build axis band segments by grouping consecutive cols by a numeric group (metric-based)
+// Build axis band segments by grouping consecutive visible zoom columns.
 function buildColSegments(cols, getGroup, getLabel) {
   const segments = []
   cols.forEach(col => {
@@ -322,7 +398,7 @@ function buildRowItems(notes, categories, assignments, assignmentOrders, activeD
 // ── Visual settings panel ─────────────────────────────────────────────────────
 function SpacingPanel({
   spacing, onChange, onClose, anchorRef, axisMode, onAxisModeChange,
-  metric,
+  timeZoom, onTimeZoomChange,
   showDepLabels, onShowDepLabelsChange,
   showDeps, onShowDepsChange,
   hideCrossCatDeps, onHideCrossCatDepsChange,
@@ -365,9 +441,21 @@ function SpacingPanel({
         </label>
       ))}
       <div className={styles.axisModeRow}>
+        <span className={styles.spacingLabel}>Zoom</span>
+        <div className={styles.axisModePills}>
+          {TIME_ZOOM_LEVELS.map(level => (
+            <button key={level.value}
+              className={`${styles.axisModePill} ${timeZoom === level.value ? styles.axisModePillActive : ''}`}
+              onClick={() => onTimeZoomChange(level.value)}>
+              {level.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className={styles.axisModeRow}>
         <span className={styles.spacingLabel}>Display</span>
         <div className={styles.axisModePills}>
-          {[['full', METRIC_LABELS[metric] ?? 'Metric'], ['numbers', 'Numbers'], ['none', 'None']].map(([val, label]) => (
+          {[['full', 'Time'], ['numbers', 'Numbers'], ['none', 'None']].map(([val, label]) => (
             <button key={val}
               className={`${styles.axisModePill} ${axisMode === val ? styles.axisModePillActive : ''}`}
               onClick={() => onAxisModeChange(val)}>
@@ -423,8 +511,143 @@ function SpacingPanel({
   )
 }
 
+function WarningSettingsPanel({
+  settings,
+  onSettingsChange,
+  autoResolveDependencyView,
+  onAutoResolveDependencyViewChange,
+  onClose,
+  anchorRef,
+}) {
+  const [draft, setDraft] = useState(settings)
+  const [pendingSettingChange, setPendingSettingChange] = useState(null)
+  const panelRef = useRef()
+  const pendingSettingRef = useRef(null)
+  const closeRef = useRef(onClose)
+  useEffect(() => { setDraft(settings) }, [settings])
+  useEffect(() => { closeRef.current = onClose })
+  useEffect(() => { pendingSettingRef.current = pendingSettingChange }, [pendingSettingChange])
+  useEffect(() => {
+    const handler = e => {
+      if (pendingSettingRef.current) return
+      if (panelRef.current?.contains(e.target)) return
+      if (anchorRef?.current?.contains(e.target)) return
+      closeRef.current?.()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [anchorRef])
+
+  const setDraftNumber = (key, raw) => {
+    const value = Math.max(0, Number(raw) || 0)
+    setDraft(prev => ({ ...prev, [key]: value }))
+  }
+
+  const requestNumberChange = key => {
+    const value = Math.max(0, Number(draft[key]) || 0)
+    const current = Math.max(0, Number(settings[key]) || 0)
+    if (value === current) return
+    setPendingSettingChange({
+      key,
+      value,
+      previousValue: current,
+      nextSettings: { ...settings, [key]: value },
+      label: key === 'resizeWarnOrderThreshold' ? 'warning threshold' : 'extra confirmation threshold',
+    })
+  }
+
+  const cancelPendingSettingChange = () => {
+    setDraft(settings)
+    setPendingSettingChange(null)
+  }
+
+  return (
+    <>
+      <div ref={panelRef} className={`${styles.spacingPanel} ${styles.warningSettingsPanel}`}>
+        <div className={styles.spacingPanelHdr}>
+          <span>Warning settings</span>
+          <button className={styles.spacingClose} onClick={onClose}>×</button>
+        </div>
+        <label className={styles.warningSettingsToggle}>
+          <input
+            type="checkbox"
+            checked={autoResolveDependencyView}
+            onChange={e => onAutoResolveDependencyViewChange(e.target.checked)}
+          />
+          <span>Auto-enter dependency resolve view</span>
+        </label>
+        <div className={styles.warningSettingsText}>
+          Resize protection compares the new duration with the original duration using log10 of the ratio.
+        </div>
+        <label className={styles.warningSettingsToggle}>
+          <input
+            type="checkbox"
+            checked={settings.resizeScaleCrossingWarningEnabled}
+            onChange={e => onSettingsChange({ ...settings, resizeScaleCrossingWarningEnabled: e.target.checked })}
+          />
+          <span>Warn when resize crosses minute/hour/day/week/month scale</span>
+        </label>
+        <label className={styles.warningSettingsRow}>
+          <span>Warn at</span>
+          <input
+            type="number"
+            min="0"
+            step="0.1"
+            value={draft.resizeWarnOrderThreshold}
+            onChange={e => setDraftNumber('resizeWarnOrderThreshold', e.target.value)}
+            onBlur={() => requestNumberChange('resizeWarnOrderThreshold')}
+            onKeyDown={e => {
+              if (e.key === 'Enter') e.currentTarget.blur()
+              if (e.key === 'Escape') setDraft(settings)
+            }}
+          />
+          <small>orders</small>
+        </label>
+        <label className={styles.warningSettingsRow}>
+          <span>Extra confirm at</span>
+          <input
+            type="number"
+            min="0"
+            step="0.1"
+            value={draft.resizeBlockOrderThreshold}
+            onChange={e => setDraftNumber('resizeBlockOrderThreshold', e.target.value)}
+            onBlur={() => requestNumberChange('resizeBlockOrderThreshold')}
+            onKeyDown={e => {
+              if (e.key === 'Enter') e.currentTarget.blur()
+              if (e.key === 'Escape') setDraft(settings)
+            }}
+          />
+          <small>orders</small>
+        </label>
+      </div>
+      {pendingSettingChange && createPortal(
+        <div className={styles.deleteModalBackdrop} onMouseDown={cancelPendingSettingChange}>
+          <div className={styles.deleteModal} role="dialog" aria-modal="true" onMouseDown={e => e.stopPropagation()}>
+            <div className={styles.deleteModalTitle}>Change warning threshold?</div>
+            <div className={styles.deleteModalText}>
+              This resize warning metric is important for keeping the schedule dimensions stable. Changing the {pendingSettingChange.label} from {pendingSettingChange.previousValue} to {pendingSettingChange.value} can make accidental large duration changes easier to miss.
+            </div>
+            <div className={styles.deleteModalActions}>
+              <button className={styles.modalSafePrimaryBtn} autoFocus onClick={cancelPendingSettingChange}>
+                Cancel
+              </button>
+              <button className={styles.modalDangerMutedBtn} onClick={() => {
+                onSettingsChange(pendingSettingChange.nextSettings)
+                setPendingSettingChange(null)
+              }}>
+                Accept setting change
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  )
+}
+
 // ── Context menu ──────────────────────────────────────────────────────────────
-function ContextMenu({ menu, onClose, onCreate, onInsertDay, onDeleteDay, onSetDeadline, onRemoveDeadline, onDeleteMilestone, onEditDepReason, onDeleteDep }) {
+function ContextMenu({ menu, onClose, onCreate, onInsertTimeUnit, onDeleteTimeUnit, onSetDeadline, onRemoveDeadline, onDeleteMilestone, onEditDepReason, onDeleteDep }) {
   if (!menu) return null
   return createPortal(
     <>
@@ -447,11 +670,11 @@ function ContextMenu({ menu, onClose, onCreate, onInsertDay, onDeleteDay, onSetD
           }
         </>)}
         {menu.type === 'header' && (<>
-          <button className={styles.ctxItem} onClick={() => { onInsertDay(menu.col); onClose() }}>
-            Insert day before
+          <button className={styles.ctxItem} onClick={() => { onInsertTimeUnit(menu.col); onClose() }}>
+            Insert {menu.unitLabel || 'unit'} before
           </button>
-          <button className={styles.ctxItem} onClick={() => { onDeleteDay(menu.col); onClose() }}>
-            Remove this day
+          <button className={styles.ctxItem} onClick={() => { onDeleteTimeUnit(menu.col); onClose() }}>
+            Remove this {menu.unitLabel || 'unit'}
           </button>
         </>)}
         {menu.type === 'milestone' && (
@@ -619,19 +842,23 @@ function GanttToolbar({
   savedFilters, activeLaneFilterId, onLaneGroupChange,
   spacing, onSpacingChange, mode, onModeChange,
   axisMode, onAxisModeChange,
-  metric,
+  timeZoom, onTimeZoomChange,
   showDepLabels, onShowDepLabelsChange,
   showDeps, onShowDepsChange, hideCrossCatDeps, onHideCrossCatDepsChange,
   showCrucialDepsOnly, onShowCrucialDepsOnlyChange,
   colorDependencyDirection, onColorDependencyDirectionChange,
   autoResolveDependencyView, onAutoResolveDependencyViewChange,
+  warningSettings, onWarningSettingsChange,
   canDeleteSelection, onDeleteSelection,
   canFilterToSelection, onFilterToSelectedNotes, onExpandEverything,
   canUndo, canRedo, onUndo, onRedo,
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [warningSettingsOpen, setWarningSettingsOpen] = useState(false)
   const settingsBtnRef = useRef()
+  const warningSettingsBtnRef = useRef()
   const closeSettings  = useCallback(() => setSettingsOpen(false), [])
+  const closeWarningSettings = useCallback(() => setWarningSettingsOpen(false), [])
 
   return (
     <div className={styles.toolbar}>
@@ -692,12 +919,24 @@ function GanttToolbar({
         />
       )}
       <div style={{ flex: 1 }} />
-      <button
-        className={`${styles.toolbarToggleBtn} ${autoResolveDependencyView ? styles.toolbarToggleBtnActive : ''}`}
-        onClick={() => onAutoResolveDependencyViewChange(!autoResolveDependencyView)}
-        title="Automatically enter the dependency resolving view when a dependency constraint blocks a move">
-        Auto resolve view
-      </button>
+      <div className={styles.spacingWrap}>
+        <button ref={warningSettingsBtnRef}
+          className={`${styles.toolbarToggleBtn} ${warningSettingsOpen || autoResolveDependencyView ? styles.toolbarToggleBtnActive : ''}`}
+          onClick={() => setWarningSettingsOpen(v => !v)}
+          title="Configure resize and dependency warning behavior">
+          Warning settings
+        </button>
+        {warningSettingsOpen && (
+          <WarningSettingsPanel
+            settings={warningSettings}
+            onSettingsChange={onWarningSettingsChange}
+            autoResolveDependencyView={autoResolveDependencyView}
+            onAutoResolveDependencyViewChange={onAutoResolveDependencyViewChange}
+            onClose={closeWarningSettings}
+            anchorRef={warningSettingsBtnRef}
+          />
+        )}
+      </div>
       <div className={styles.spacingWrap}>
         <button ref={settingsBtnRef}
           className={`${styles.spacingBtn} ${settingsOpen ? styles.spacingBtnOpen : ''}`}
@@ -711,7 +950,7 @@ function GanttToolbar({
           <SpacingPanel spacing={spacing} onChange={onSpacingChange}
             onClose={closeSettings} anchorRef={settingsBtnRef}
             axisMode={axisMode} onAxisModeChange={onAxisModeChange}
-            metric={metric}
+            timeZoom={timeZoom} onTimeZoomChange={onTimeZoomChange}
             showDepLabels={showDepLabels} onShowDepLabelsChange={onShowDepLabelsChange}
             showDeps={showDeps} onShowDepsChange={onShowDepsChange}
             hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={onHideCrossCatDepsChange}
@@ -1141,7 +1380,7 @@ function ScheduleColorLegendWidget({
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function SchedulePage({ notes = [], isActive = false, onNoteOpen, defaultMetric = 'days', refreshKey = 0 }) {
+export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, refreshKey = 0 }) {
   // ── API data ───────────────────────────────────────────────────────────────
   const [dimensions,   setDimensions]   = useState([])
   const [categories,   setCategories]   = useState([])
@@ -1203,7 +1442,7 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
   const [activeDimId,       setActiveDimId]       = useState('')
   const [activeLaneFilterId, setActiveLaneFilterId] = useState('')
   const [axisMode, setAxisMode] = useState('full')
-  const [metric,   setMetric]   = useState(defaultMetric)
+  const [timeZoom, setTimeZoom] = useState(DEFAULT_TIME_ZOOM)
   const [showDepLabels, setShowDepLabels] = useState(true)
   const [showDeps, setShowDeps] = useState(true)
   const [hideCrossCatDeps, setHideCrossCatDeps] = useState(false)
@@ -1230,6 +1469,7 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
   const [dependencyResolveSnapshot, setDependencyResolveSnapshot] = useState(null)
   const [autoResolveDependencyView, setAutoResolveDependencyView] = useState(false)
   const [deleteDraft, setDeleteDraft] = useState(null)
+  const [resizeConfirmDraft, setResizeConfirmDraft] = useState(null)
   const warningPromptTimerRef = useRef(null)
   const capturePerspectiveStateRef = useRef(null)
   const resolveDependencySelectionRef = useRef(null)
@@ -1239,9 +1479,33 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
   const [draggingCatId, setDraggingCatId] = useState(null)
   const [dragOverCatReorderId, setDragOverCatReorderId] = useState(null)
 
-  useEffect(() => {
-    setMetric(defaultMetric)
-  }, [defaultMetric])
+  const warningSettings = useMemo(() => ({
+    resizeWarnOrderThreshold: Number.isFinite(Number(project?.resizeWarnOrderThreshold))
+      ? Number(project.resizeWarnOrderThreshold)
+      : DEFAULT_WARNING_SETTINGS.resizeWarnOrderThreshold,
+    resizeBlockOrderThreshold: Number.isFinite(Number(project?.resizeBlockOrderThreshold))
+      ? Number(project.resizeBlockOrderThreshold)
+      : DEFAULT_WARNING_SETTINGS.resizeBlockOrderThreshold,
+    resizeScaleCrossingWarningEnabled: typeof project?.resizeScaleCrossingWarningEnabled === 'boolean'
+      ? project.resizeScaleCrossingWarningEnabled
+      : DEFAULT_WARNING_SETTINGS.resizeScaleCrossingWarningEnabled,
+  }), [project?.resizeBlockOrderThreshold, project?.resizeScaleCrossingWarningEnabled, project?.resizeWarnOrderThreshold])
+
+  const updateWarningSettings = useCallback(async next => {
+    const normalized = {
+      resizeWarnOrderThreshold: Math.max(0, Number(next.resizeWarnOrderThreshold) || 0),
+      resizeBlockOrderThreshold: Math.max(0, Number(next.resizeBlockOrderThreshold) || 0),
+      resizeScaleCrossingWarningEnabled: next.resizeScaleCrossingWarningEnabled !== false,
+    }
+    onProjectUpdate?.({ ...(project ?? {}), ...normalized })
+    if (!project?.id) return
+    try {
+      const saved = await projectsApi.updateProject(project.id, normalized)
+      onProjectUpdate?.(saved)
+    } catch (err) {
+      console.error(err)
+    }
+  }, [onProjectUpdate, project])
 
   useEffect(() => () => {
     if (warningPromptTimerRef.current) window.clearTimeout(warningPromptTimerRef.current)
@@ -1258,6 +1522,10 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
   const showWarningPrompt = useCallback(prompt => {
     if (warningPromptTimerRef.current) window.clearTimeout(warningPromptTimerRef.current)
     setWarningPrompt(prompt)
+    if (prompt?.actions === 'confirm') {
+      warningPromptTimerRef.current = null
+      return
+    }
     warningPromptTimerRef.current = window.setTimeout(() => {
       setWarningPrompt(null)
       warningPromptTimerRef.current = null
@@ -1286,6 +1554,7 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
       readOnly: true,
       state: {
         spacing: DEFAULT_SPACING,
+        timeZoom: DEFAULT_TIME_ZOOM,
         axisMode: 'full',
         showDepLabels: true,
         showDeps: true,
@@ -1501,6 +1770,7 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
   const scrollTopRef    = useRef(0)
   const vpRef           = useRef({ w: 0, h: 0 })
   const spacingRef      = useRef(spacing)
+  const timeZoomRef     = useRef(timeZoom)
   const totalColsRef    = useRef(INIT_TOTAL_COLS)
   const rafIdRef          = useRef(null)         // requestAnimationFrame id
   const gridInnerRef      = useRef(null)         // for synchronous width update during extension
@@ -1517,10 +1787,15 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
 
   // Keep imperative refs in sync with state (assigned synchronously in render)
   spacingRef.current       = spacing
+  timeZoomRef.current      = timeZoom
   totalColsRef.current     = totalCols
   dependenciesRef.current  = dependencies
   deadlinesRef.current     = deadlines
   modeRef.current          = mode
+
+  const visualRangeFor = useCallback(item => getVisualRange(item, timeZoomRef.current), [])
+  const visualColToMinute = useCallback(col => zoomColToMinute(col, timeZoomRef.current), [])
+  const minuteLabel = useCallback(minute => minuteToLabel(minute, timeZoomRef.current), [])
 
   // Live refs that closures read — no useEffect needed
   const milestonesRef  = useRef([])
@@ -1965,16 +2240,18 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
     const toRow   = noteRowMapRef.current[to.noteId]
     if (!fromRow || !toRow) return null
     const sp = spacingRef.current
-    const fromLeftPx = from.leftPx ?? from.startCol * sp.colW
-    const fromWidthPx = from.widthPx ?? from.duration * sp.colW
-    const toLeftPx = to.leftPx ?? to.startCol * sp.colW
+    const fromVisual = visualRangeFor(from)
+    const toVisual = visualRangeFor(to)
+    const fromLeftPx = from.leftPx ?? fromVisual.startCol * sp.colW
+    const fromWidthPx = from.widthPx ?? fromVisual.duration * sp.colW
+    const toLeftPx = to.leftPx ?? toVisual.startCol * sp.colW
     const x1 = fromLeftPx + fromWidthPx
     const y1 = HEADER_H + fromRow.top + Math.floor(fromRow.height / 2)
     const x2 = toLeftPx
     const y2 = HEADER_H + toRow.top + Math.floor(toRow.height / 2)
     const cp = Math.max(40, Math.abs(x2 - x1) * 0.45)
     return `M ${x1} ${y1} C ${x1 + cp} ${y1}, ${x2 - cp} ${y2}, ${x2} ${y2}`
-  }, [])
+  }, [visualRangeFor])
 
   const updateDependencyPaths = useCallback((overrides = {}) => {
     dependenciesRef.current.forEach(dep => {
@@ -2179,16 +2456,37 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
     setSpacing(next)
   }, [])
 
+  const handleTimeZoomChange = useCallback(nextZoom => {
+    if (!TIME_ZOOM_BY_VALUE[nextZoom]) return
+    const prevZoom = timeZoomRef.current
+    if (nextZoom === prevZoom) return
+    const sp = spacingRef.current
+    const currentMinute = (scrollLeftRef.current / sp.colW) * getZoomUnit(prevZoom)
+    const nextScrollLeft = Math.max(0, Math.round((currentMinute / getZoomUnit(nextZoom)) * sp.colW))
+    setTimeZoom(nextZoom)
+    requestAnimationFrame(() => {
+      if (gridBodyRef.current) gridBodyRef.current.scrollLeft = nextScrollLeft
+      scrollLeftRef.current = gridBodyRef.current?.scrollLeft ?? nextScrollLeft
+      setScrollLeft(scrollLeftRef.current)
+      const needed = Math.ceil((scrollLeftRef.current + vpRef.current.w) / sp.colW) + COL_BUF + EDGE_COLS + 1
+      if (needed > totalColsRef.current) {
+        totalColsRef.current = needed
+        setTotalCols(needed)
+      }
+    })
+  }, [])
+
   // ── Context menu ───────────────────────────────────────────────────────────
   const getNoteCellFromPointer = useCallback(e => {
     const rect = gridBodyRef.current?.getBoundingClientRect(); if (!rect) return
     const sp   = spacingRef.current
     const relY = e.clientY - rect.top
     const rawX = e.clientX - rect.left + scrollLeftRef.current
-    const col  = Math.floor(rawX / sp.colW)
-    if (col < 0 || col >= totalColsRef.current) return null
+    const visualCol = Math.floor(rawX / sp.colW)
+    if (visualCol < 0 || visualCol >= totalColsRef.current) return null
+    const col = visualColToMinute(visualCol)
 
-    if (relY < HEADER_H) return { type: 'header', col }
+    if (relY < HEADER_H) return { type: 'header', col, visualCol }
 
     const rawY = e.clientY - rect.top + scrollTopRef.current - HEADER_H
     const item = rowItemsRef.current.find(r => rawY >= r.top && rawY < r.top + r.height)
@@ -2197,8 +2495,8 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
     let color = '#1a73e8'
     if (item.cat?.color) color = item.cat.color
 
-    return { type: 'cell', col, noteId: item.note.id, noteTitle: item.note.title, color }
-  }, [])
+    return { type: 'cell', col, visualCol, noteId: item.note.id, noteTitle: item.note.title, color }
+  }, [visualColToMinute])
 
   const handleContextMenu = useCallback(e => {
     e.preventDefault()
@@ -2207,7 +2505,7 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
 
     if (cell.type === 'header') {
       const { col } = cell
-      setContextMenu({ type: 'header', x: e.clientX, y: e.clientY, col })
+      setContextMenu({ type: 'header', x: e.clientX, y: e.clientY, col, unitLabel: TIME_ZOOM_BY_VALUE[timeZoomRef.current]?.label.toLowerCase() ?? 'unit' })
       return
     }
     if (e.target.closest('[data-ms-id]')) return  // right-click on milestone — skip for now
@@ -2220,9 +2518,10 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
   // ── Milestone CRUD ─────────────────────────────────────────────────────────
   const handleCreateMilestone = useCallback(async (noteId, startCol, color) => {
     clearWarningPrompt()
-    const ms = { id: newClientId('ms'), noteId, startCol, duration: 1, title: '', color: color || '#1a73e8' }
+    const duration = Math.max(MIN_MILESTONE_DURATION, getZoomUnit(timeZoomRef.current))
+    const ms = { id: newClientId('ms'), noteId, startCol, duration, title: '', color: color || '#1a73e8' }
     const dl = deadlinesRef.current.find(d => d.noteId === noteId)
-    if (startCol < 0 || (dl && startCol + 1 > dl.col)) {
+    if (startCol < 0 || (dl && startCol + duration > dl.col)) {
       reportDeadlineViolation()
       return
     }
@@ -2250,18 +2549,19 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
   }, [getNoteCellFromPointer, handleCreateMilestone])
 
   // ── Column insert / delete ─────────────────────────────────────────────────
-  const handleInsertDay = useCallback(async col => {
+  const handleInsertTimeUnit = useCallback(async col => {
+    const unit = getZoomUnit(timeZoomRef.current)
     const updates = []
     milestonesRef.current.forEach(m => {
-      if (m.startCol >= col) updates.push({ id: m.id, startCol: m.startCol + 1 })
+      if (m.startCol >= col) updates.push({ id: m.id, startCol: m.startCol + unit })
     })
     if (updates.length) {
       const before = updates.map(u => milestonesRef.current.find(m => m.id === u.id)).filter(Boolean)
-      const after = before.map(m => ({ ...m, startCol: m.startCol + 1 }))
+      const after = before.map(m => ({ ...m, startCol: m.startCol + unit }))
       const tx = {
         id: newClientId('tx'),
         type: 'milestone.move-many',
-        label: 'Insert day',
+        label: 'Insert time unit',
         before: { milestones: before, dependencies: [] },
         after: { milestones: after, dependencies: [] },
       }
@@ -2275,15 +2575,19 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
     }
   }, [commitTransaction, maybeBlockDependencyWarning, reportOverlapViolation])
 
-  const handleDeleteDay = useCallback(async col => {
+  const handleDeleteTimeUnit = useCallback(async col => {
+    const unit = getZoomUnit(timeZoomRef.current)
+    const cutEnd = col + unit
     const updates = []
     const updated = milestonesRef.current.map(m => {
-      if (m.startCol > col) {
-        updates.push({ id: m.id, startCol: m.startCol - 1 })
-        return { ...m, startCol: m.startCol - 1 }
+      if (m.startCol >= cutEnd) {
+        updates.push({ id: m.id, startCol: Math.max(0, m.startCol - unit) })
+        return { ...m, startCol: Math.max(0, m.startCol - unit) }
       }
-      if (m.startCol <= col && col < m.startCol + m.duration) {
-        const d = Math.max(1, m.duration - 1)
+      const overlapStart = Math.max(m.startCol, col)
+      const overlapEnd = Math.min(m.startCol + m.duration, cutEnd)
+      if (overlapStart < overlapEnd) {
+        const d = Math.max(MIN_MILESTONE_DURATION, m.duration - (overlapEnd - overlapStart))
         updates.push({ id: m.id, duration: d })
         return { ...m, duration: d }
       }
@@ -2295,7 +2599,7 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
       const tx = {
         id: newClientId('tx'),
         type: 'milestone.move-many',
-        label: 'Delete day',
+        label: 'Delete time unit',
         before: { milestones: before, dependencies: [] },
         after: { milestones: after, dependencies: [] },
       }
@@ -2333,7 +2637,10 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
       const rawDx = clientX - startMouseX
       const firstOrig = Object.values(originals)[0]
       if (!firstOrig) return 0
-      let colDelta = snapPxToCol(firstOrig.startCol * sp.colW + rawDx, sp.colW) - firstOrig.startCol
+      const unit = getZoomUnit(timeZoomRef.current)
+      const firstVisualStart = minuteToZoomCol(firstOrig.startCol, timeZoomRef.current)
+      const requestedVisual = snapPxToCol(firstVisualStart * sp.colW + rawDx, sp.colW)
+      let colDelta = (requestedVisual - firstVisualStart) * unit
       const { minDelta, maxDelta } = getBounds()
       const clamped = Math.max(minDelta, Math.min(maxDelta, colDelta))
       if (dragRef.current && clamped !== colDelta) dragRef.current.hitBoundary = true
@@ -2349,10 +2656,15 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
       const rawDx = clientX - startMouseX
       let dx = rawDx
       Object.entries(originals).forEach(([id, orig]) => {
-        dx = Math.max(dx, -orig.startCol * sp.colW)
+        const origVisual = getVisualRange(orig, timeZoomRef.current)
+        dx = Math.max(dx, -origVisual.startCol * sp.colW)
         const ms = milestonesRef.current.find(m => m.id === id)
         const dl = deadlinesRef.current.find(d => d.noteId === ms?.noteId)
-        if (dl) dx = Math.min(dx, (dl.col - orig.duration - orig.startCol) * sp.colW)
+        if (dl) {
+          const maxStart = Math.max(0, dl.col - orig.duration)
+          const maxVisual = minuteToZoomCol(maxStart, timeZoomRef.current)
+          dx = Math.min(dx, (maxVisual - origVisual.startCol) * sp.colW)
+        }
       })
       return dx
     }
@@ -2364,8 +2676,9 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
       const overrides = {}
       Object.entries(originals).forEach(([id, orig]) => {
         const ms = milestonesRef.current.find(m => m.id === id)
-        const leftPx = orig.startCol * sp.colW + dx
-        if (ms) overrides[id] = { ...ms, leftPx, widthPx: orig.duration * sp.colW }
+        const origVisual = getVisualRange(orig, timeZoomRef.current)
+        const leftPx = origVisual.startCol * sp.colW + dx
+        if (ms) overrides[id] = { ...ms, leftPx, widthPx: origVisual.duration * sp.colW }
         const el = milestoneElsRef.current.get(id)
         if (el) el.style.left = `${leftPx}px`
       })
@@ -2382,7 +2695,8 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
       const resetToOriginal = () => {
         Object.entries(originals).forEach(([id, orig]) => {
           const el = milestoneElsRef.current.get(id)
-          if (el) el.style.left = `${orig.startCol * sp.colW}px`
+          const origVisual = getVisualRange(orig, timeZoomRef.current)
+          if (el) el.style.left = `${origVisual.startCol * sp.colW}px`
         })
         updateDependencyPaths()
       }
@@ -2450,18 +2764,33 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
     dragRef.current = { type: `resize-${side}`, blockedOverlap: null, hitBoundary: false, lastValid: { startCol: origStart, duration: origDur } }
     document.body.style.cursor = 'col-resize'
 
+    const resetToOriginal = () => {
+      const el = milestoneElsRef.current.get(milestoneId)
+      if (el) {
+        const origVisual = getVisualRange({ startCol: origStart, duration: origDur }, timeZoomRef.current)
+        el.style.left = `${origVisual.startCol * sp.colW}px`
+        el.style.width = `${origVisual.duration * sp.colW}px`
+      }
+      updateDependencyPaths()
+    }
+
     const getSnappedResize = clientX => {
       const dx = clientX - startMouseX
       const dl = deadlinesRef.current.find(d => d.noteId === ms.noteId)
       const maxRight = dl?.col ?? Infinity
+      const unit = getZoomUnit(timeZoomRef.current)
       if (side === 'left') {
-        const requested = snapPxToCol(origStart * sp.colW + dx, sp.colW)
-        const leftCol = Math.min(origRight - 1, Math.max(0, requested))
+        const origVisualStart = minuteToZoomCol(origStart, timeZoomRef.current)
+        const requestedVisual = snapPxToCol(origVisualStart * sp.colW + dx, sp.colW)
+        const requested = requestedVisual * unit
+        const leftCol = Math.min(origRight - MIN_MILESTONE_DURATION, Math.max(0, requested))
         if (dragRef.current && leftCol !== requested) dragRef.current.hitBoundary = true
         return { startCol: leftCol, duration: origRight - leftCol }
       }
-      const requested = snapPxToCol(origRight * sp.colW + dx, sp.colW)
-      const rightCol = Math.min(maxRight, Math.max(origStart + 1, requested))
+      const origVisualRight = minuteEndToZoomCol(origRight, timeZoomRef.current)
+      const requestedVisual = snapPxToCol(origVisualRight * sp.colW + dx, sp.colW)
+      const requested = requestedVisual * unit
+      const rightCol = Math.min(maxRight, Math.max(origStart + MIN_MILESTONE_DURATION, requested))
       if (dragRef.current && rightCol !== requested) dragRef.current.hitBoundary = true
       return { startCol: origStart, duration: rightCol - origStart }
     }
@@ -2486,7 +2815,8 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
 
     const getLiveResize = clientX => {
       const next = getSafeResize(clientX)
-      return { leftPx: next.startCol * sp.colW, widthPx: next.duration * sp.colW }
+      const visual = getVisualRange(next, timeZoomRef.current)
+      return { leftPx: visual.startCol * sp.colW, widthPx: visual.duration * sp.colW }
     }
 
     const onMove = e => {
@@ -2515,12 +2845,7 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
         new Set([milestoneId])
       )
       if (finalOverlap) {
-        const el = milestoneElsRef.current.get(milestoneId)
-        if (el) {
-          el.style.left = `${origStart * sp.colW}px`
-          el.style.width = `${origDur * sp.colW}px`
-        }
-        updateDependencyPaths()
+        resetToOriginal()
         reportOverlapViolation(finalOverlap)
         return
       }
@@ -2539,24 +2864,54 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
             after: { milestones: next ? [next] : [], dependencies: [] },
           })
         }
-        const blocked = maybeBlockDependencyWarning(nextAll, dependenciesRef.current)
-        if (blocked) {
-          const el = milestoneElsRef.current.get(milestoneId)
-          if (el) {
-            el.style.left = `${origStart * sp.colW}px`
-            el.style.width = `${origDur * sp.colW}px`
-          }
-          updateDependencyPaths()
+        const applyResizeIfValid = async () => {
+          const blocked = maybeBlockDependencyWarning(nextAll, dependenciesRef.current)
+          if (blocked) return
+          try { await applyResize() } catch (err) { console.error(err) }
+        }
+        const magnitude = durationOrderMagnitudeChange(origDur, newDur)
+        const warnThreshold = warningSettings.resizeWarnOrderThreshold
+        const extraConfirmThreshold = warningSettings.resizeBlockOrderThreshold
+        const originalScale = durationScaleBucket(origDur)
+        const nextScale = durationScaleBucket(newDur)
+        const scaleJump = Math.abs(durationScaleBucketIndex(nextScale) - durationScaleBucketIndex(originalScale))
+        const crossedScale = warningSettings.resizeScaleCrossingWarningEnabled && originalScale !== nextScale
+        const crossedMagnitude = magnitude >= warnThreshold
+        const needsScaleJumpConfirm = crossedScale && scaleJump >= 2
+        if (crossedMagnitude || crossedScale) {
+          resetToOriginal()
+          const durationChange = `The duration would move from ${formatMinutesDuration(origDur)} to ${formatMinutesDuration(newDur)}.`
+          const concerns = [
+            crossedMagnitude
+              ? `Magnitude level ${magnitude.toFixed(1)} is unusually high for the currently picked duration of that milestone.`
+              : null,
+            crossedScale
+              ? `It also crosses from ${originalScale} level to ${nextScale} level.`
+              : null,
+          ].filter(Boolean).join(' ')
+          const baseMessage = `${durationChange} ${concerns} Changing it could lead to some trouble.`
+          showWarningPrompt({
+            title: 'Large resize',
+            message: `${baseMessage} Apply it anyway?`,
+            actions: 'confirm',
+            confirmLabel: 'Apply resize',
+            onConfirm: (crossedMagnitude && magnitude > extraConfirmThreshold) || needsScaleJumpConfirm
+              ? () => setResizeConfirmDraft({
+                  magnitude,
+                  originalDuration: origDur,
+                  nextDuration: newDur,
+                  originalScale,
+                  nextScale,
+                  scaleJump,
+                  onConfirm: applyResizeIfValid,
+                })
+              : applyResizeIfValid,
+          })
           return
         }
-        try { await applyResize() } catch (err) { console.error(err) }
+        await applyResizeIfValid()
       } else {
-        const el = milestoneElsRef.current.get(milestoneId)
-        if (el) {
-          el.style.left = `${origStart * sp.colW}px`
-          el.style.width = `${origDur * sp.colW}px`
-        }
-        updateDependencyPaths()
+        resetToOriginal()
       }
     }
 
@@ -2603,7 +2958,8 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
       const hit   = new Set()
       milestonesRef.current.forEach(m => {
         const row = grm[m.noteId]; if (!row) return
-        const mL  = m.startCol * sp.colW; const mR = (m.startCol + m.duration) * sp.colW
+        const visual = getVisualRange(m, timeZoomRef.current)
+        const mL  = visual.startCol * sp.colW; const mR = visual.endCol * sp.colW
         if (mR > selL && mL < selR && row.top + row.height > selT && row.top < selB) hit.add(m.id)
       })
       setSelectedIds(hit)
@@ -2643,11 +2999,12 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
     const sp = spacingRef.current
     const x2 = clientX - rect.left + scrollLeftRef.current
     const y2 = clientY - rect.top + scrollTopRef.current
+    const sourceVisual = getVisualRange(source, timeZoomRef.current)
     // Pick source edge based on which side of the milestone the cursor is on
-    const sourceCenter = (source.startCol + source.duration / 2) * sp.colW
+    const sourceCenter = (sourceVisual.startCol + sourceVisual.duration / 2) * sp.colW
     const x1 = x2 >= sourceCenter
-      ? (source.startCol + source.duration) * sp.colW
-      : source.startCol * sp.colW
+      ? sourceVisual.endCol * sp.colW
+      : sourceVisual.startCol * sp.colW
     const y1 = HEADER_H + sourceRow.top + Math.floor(sourceRow.height / 2)
     const dx = x2 - x1
     const cp = Math.max(40, Math.abs(dx) * 0.45)
@@ -2668,7 +3025,8 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
       if (!rect || !source) return 'right'
       const sp = spacingRef.current
       const x = clientX - rect.left + scrollLeftRef.current
-      return x >= (source.startCol + source.duration / 2) * sp.colW ? 'right' : 'left'
+      const sourceVisual = getVisualRange(source, timeZoomRef.current)
+      return x >= (sourceVisual.startCol + sourceVisual.duration / 2) * sp.colW ? 'right' : 'left'
     }
 
     drawingRef.current = { fromId: sourceId }
@@ -2768,7 +3126,7 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
           key: `milestone:${id}`,
           type: 'milestone',
           id,
-          label: `${note?.title ?? 'Milestone'} · ${milestone.title || colToLabel(milestone.startCol, metric)}`,
+          label: `${note?.title ?? 'Milestone'} · ${milestone.title || minuteLabel(milestone.startCol)}`,
           checked: true,
         }
       })
@@ -2876,6 +3234,7 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
   const capturePerspectiveState = useCallback(() => ({
     activePerspectiveId,
     spacing,
+    timeZoom,
     axisMode,
     showDepLabels,
     showDeps,
@@ -2905,7 +3264,7 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
   }), [
     activeDimId, activeFilterIds, activeLaneFilterId, activePerspectiveId, axisMode, colorDimId,
     colorDependencyDirection, hiddenCatIds, hiddenNotesByLane, hideCrossCatDeps,
-    leftPanelWidth, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps, spacing, visibleNoteFilterIds,
+    leftPanelWidth, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps, spacing, timeZoom, visibleNoteFilterIds,
   ])
   capturePerspectiveStateRef.current = capturePerspectiveState
 
@@ -2918,6 +3277,7 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
     restoringColorRef.current = nextColorDimId !== colorDimId
 
     if (state.spacing) setSpacing({ ...DEFAULT_SPACING, ...state.spacing })
+    if (TIME_ZOOM_BY_VALUE[state.timeZoom]) setTimeZoom(state.timeZoom)
     if (state.axisMode) setAxisMode(state.axisMode)
     if (typeof state.showDepLabels === 'boolean') setShowDepLabels(state.showDepLabels)
     if (typeof state.showDeps === 'boolean') setShowDeps(state.showDeps)
@@ -2960,6 +3320,7 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
     restoringColorRef.current = nextColorDimId !== colorDimId
 
     if (state.spacing) setSpacing({ ...DEFAULT_SPACING, ...state.spacing })
+    if (TIME_ZOOM_BY_VALUE[state.timeZoom]) setTimeZoom(state.timeZoom)
     if (state.axisMode) setAxisMode(state.axisMode)
     if (typeof state.showDepLabels === 'boolean') setShowDepLabels(state.showDepLabels)
     if (typeof state.showDeps === 'boolean') setShowDeps(state.showDeps)
@@ -3161,23 +3522,25 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
   const startCol = Math.max(0,         Math.floor(scrollLeft / colW) - COL_BUF)
   const endCol   = Math.min(totalCols, Math.ceil((scrollLeft + vpSize.w) / colW) + COL_BUF)
   const visCols  = Array.from({ length: Math.max(0, endCol - startCol) }, (_, i) => startCol + i)
-  const visibleMonthSegments = metric === 'days' ? buildAxisSegments(
+  const visibleMonthSegments = ['minutes', 'hours', 'days', 'weeks'].includes(timeZoom) ? buildAxisSegments(
     visCols,
+    col => minuteToDate(zoomColToMinute(col, timeZoom)),
     date => `${date.getFullYear()}-${date.getMonth()}`,
     date => `${MONTH_ABR[date.getMonth()]} ${date.getFullYear()}`
-  ) : metric === 'months' ? buildColSegments(
+  ) : timeZoom === 'months' ? buildColSegments(
     visCols,
     col => Math.floor(col / 12),
     col => `Year ${Math.floor(col / 12) + 1}`
   ) : null
-  const visibleWeekSegments = metric === 'days' ? buildAxisSegments(
+  const visibleWeekSegments = ['minutes', 'hours', 'days'].includes(timeZoom) ? buildAxisSegments(
     visCols,
+    col => minuteToDate(zoomColToMinute(col, timeZoom)),
     date => {
       const { week, year } = isoWeekInfo(date)
       return `${year}-${week}`
     },
     date => `KW ${isoWeekInfo(date).week}`
-  ) : metric === 'weeks' ? buildColSegments(
+  ) : timeZoom === 'weeks' ? buildColSegments(
     visCols,
     col => Math.floor(col / 4),
     col => `Mo ${Math.floor(col / 4) + 1}`
@@ -3193,7 +3556,8 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
 
   const visMilestones = milestones.filter(m => {
     if (draggedIds.has(m.id)) return true
-    if (m.startCol + m.duration < startCol || m.startCol > endCol) return false
+    const visual = getVisualRange(m, timeZoom)
+    if (visual.endCol < startCol || visual.startCol > endCol) return false
     const row = noteRowMap[m.noteId]; if (!row) return false
     return row.top + row.height >= scrollTop - bufH && row.top <= scrollTop + vpSize.h + bufH
   })
@@ -3227,7 +3591,7 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
         spacing={spacing} onSpacingChange={handleSpacingChange}
         mode={mode} onModeChange={setMode}
         axisMode={axisMode} onAxisModeChange={setAxisMode}
-        metric={metric}
+        timeZoom={timeZoom} onTimeZoomChange={handleTimeZoomChange}
         showDepLabels={showDepLabels} onShowDepLabelsChange={setShowDepLabels}
         showDeps={showDeps} onShowDepsChange={setShowDeps}
         hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={setHideCrossCatDeps}
@@ -3235,6 +3599,8 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
         colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={setColorDependencyDirection}
         autoResolveDependencyView={autoResolveDependencyView}
         onAutoResolveDependencyViewChange={setAutoResolveDependencyView}
+        warningSettings={warningSettings}
+        onWarningSettingsChange={updateWarningSettings}
       />
 
       <div className={styles.canvasRow}>
@@ -3480,13 +3846,14 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
                 )}
                 {visCols.map(ci => {
                   const isToday = ci === 0
-                  const isWeekend = metric === 'days' && (() => { const dow = colToDate(ci).getDay(); return dow === 0 || dow === 6 })()
+                  const date = minuteToDate(zoomColToMinute(ci, timeZoom))
+                  const isWeekend = timeZoom === 'days' && (() => { const dow = date.getDay(); return dow === 0 || dow === 6 })()
                   return (
                     <div key={ci}
                       className={[styles.dayHeader, isToday && styles.dayHeaderToday, isWeekend && !isToday && styles.dayHeaderWeekend].filter(Boolean).join(' ')}
                       style={{ left: ci * colW, width: colW }}>
                       <span className={[styles.dayNum, isToday && styles.dayNumToday].filter(Boolean).join(' ')}>
-                        {metric === 'days' ? colToDate(ci).getDate() : colToLabel(ci, metric)}
+                        {timeZoom === 'days' ? date.getDate() : zoomColToLabel(ci, timeZoom)}
                       </span>
                     </div>
                   )
@@ -3507,8 +3874,8 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
 
             {/* Today + weekend column tints */}
             <div className={styles.todayCol} style={{ left: 0, width: colW }} />
-            {metric === 'days' && visCols.map(ci => {
-              const dow = colToDate(ci).getDay()
+            {timeZoom === 'days' && visCols.map(ci => {
+              const dow = minuteToDate(zoomColToMinute(ci, timeZoom)).getDay()
               return (dow === 0 || dow === 6)
                 ? <div key={`wk-${ci}`} className={styles.weekendCol} style={{ left: ci * colW, width: colW }} />
                 : null
@@ -3535,8 +3902,9 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
             {/* Hard deadline markers */}
             {deadlines.map(dl => {
               const row = noteRowMap[dl.noteId]; if (!row) return null
-              const hatchLeft  = dl.col * colW
-              const hatchWidth = Math.max(0, totalCols - dl.col) * colW
+              const visualCol = minuteToZoomCol(dl.col, timeZoom)
+              const hatchLeft  = visualCol * colW
+              const hatchWidth = Math.max(0, totalCols - visualCol) * colW
               return hatchWidth > 0 ? (
                 <div key={`dl-${dl.noteId}`} className={styles.deadlineHatch}
                   style={{ left: hatchLeft, top: HEADER_H + row.top, width: hatchWidth, height: row.height }} />
@@ -3546,6 +3914,7 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
             {/* Milestones */}
             {visMilestones.map(m => {
               const row = noteRowMap[m.noteId]; if (!row) return null
+              const visual = getVisualRange(m, timeZoom)
               const isSelected    = selectedIds.has(m.id)
               const isViolating   = violationIds.has(m.id)
               const isBlinking    = blinkingMilestoneIds.has(m.id)
@@ -3566,9 +3935,9 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
                     isUnassigned && styles.milestoneUnassigned,
                   ].filter(Boolean).join(' ')}
                   style={{
-                    left:       m.startCol * colW,
+                    left:       visual.startCol * colW,
                     top:        HEADER_H + row.top + msY,
-                    width:      m.duration * colW,
+                    width:      visual.duration * colW,
                     height:     msH,
                     background: msColor ?? '#fff',
                   }}
@@ -3593,7 +3962,7 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
                     e.stopPropagation()
                     if (paintCat) return
                     const note = notes.find(g => g.id === m.noteId)
-                    const label = `${note?.title ?? 'Milestone'} · ${m.title || colToLabel(m.startCol, metric)}`
+                    const label = `${note?.title ?? 'Milestone'} · ${m.title || minuteToLabel(m.startCol, timeZoom)}`
                     setContextMenu({ type: 'milestone', x: e.clientX, y: e.clientY, milestoneId: m.id, label })
                   }}>
                   <div
@@ -3607,7 +3976,7 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
                       if (isDepMode) startDependencyDrag(e, m.id)
                       else handleMilestoneMouseDown(e, m.id, 'left')
                     }} />
-                  <span className={styles.msLabel}>{m.title || colToLabel(m.startCol, metric)}</span>
+                  <span className={styles.msLabel}>{m.title || minuteToLabel(m.startCol, timeZoom)}</span>
                   <div
                     className={[styles.msHandle, styles.msHandleRight, isDepMode && styles.depHandle, isDepMode && isSource && styles.depHandleSource].filter(Boolean).join(' ')}
                     data-ms-id={m.id}
@@ -3638,9 +4007,11 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
                   const toCat   = assignments[to.noteId]?.[activeDimId] ?? null
                   if (fromCat !== toCat) return null
                 }
-                const x1 = (from.startCol + from.duration) * colW
+                const fromVisual = getVisualRange(from, timeZoom)
+                const toVisual = getVisualRange(to, timeZoom)
+                const x1 = fromVisual.endCol * colW
                 const y1 = HEADER_H + fromRow.top + Math.floor(fromRow.height / 2)
-                const x2 = to.startCol * colW
+                const x2 = toVisual.startCol * colW
                 const y2 = HEADER_H + toRow.top + Math.floor(toRow.height / 2)
                 const cp = Math.max(40, Math.abs(x2 - x1) * 0.45)
                 const isViol = violationIds.has(dep.toId)
@@ -3777,8 +4148,8 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
 
       <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)}
         onCreate={handleCreateMilestone}
-        onInsertDay={handleInsertDay}
-        onDeleteDay={handleDeleteDay}
+        onInsertTimeUnit={handleInsertTimeUnit}
+        onDeleteTimeUnit={handleDeleteTimeUnit}
         onSetDeadline={handleSetDeadline}
         onRemoveDeadline={handleRemoveDeadline}
         onDeleteMilestone={handleDeleteMilestoneRequest}
@@ -3793,14 +4164,47 @@ export default function SchedulePage({ notes = [], isActive = false, onNoteOpen,
               `This change would make ${warningPrompt.count} milestone${warningPrompt.count === 1 ? '' : 's'} violate dependency timing.`}
           </div>
           <div className={styles.warningPromptActions}>
-            <button className={styles.warningUndoBtn} onClick={() => {
+            <button className={warningPrompt.actions === 'confirm' ? styles.warningSafeBtn : styles.warningUndoBtn} autoFocus={warningPrompt.actions === 'confirm'} onClick={() => {
               if (warningPrompt.actions === 'dependency') resolveDependencySelection()
               else clearWarningPrompt()
             }}>
               {warningPrompt.actions === 'dependency' ? 'Resolve dependency' : 'Close'}
             </button>
+            {warningPrompt.actions === 'confirm' && (
+              <button className={styles.warningDangerBtn} onClick={async () => {
+                const action = warningPrompt.onConfirm
+                clearWarningPrompt()
+                await action?.()
+              }}>
+                {warningPrompt.confirmLabel || 'Confirm'}
+              </button>
+            )}
           </div>
         </div>
+      )}
+
+      {resizeConfirmDraft && createPortal(
+        <div className={styles.deleteModalBackdrop} onMouseDown={() => setResizeConfirmDraft(null)}>
+          <div className={styles.deleteModal} role="dialog" aria-modal="true" onMouseDown={e => e.stopPropagation()}>
+            <div className={styles.deleteModalTitle}>Confirm unusual resize</div>
+            <div className={styles.deleteModalText}>
+              Magnitude level {resizeConfirmDraft.magnitude.toFixed(1)} is very high. This is probably an accidental or uncautious change: the duration would move from {formatMinutesDuration(resizeConfirmDraft.originalDuration)} to {formatMinutesDuration(resizeConfirmDraft.nextDuration)}. {resizeConfirmDraft.scaleJump >= 2 ? `It also jumps ${resizeConfirmDraft.scaleJump} natural time scale levels, from ${resizeConfirmDraft.originalScale} level to ${resizeConfirmDraft.nextScale} level. ` : ''}You typically should not have such a high difference in magnitude unless you are deliberately changing the plan scale.
+            </div>
+            <div className={styles.deleteModalActions}>
+              <button className={`${styles.modalSafePrimaryBtn} ${styles.resizeConfirmActionBtn}`} autoFocus onClick={() => setResizeConfirmDraft(null)}>
+                Cancel
+              </button>
+              <button className={`${styles.modalDangerMutedBtn} ${styles.resizeConfirmActionBtn}`} onClick={async () => {
+                const action = resizeConfirmDraft.onConfirm
+                setResizeConfirmDraft(null)
+                await action?.()
+              }}>
+                Apply resize anyway
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
 
       {deleteDraft && createPortal(

@@ -200,15 +200,6 @@
   margin-bottom: 6px;
 }
 
-.cardMetric {
-  font-size: 11px;
-  font-weight: 600;
-  color: #1a73e8;
-  background: #e8f0fe;
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-
 .cardDate {
   font-size: 11px;
   color: #9aa0a6;
@@ -376,31 +367,6 @@
   font-weight: 600;
   color: #666;
   flex-shrink: 0;
-}
-
-.metricPills {
-  display: flex;
-  gap: 5px;
-  flex-wrap: wrap;
-}
-
-.metricPill {
-  padding: 4px 11px;
-  font-size: 12px;
-  font-family: Arial, sans-serif;
-  font-weight: 500;
-  border: 1.5px solid #e0e0e0;
-  border-radius: 20px;
-  background: none;
-  color: #555;
-  cursor: pointer;
-  transition: all 0.12s;
-}
-.metricPill:hover { border-color: #1a73e8; color: #1a73e8; }
-.metricPillActive {
-  background: #1a73e8;
-  border-color: #1a73e8;
-  color: #fff;
 }
 
 .modalActions {

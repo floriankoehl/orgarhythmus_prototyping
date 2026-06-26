@@ -651,6 +651,65 @@
   white-space: nowrap;
 }
 
+.warningSettingsPanel {
+  min-width: 280px;
+}
+
+.warningSettingsToggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: #444;
+  cursor: pointer;
+}
+
+.warningSettingsToggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #1a73e8;
+}
+
+.warningSettingsText {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #f0f0f0;
+  color: #777;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.warningSettingsRow {
+  display: grid;
+  grid-template-columns: 64px 72px auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: #444;
+  font-size: 12px;
+}
+
+.warningSettingsRow input {
+  width: 72px;
+  padding: 4px 6px;
+  color: #333;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  font: inherit;
+}
+
+.warningSettingsRow input:focus {
+  border-color: #1a73e8;
+  outline: none;
+}
+
+.warningSettingsRow small {
+  color: #777;
+  font-size: 11px;
+}
+
 .panelActions {
   display: flex;
   gap: 6px;
@@ -991,7 +1050,9 @@
 }
 
 .warningIgnoreBtn,
-.warningUndoBtn {
+.warningUndoBtn,
+.warningSafeBtn,
+.warningDangerBtn {
   padding: 6px 10px;
   font-family: inherit;
   font-size: 12px;
@@ -1014,6 +1075,26 @@
 }
 
 .warningUndoBtn:hover { background: #f5f5f5; }
+
+.warningSafeBtn {
+  color: #fff;
+  background: #1a73e8;
+  border: 1px solid #1a73e8;
+}
+
+.warningSafeBtn:hover { background: #1558b0; }
+
+.warningDangerBtn {
+  color: #555;
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+}
+
+.warningDangerBtn:hover {
+  color: #333;
+  background: #e5e7eb;
+  border-color: #b8c0cc;
+}
 
 .deleteModalBackdrop {
   position: fixed;
@@ -1131,6 +1212,43 @@
   background: #f5f5f5;
   border-color: #ddd;
   cursor: default;
+}
+
+.modalSafePrimaryBtn,
+.modalDangerMutedBtn {
+  padding: 7px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.modalSafePrimaryBtn {
+  color: #fff;
+  background: #1a73e8;
+  border: 1px solid #1a73e8;
+}
+
+.modalSafePrimaryBtn:hover {
+  background: #1558b0;
+}
+
+.modalDangerMutedBtn {
+  color: #555;
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+}
+
+.modalDangerMutedBtn:hover {
+  color: #333;
+  background: #e5e7eb;
+  border-color: #b8c0cc;
+}
+
+.resizeConfirmActionBtn {
+  min-height: 42px;
+  padding: 10px 16px;
+  font-size: 13px;
 }
 
 .deleteDepBtn {

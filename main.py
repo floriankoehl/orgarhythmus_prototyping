@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 DB_PATH = "notes.db"
 LEGACY_DB_PATH = "goals.db"
+MIN_MILESTONE_DURATION = 15
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_MINUTES = 30
 REFRESH_TOKEN_DAYS = 30
@@ -113,7 +114,9 @@ def _init_db():
                 user_id     TEXT NOT NULL REFERENCES users(id),
                 name        TEXT NOT NULL DEFAULT 'Untitled',
                 description TEXT NOT NULL DEFAULT '',
-                metric      TEXT NOT NULL DEFAULT 'days',
+                resize_warn_order_threshold REAL NOT NULL DEFAULT 2,
+                resize_block_order_threshold REAL NOT NULL DEFAULT 2,
+                resize_scale_crossing_warning_enabled INTEGER NOT NULL DEFAULT 1,
                 created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -157,7 +160,7 @@ def _init_db():
                 id         TEXT PRIMARY KEY,
                 note_id    TEXT NOT NULL,
                 start_col  INTEGER NOT NULL,
-                duration   INTEGER NOT NULL DEFAULT 1,
+                duration   INTEGER NOT NULL DEFAULT 15,
                 title      TEXT NOT NULL DEFAULT '',
                 color      TEXT NOT NULL DEFAULT '#1a73e8'
             )
@@ -373,6 +376,52 @@ def _migrate():
                 created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        con.execute(
+            "UPDATE milestones SET duration = ? WHERE duration < ?",
+            (MIN_MILESTONE_DURATION, MIN_MILESTONE_DURATION),
+        )
+
+        def clamp_history_durations(value):
+            changed = False
+
+            def visit(node):
+                nonlocal changed
+                if isinstance(node, dict):
+                    if "duration" in node and ("startCol" in node or "noteId" in node):
+                        try:
+                            duration = int(node["duration"])
+                        except (TypeError, ValueError):
+                            duration = MIN_MILESTONE_DURATION
+                        if duration < MIN_MILESTONE_DURATION:
+                            node["duration"] = MIN_MILESTONE_DURATION
+                            changed = True
+                    for child in node.values():
+                        visit(child)
+                elif isinstance(node, list):
+                    for child in node:
+                        visit(child)
+
+            visit(value)
+            return changed
+
+        history_rows = con.execute(
+            "SELECT id, transaction_json, before_json, after_json FROM transaction_history"
+        ).fetchall()
+        for row in history_rows:
+            updates = {}
+            for column in ("transaction_json", "before_json", "after_json"):
+                try:
+                    payload = json.loads(row[column])
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if clamp_history_durations(payload):
+                    updates[column] = json.dumps(payload)
+            if updates:
+                assignments = ", ".join(f"{column} = ?" for column in updates)
+                con.execute(
+                    f"UPDATE transaction_history SET {assignments} WHERE id = ?",
+                    (*updates.values(), row["id"]),
+                )
         con.execute("""
             CREATE TABLE IF NOT EXISTS persona_assignments (
                 persona_id   TEXT NOT NULL,
@@ -391,8 +440,38 @@ def _migrate():
             proj_cols = [r[1] for r in con.execute("PRAGMA table_info(projects)").fetchall()]
         if 'description' not in proj_cols:
             con.execute("ALTER TABLE projects ADD COLUMN description TEXT NOT NULL DEFAULT ''")
-        if 'metric' not in proj_cols:
-            con.execute("ALTER TABLE projects ADD COLUMN metric TEXT NOT NULL DEFAULT 'days'")
+            proj_cols = [r[1] for r in con.execute("PRAGMA table_info(projects)").fetchall()]
+        if 'metric' in proj_cols:
+            con.execute("ALTER TABLE projects RENAME TO projects_old")
+            con.execute("""
+                CREATE TABLE projects (
+                    id          TEXT PRIMARY KEY,
+                    user_id     TEXT NOT NULL REFERENCES users(id),
+                    name        TEXT NOT NULL DEFAULT 'Untitled',
+                    description TEXT NOT NULL DEFAULT '',
+                    resize_warn_order_threshold REAL NOT NULL DEFAULT 2,
+                    resize_block_order_threshold REAL NOT NULL DEFAULT 2,
+                    resize_scale_crossing_warning_enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            con.execute("""
+                INSERT INTO projects (id, user_id, name, description, resize_warn_order_threshold, resize_block_order_threshold, resize_scale_crossing_warning_enabled, created_at)
+                SELECT id, COALESCE(user_id, ''), name, COALESCE(description, ''), 2, 2, 1, created_at
+                FROM projects_old
+            """)
+            con.execute("DROP TABLE projects_old")
+            proj_cols = [r[1] for r in con.execute("PRAGMA table_info(projects)").fetchall()]
+        if 'resize_warn_order_threshold' not in proj_cols:
+            con.execute("ALTER TABLE projects ADD COLUMN resize_warn_order_threshold REAL NOT NULL DEFAULT 2")
+            proj_cols = [r[1] for r in con.execute("PRAGMA table_info(projects)").fetchall()]
+        if 'resize_block_order_threshold' not in proj_cols:
+            con.execute("ALTER TABLE projects ADD COLUMN resize_block_order_threshold REAL NOT NULL DEFAULT 2")
+            proj_cols = [r[1] for r in con.execute("PRAGMA table_info(projects)").fetchall()]
+        if 'resize_scale_crossing_warning_enabled' not in proj_cols:
+            con.execute("ALTER TABLE projects ADD COLUMN resize_scale_crossing_warning_enabled INTEGER NOT NULL DEFAULT 1")
+        con.execute("UPDATE projects SET resize_warn_order_threshold = 2 WHERE resize_warn_order_threshold = 1")
+        con.execute("UPDATE projects SET resize_block_order_threshold = 2 WHERE resize_block_order_threshold = 3")
         if 'color' in proj_cols:
             pass  # keep for compat, just don't use in UI
 
@@ -489,12 +568,13 @@ class ProjectIn(BaseModel):
     id: Optional[str] = None
     name: str
     description: str = ''
-    metric: str = 'days'
 
 class ProjectPatch(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    metric: Optional[str] = None
+    resizeWarnOrderThreshold: Optional[float] = None
+    resizeBlockOrderThreshold: Optional[float] = None
+    resizeScaleCrossingWarningEnabled: Optional[bool] = None
 
 class NoteIn(BaseModel):
     id: Optional[str] = None
@@ -533,13 +613,13 @@ class MilestoneIn(BaseModel):
     id: Optional[str] = None
     noteId: str
     startCol: int
-    duration: int = 1
+    duration: int = Field(default=MIN_MILESTONE_DURATION, ge=MIN_MILESTONE_DURATION)
     title: str = ''
     color: str = '#1a73e8'
 
 class MilestonePatch(BaseModel):
     startCol: Optional[int] = None
-    duration: Optional[int] = None
+    duration: Optional[int] = Field(default=None, ge=MIN_MILESTONE_DURATION)
     title: Optional[str] = None
     color: Optional[str] = None
 
@@ -629,7 +709,9 @@ def _project(row) -> dict:
         "userId": d.get("user_id", ""),
         "name": d["name"],
         "description": d.get("description", ""),
-        "metric": d.get("metric", "days"),
+        "resizeWarnOrderThreshold": float(d.get("resize_warn_order_threshold", 2)),
+        "resizeBlockOrderThreshold": float(d.get("resize_block_order_threshold", 2)),
+        "resizeScaleCrossingWarningEnabled": bool(d.get("resize_scale_crossing_warning_enabled", 1)),
         "createdAt": d["created_at"],
     }
 
@@ -795,12 +877,21 @@ def _project_id_for_classification_perspective(con, perspective_id: str) -> str:
 
 HISTORY_LIMIT = 20
 
+def _milestone_duration_value(value) -> int:
+    try:
+        duration = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(422, f"Milestone duration must be at least {MIN_MILESTONE_DURATION} minutes")
+    if duration < MIN_MILESTONE_DURATION:
+        raise HTTPException(422, f"Milestone duration must be at least {MIN_MILESTONE_DURATION} minutes")
+    return duration
+
 def _milestone_from_api(data: dict) -> dict:
     return {
         "id": data["id"],
         "noteId": data["noteId"],
         "startCol": int(data.get("startCol", 0)),
-        "duration": max(1, int(data.get("duration", 1))),
+        "duration": _milestone_duration_value(data.get("duration", MIN_MILESTONE_DURATION)),
         "title": data.get("title", ""),
         "color": data.get("color", "#1a73e8"),
     }
@@ -883,8 +974,10 @@ def _assert_final_state_valid(con, before: dict, after: dict):
     final_deps.update({d["id"]: d for d in after["dependencies"]})
 
     for milestone in final_ms.values():
-        if milestone["startCol"] < 0 or milestone["duration"] < 1:
-            raise HTTPException(422, {"message": "Milestones must have a non-negative start and positive duration", "id": milestone["id"]})
+        if milestone["startCol"] < 0:
+            raise HTTPException(422, {"message": "Milestones must have a non-negative start", "id": milestone["id"]})
+        if milestone["duration"] < MIN_MILESTONE_DURATION:
+            raise HTTPException(422, {"message": f"Milestones must be at least {MIN_MILESTONE_DURATION} minutes long", "id": milestone["id"]})
 
     by_note = {}
     for milestone in final_ms.values():
@@ -1275,13 +1368,12 @@ def list_projects(user: dict = Depends(current_user)):
 def create_project(data: ProjectIn, user: dict = Depends(current_user)):
     pid = data.id or str(uuid.uuid4())
     name = data.name.strip() or 'Untitled'
-    metric = data.metric if data.metric in ('days', 'weeks', 'months', 'hours', 'order') else 'days'
     with _db() as con:
         if con.execute("SELECT id FROM projects WHERE id = ?", (pid,)).fetchone():
             raise HTTPException(409, "Project already exists")
         con.execute(
-            "INSERT INTO projects (id, user_id, name, description, metric) VALUES (?, ?, ?, ?, ?)",
-            (pid, user["id"], name, data.description or '', metric),
+            "INSERT INTO projects (id, user_id, name, description, resize_warn_order_threshold, resize_block_order_threshold, resize_scale_crossing_warning_enabled) VALUES (?, ?, ?, ?, 2, 2, 1)",
+            (pid, user["id"], name, data.description or ''),
         )
         row = con.execute("SELECT * FROM projects WHERE id = ?", (pid,)).fetchone()
     _seed_defaults(pid)
@@ -1296,9 +1388,12 @@ def update_project(project_id: str, data: ProjectPatch, user: dict = Depends(cur
             fields.append("name = ?");  values.append(data.name.strip() or 'Untitled')
         if data.description is not None:
             fields.append("description = ?"); values.append(data.description)
-        if data.metric is not None:
-            m = data.metric if data.metric in ('days', 'weeks', 'months', 'hours', 'order') else 'days'
-            fields.append("metric = ?"); values.append(m)
+        if data.resizeWarnOrderThreshold is not None:
+            fields.append("resize_warn_order_threshold = ?"); values.append(max(0, float(data.resizeWarnOrderThreshold)))
+        if data.resizeBlockOrderThreshold is not None:
+            fields.append("resize_block_order_threshold = ?"); values.append(max(0, float(data.resizeBlockOrderThreshold)))
+        if data.resizeScaleCrossingWarningEnabled is not None:
+            fields.append("resize_scale_crossing_warning_enabled = ?"); values.append(int(bool(data.resizeScaleCrossingWarningEnabled)))
         if fields:
             con.execute(f"UPDATE projects SET {', '.join(fields)} WHERE id = ?", (*values, project_id))
         row = con.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
@@ -2207,14 +2302,15 @@ def list_milestones(project_id: str = Query(default='default'), user: dict = Dep
 @app.post("/milestones", status_code=201)
 def create_milestone(data: MilestoneIn, user: dict = Depends(current_user)):
     mid = data.id or str(uuid.uuid4())
+    duration = _milestone_duration_value(data.duration)
     with _db() as con:
         assert_project_access(_project_id_for_note(con, data.noteId), user)
         con.execute(
             "INSERT INTO milestones (id, note_id, start_col, duration, title, color) VALUES (?,?,?,?,?,?)",
-            (mid, data.noteId, data.startCol, max(1, data.duration), data.title, data.color),
+            (mid, data.noteId, data.startCol, duration, data.title, data.color),
         )
     return _ms({"id": mid, "note_id": data.noteId, "start_col": data.startCol,
-                "duration": max(1, data.duration), "title": data.title, "color": data.color})
+                "duration": duration, "title": data.title, "color": data.color})
 
 # Registered before /{ms_id} so "batch" is not captured as a path param
 @app.put("/milestones/batch")
@@ -2227,7 +2323,7 @@ def batch_update_milestones(data: MilestoneBatch, user: dict = Depends(current_u
             assert_project_access(_project_id_for_milestone(con, mid), user)
             fields, values = [], []
             if "startCol" in u: fields.append("start_col = ?"); values.append(u["startCol"])
-            if "duration" in u: fields.append("duration = ?");  values.append(max(1, u["duration"]))
+            if "duration" in u: fields.append("duration = ?");  values.append(_milestone_duration_value(u["duration"]))
             if "color"    in u: fields.append("color = ?");     values.append(u["color"])
             if "title"    in u: fields.append("title = ?");     values.append(u["title"])
             if fields:
@@ -2240,7 +2336,7 @@ def update_milestone(ms_id: str, data: MilestonePatch, user: dict = Depends(curr
         assert_project_access(_project_id_for_milestone(con, ms_id), user)
         fields, values = [], []
         if data.startCol is not None: fields.append("start_col = ?"); values.append(data.startCol)
-        if data.duration  is not None: fields.append("duration = ?");  values.append(max(1, data.duration))
+        if data.duration  is not None: fields.append("duration = ?");  values.append(_milestone_duration_value(data.duration))
         if data.title     is not None: fields.append("title = ?");     values.append(data.title)
         if data.color     is not None: fields.append("color = ?");     values.append(data.color)
         if fields:

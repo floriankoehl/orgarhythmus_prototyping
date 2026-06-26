@@ -2,13 +2,6 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { projectsApi } from '../api'
 import styles from './ProjectDashboard.module.css'
 
-const PROJECT_METRICS = [
-  { value: 'days',   label: 'Days' },
-  { value: 'weeks',  label: 'Weeks' },
-  { value: 'months', label: 'Months' },
-  { value: 'hours',  label: 'Hours' },
-]
-
 const STAT_LABELS = {
   notes:        'Notes',
   milestones:   'Milestones',
@@ -30,7 +23,6 @@ function StatCard({ label, value }) {
 export default function ProjectDashboard({ project, onUpdate, isActive }) {
   const [name,        setName]        = useState(project.name)
   const [desc,        setDesc]        = useState(project.description || '')
-  const [metric,      setMetric]      = useState(project.metric || 'days')
   const [stats,       setStats]       = useState(null)
   const [editingName, setEditingName] = useState(false)
   const [editingDesc, setEditingDesc] = useState(false)
@@ -43,7 +35,6 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
     setName(project.name)
     setDesc(project.description || '')
     setDraftDesc(project.description || '')
-    setMetric(project.metric || 'days')
   }, [project.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -84,13 +75,6 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
   const handleDescCancel = () => {
     setDraftDesc(desc)
     setEditingDesc(false)
-  }
-
-  const handleMetricChange = (e) => {
-    const val = e.target.value
-    setMetric(val)
-    persist({ metric: val })
-    onUpdate({ ...project, metric: val })
   }
 
   const handleExport = async () => {
@@ -179,21 +163,8 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
           )}
         </div>
 
-        {/* Footer row: metric + export */}
+        {/* Footer row: export */}
         <div className={styles.footerRow}>
-          <div className={styles.metricRow}>
-            <label className={styles.metricLabel} htmlFor="metric-select">Metric</label>
-            <select
-              id="metric-select"
-              className={styles.metricSelect}
-              value={metric}
-              onChange={handleMetricChange}
-            >
-              {PROJECT_METRICS.map(m => (
-                <option key={m.value} value={m.value}>{m.label}</option>
-              ))}
-            </select>
-          </div>
           <button
             className={styles.exportBtn}
             onClick={handleExport}

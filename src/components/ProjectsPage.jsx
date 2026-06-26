@@ -2,16 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import { projectsApi } from '../api'
 import styles from './ProjectsPage.module.css'
 
-const PROJECT_METRICS = [
-  { value: 'days',   label: 'Days' },
-  { value: 'weeks',  label: 'Weeks' },
-  { value: 'months', label: 'Months' },
-  { value: 'hours',  label: 'Hours' },
-]
-
 function CreateProjectModal({ onClose, onCreate }) {
   const [name,   setName]   = useState('')
-  const [metric, setMetric] = useState('days')
   const inputRef = useRef()
 
   useEffect(() => { inputRef.current?.focus() }, [])
@@ -19,7 +11,7 @@ function CreateProjectModal({ onClose, onCreate }) {
   const submit = async () => {
     const trimmed = name.trim()
     if (!trimmed) return
-    await onCreate({ name: trimmed, metric })
+    await onCreate({ name: trimmed })
     onClose()
   }
 
@@ -40,19 +32,6 @@ function CreateProjectModal({ onClose, onCreate }) {
           onKeyDown={onKey}
           placeholder="Project name"
         />
-        <div className={styles.fieldRow}>
-          <span className={styles.fieldLabel}>Time metric</span>
-          <div className={styles.metricPills}>
-            {PROJECT_METRICS.map(m => (
-              <button
-                key={m.value}
-                className={`${styles.metricPill} ${metric === m.value ? styles.metricPillActive : ''}`}
-                onClick={() => setMetric(m.value)}>
-                {m.label}
-              </button>
-            ))}
-          </div>
-        </div>
         <div className={styles.modalActions}>
           <button className={styles.modalCancel} onClick={onClose}>Cancel</button>
           <button className={styles.modalCreate} onClick={submit} disabled={!name.trim()}>Create</button>
@@ -75,14 +54,12 @@ function ProjectCard({ project, onOpen, onDelete }) {
 
   const date = new Date(project.createdAt)
   const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-  const metricLabel = PROJECT_METRICS.find(m => m.value === project.metric)?.label ?? project.metric
 
   return (
     <div className={styles.card} onClick={() => onOpen(project)}>
       <div className={styles.cardBody}>
         <div className={styles.cardName}>{project.name}</div>
         <div className={styles.cardMeta}>
-          <span className={styles.cardMetric}>{metricLabel}</span>
           <span className={styles.cardDate}>{dateStr}</span>
         </div>
         {project.description && (
