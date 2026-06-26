@@ -60,20 +60,46 @@ function computeWordRects(el) {
 }
 
 // ── PostIt card ───────────────────────────────────────────────────────────────
-function PostIt({ note, position, size, isMergeTarget, backgroundColor, paintCat, onPaint, onDragStart, onCollapse, onOpen, onSplit, onResize, onRegisterCard }) {
-  const [splitActive, setSplitActive] = useState(false)
+function PostIt({
+  note,
+  position,
+  size,
+  isMergeTarget,
+  backgroundColor,
+  interactionMode,
+  paintCat,
+  onPaint,
+  onDragStart,
+  onCollapse,
+  onOpen,
+  onSplit,
+  onResize,
+  onRegisterCard,
+  onInlineUpdate,
+}) {
   const [cutY, setCutY]               = useState(null) // px from top of card
   const [cutOffset, setCutOffset]     = useState(null) // char index in snippet text
+  const [inlineEditing, setInlineEditing] = useState(false)
+  const [draftTitle, setDraftTitle]   = useState(note.title || '')
+  const [draftText, setDraftText]     = useState('')
   const cardRef  = useRef(null)
   const bodyRef  = useRef(null)
+  const titleEditRef = useRef(null)
   const lineBreaksRef = useRef(null)
 
   const snippet = stripHtml(note.html || '')
+  const splitActive = interactionMode === 'scissor'
 
   useEffect(() => {
     onRegisterCard?.(note.id, cardRef.current)
     return () => onRegisterCard?.(note.id, null)
   }, [note.id, onRegisterCard])
+
+  useEffect(() => {
+    if (inlineEditing) return
+    setDraftTitle(note.title || '')
+    setDraftText(snippet)
+  }, [inlineEditing, note.title, snippet])
 
   // Compute paragraph-based line break positions relative to body element
   const buildLineBreaks = () => {
@@ -113,10 +139,15 @@ function PostIt({ note, position, size, isMergeTarget, backgroundColor, paintCat
 
   useEffect(() => {
     if (!splitActive) return
-    const handler = e => { if (e.key === 'Escape') setSplitActive(false) }
+    const handler = e => { if (e.key === 'Escape') { setCutY(null); setCutOffset(null) } }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
   }, [splitActive])
+
+  useEffect(() => {
+    if (!inlineEditing) return
+    requestAnimationFrame(() => titleEditRef.current?.focus())
+  }, [inlineEditing])
 
   const handleMouseMove = (e) => {
     if (!splitActive || !lineBreaksRef.current) return
@@ -181,9 +212,44 @@ function PostIt({ note, position, size, isMergeTarget, backgroundColor, paintCat
       e.stopPropagation()
       const part1 = snippet.slice(0, cutOffset).trimEnd()
       const part2 = snippet.slice(cutOffset).trimStart()
-      setSplitActive(false)
       onSplit?.(part1, part2)
     }
+  }
+
+  const startInlineEdit = () => {
+    setDraftTitle(note.title || '')
+    setDraftText(snippet)
+    setInlineEditing(true)
+  }
+
+  const commitInlineEdit = async () => {
+    if (!inlineEditing) return
+    const nextTitle = draftTitle.trim() || deriveTitle(draftText) || 'Untitled'
+    const nextHtml = draftText.replace(/\n/g, '<br>')
+    setInlineEditing(false)
+    if (nextTitle === (note.title || '') && nextHtml === (note.html || '')) return
+    try {
+      await onInlineUpdate?.(note.id, { title: nextTitle, html: nextHtml })
+    } catch (e) {
+      console.error('Inline note update failed', e)
+      setInlineEditing(true)
+    }
+  }
+
+  const cancelInlineEdit = () => {
+    setDraftTitle(note.title || '')
+    setDraftText(snippet)
+    setInlineEditing(false)
+  }
+
+  const handleDoubleClick = (e) => {
+    e.stopPropagation()
+    if (paintCat || splitActive) return
+    if (interactionMode === 'edit') {
+      startInlineEdit()
+      return
+    }
+    onOpen()
   }
 
   return (
@@ -192,29 +258,53 @@ function PostIt({ note, position, size, isMergeTarget, backgroundColor, paintCat
       className={`${styles.postit} ${isMergeTarget ? styles.postitMergeTarget : ''} ${splitActive ? styles.postitSplitMode : ''}`}
       style={{ left: position.x, top: position.y, backgroundColor, ...(size ? { width: size.w, height: size.h } : {}) }}
       onClick={handleClick}
-      onDoubleClick={splitActive || paintCat ? undefined : e => { e.stopPropagation(); onOpen() }}
+      onDoubleClick={handleDoubleClick}
+      onBlurCapture={e => {
+        if (!inlineEditing) return
+        if (e.currentTarget.contains(e.relatedTarget)) return
+        commitInlineEdit()
+      }}
       onMouseMove={handleMouseMove}
       onMouseLeave={() => { if (splitActive) { setCutY(null); setCutOffset(null) } }}
     >
-      <div className={styles.postitHeader} onPointerDown={splitActive || paintCat ? undefined : onDragStart}>
-        <span className={styles.postitTitle}>{note.title || 'Untitled'}</span>
-        <button
-          className={`${styles.postitSplitBtn} ${splitActive ? styles.postitSplitBtnActive : ''}`}
-          title="Split note"
-          onPointerDown={e => e.stopPropagation()}
-          onClick={e => { e.stopPropagation(); setSplitActive(a => !a) }}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/>
-            <line x1="20" y1="4" x2="8.12" y2="15.88"/>
-            <line x1="14.47" y1="14.48" x2="20" y2="20"/>
-            <line x1="8.12" y1="8.12" x2="12" y2="12"/>
-          </svg>
-        </button>
+      <div className={styles.postitHeader} onPointerDown={paintCat || inlineEditing ? undefined : onDragStart}>
+        {inlineEditing ? (
+          <input
+            ref={titleEditRef}
+            className={styles.inlineTitleInput}
+            value={draftTitle}
+            onChange={e => setDraftTitle(e.target.value)}
+            onPointerDown={e => e.stopPropagation()}
+            onDoubleClick={e => e.stopPropagation()}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); commitInlineEdit() }
+              if (e.key === 'Escape') { e.preventDefault(); cancelInlineEdit() }
+            }}
+            placeholder="Untitled"
+          />
+        ) : (
+          <span className={styles.postitTitle}>{note.title || 'Untitled'}</span>
+        )}
         <button className={styles.postitClose} title="Collapse" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onCollapse() }}>×</button>
       </div>
 
-      {snippet && <p ref={bodyRef} className={styles.postitBody}>{snippet}</p>}
+      {inlineEditing ? (
+        <textarea
+          ref={bodyRef}
+          className={styles.inlineBodyInput}
+          value={draftText}
+          onChange={e => setDraftText(e.target.value)}
+          onPointerDown={e => e.stopPropagation()}
+          onDoubleClick={e => e.stopPropagation()}
+          onKeyDown={e => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); commitInlineEdit() }
+            if (e.key === 'Escape') { e.preventDefault(); cancelInlineEdit() }
+          }}
+          placeholder="Description..."
+        />
+      ) : (
+        snippet && <p ref={bodyRef} className={styles.postitBody}>{snippet}</p>
+      )}
 
       <div className={styles.resizeHandle} onPointerDown={handleResizeDown}>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
@@ -316,8 +406,68 @@ function NotesColorLegendWidget({
   )
 }
 
+function ModeControls({ mode, onModeChange }) {
+  const modes = [
+    {
+      id: 'edit',
+      label: 'Edit',
+      title: 'Edit mode: double-click a note to edit title and description inline',
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 20h9" />
+          <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+        </svg>
+      ),
+    },
+    {
+      id: 'scissor',
+      label: 'Scissor',
+      title: 'Scissor mode: click the left edge of a note at a line break to split it',
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="6" cy="6" r="3" />
+          <circle cx="6" cy="18" r="3" />
+          <line x1="20" y1="4" x2="8.12" y2="15.88" />
+          <line x1="14.47" y1="14.48" x2="20" y2="20" />
+          <line x1="8.12" y1="8.12" x2="12" y2="12" />
+        </svg>
+      ),
+    },
+    {
+      id: 'merge',
+      label: 'Merge',
+      title: 'Merge mode: drag one note over another to merge them',
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="5" width="7" height="7" rx="1.5" />
+          <rect x="14" y="12" width="7" height="7" rx="1.5" />
+          <path d="M10 8.5h4" />
+          <path d="M12.5 6l3 2.5-3 2.5" />
+        </svg>
+      ),
+    },
+  ]
+
+  return (
+    <div className={styles.modeControls} aria-label="Canvas interaction mode">
+      {modes.map(item => (
+        <button
+          key={item.id}
+          className={`${styles.modeBtn} ${mode === item.id ? styles.modeBtnActive : ''}`}
+          onClick={() => onModeChange(item.id)}
+          title={item.title}
+          aria-label={item.title}
+          aria-pressed={mode === item.id}
+        >
+          {item.icon}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
-export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onRefresh, refreshKey = 0 }) {
+export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpdated, onRefresh, refreshKey = 0 }) {
   // Canvas state
   const [openNoteIds, setOpenNoteIds]       = useState(new Set())
   const [notePositions, setNotePositions]   = useState({})
@@ -351,6 +501,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onRefresh,
   const [colorDimId, setColorDimId] = useState('')
   const [paintCat, setPaintCat] = useState(null)
   const [floatingPanel, setFloatingPanel] = useState(null)
+  const [interactionMode, setInteractionMode] = useState('edit')
 
   const editorRef    = useRef(null)
   const titleInputRef = useRef(null)
@@ -402,6 +553,12 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onRefresh,
 
   const activatePaint = (catId, color) => {
     setPaintCat(prev => prev?.id === catId ? null : { id: catId, color })
+  }
+
+  const changeInteractionMode = mode => {
+    setInteractionMode(mode)
+    setMergeCandidate(null)
+    setMergeProposal(null)
   }
 
   const paintNote = async noteId => {
@@ -493,6 +650,11 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onRefresh,
     layoutNotesOnCanvas(noteIds)
   }
 
+  const expandSearchResultsOnCanvas = () => {
+    layoutNotesOnCanvas(findResults.map(note => note.id))
+    setFindFocused(false)
+  }
+
   const collapseNote = (id) => {
     setOpenNoteIds(prev => { const n = new Set(prev); n.delete(id); return n })
   }
@@ -501,6 +663,11 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onRefresh,
     setOpenNoteIds(new Set())
     setMergeCandidate(null)
     setMergeProposal(null)
+  }
+
+  const handleInlineUpdate = async (noteId, patch) => {
+    await api.updateNote(noteId, patch)
+    onNoteUpdated?.(noteId, patch)
   }
 
   // ── Merge ────────────────────────────────────────────────────────────────────
@@ -614,14 +781,18 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onRefresh,
 
     const newPos = { x: origX + dx, y: origY + dy }
     setNotePositions(prev => ({ ...prev, [id]: newPos }))
-    setMergeCandidate(findMergeCandidate(id, newPos))
+    if (interactionMode === 'merge') {
+      setMergeCandidate(findMergeCandidate(id, newPos))
+    } else {
+      setMergeCandidate(null)
+    }
   }
 
   const handlePointerUp = () => {
     const { id } = draggingRef.current || {}
     draggingRef.current = null
 
-    if (id && mergeCandidate && wasDraggedRef.current) {
+    if (interactionMode === 'merge' && id && mergeCandidate && wasDraggedRef.current) {
       const pos = notePositions[id] || { x: 200, y: 200 }
       setMergeProposal({ sourceId: id, targetId: mergeCandidate, x: pos.x + 130, y: pos.y + 70 })
       setMergeCandidate(null)
@@ -763,17 +934,23 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onRefresh,
               size={noteSizes[id] || null}
               isMergeTarget={mergeCandidate === id}
               backgroundColor={noteBackground}
+              interactionMode={interactionMode}
               onDragStart={e => handlePointerDown(e, id)}
               onCollapse={() => collapseNote(id)}
               onOpen={() => { if (!wasDraggedRef.current) onNoteOpen?.(id) }}
               onSplit={(t1, t2) => handleSplitNote(id, t1, t2)}
               onResize={(w, h) => setNoteSizes(prev => ({ ...prev, [id]: { w, h } }))}
               onRegisterCard={registerCard}
+              onInlineUpdate={handleInlineUpdate}
               paintCat={paintCat}
               onPaint={paintNote}
             />
           )
         })}
+      </div>
+
+      <div className={styles.floatingModeTools}>
+        <ModeControls mode={interactionMode} onModeChange={changeInteractionMode} />
       </div>
 
       <div className={styles.floatingViewTools}>
@@ -783,12 +960,11 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onRefresh,
           disabled={openNoteIds.size === 0}
           title="Clear canvas"
         >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3 6h18" />
-            <path d="M8 6V4h8v2" />
-            <path d="M19 6l-1 14H6L5 6" />
-            <path d="M10 11v5" />
-            <path d="M14 11v5" />
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="4" y="5" width="9" height="7" rx="1.5" />
+            <rect x="7" y="10" width="9" height="7" rx="1.5" />
+            <path d="M15 6h5v5" />
+            <path d="M20 6l-6 6" />
           </svg>
         </button>
         <NotesColorLegendWidget
@@ -828,15 +1004,28 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onRefresh,
           <div className={styles.canvasSearchResults}>
             {findResults.length === 0 ? (
               <div className={styles.findEmpty}>No matches</div>
-            ) : findResults.map(note => (
-              <button key={note.id}
-                className={`${styles.findResult} ${openNoteIds.has(note.id) ? styles.findResultOpen : ''}`}
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => { openOnCanvas(note.id); setFindQuery(''); setFindFocused(false) }}>
-                <span>{note.title || 'Untitled'}</span>
-                {openNoteIds.has(note.id) && <span className={styles.findBadge}>on canvas</span>}
-              </button>
-            ))}
+            ) : (
+              <>
+                <button
+                  className={styles.findExpandAll}
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={expandSearchResultsOnCanvas}
+                  title="Open all matching notes on canvas"
+                >
+                  <span>Expand all matches</span>
+                  <span className={styles.findBadge}>{findResults.length}</span>
+                </button>
+                {findResults.map(note => (
+                  <button key={note.id}
+                    className={`${styles.findResult} ${openNoteIds.has(note.id) ? styles.findResultOpen : ''}`}
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => { openOnCanvas(note.id); setFindQuery(''); setFindFocused(false) }}>
+                    <span>{note.title || 'Untitled'}</span>
+                    {openNoteIds.has(note.id) && <span className={styles.findBadge}>on canvas</span>}
+                  </button>
+                ))}
+              </>
+            )}
           </div>
         )}
       </div>

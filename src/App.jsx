@@ -230,7 +230,14 @@ export default function App() {
           <ProjectDashboard project={activeProject} onUpdate={handleProjectUpdate} isActive={view === 0} />
         </div>
         <div className={styles.view} style={{ display: view === 1 ? 'flex' : 'none' }}>
-          <NotesPage notes={notes} onNoteCreated={handleNoteCreated} onNoteOpen={openNotePopup} onRefresh={() => setRefreshKey(k => k + 1)} refreshKey={noteDataVersion} />
+          <NotesPage
+            notes={notes}
+            onNoteCreated={handleNoteCreated}
+            onNoteOpen={openNotePopup}
+            onNoteUpdated={handleNoteUpdated}
+            onRefresh={() => setRefreshKey(k => k + 1)}
+            refreshKey={noteDataVersion}
+          />
         </div>
         <div className={styles.view} style={{ display: view === 2 ? 'flex' : 'none' }}>
           <ClassificationPage notes={notes} isActive={view === 2} onNoteOpen={openNotePopup} refreshKey={noteDataVersion} />
