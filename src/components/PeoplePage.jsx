@@ -6,15 +6,24 @@ import { api } from '../api'
 import styles from './PeoplePage.module.css'
 
 const CHAR_KEYS = 'abcdefghijklmnopqr'.split('')
+const RETRO_KEY_FALLBACKS = {
+  humanFemaleA: 'a',
+  humanMaleA: 'b',
+  zombieFemaleA: 'c',
+  zombieMaleA: 'd',
+}
 
 // Derive a consistent highlight color per character so avatars look distinct when selected
 const KEY_COLORS = ['#4f8ef7','#f77b4f','#4fc97f','#f7d44f','#b44ff7','#f74f8e',
                     '#4fe0f7','#f7944f','#7f4ff7','#4ff7d4','#f74f4f','#4fa8f7',
                     '#a0c44f','#f74fc9','#4fc9f7','#f7c44f','#c44ff7','#4ff7a0']
-const keyColor = (k) => KEY_COLORS[CHAR_KEYS.indexOf(k)] ?? '#4f8ef7'
+const resolveModelKey = (key = 'a') => CHAR_KEYS.includes(key) ? key : (RETRO_KEY_FALLBACKS[key] ?? 'a')
+const keyColor = (k) => {
+  const index = CHAR_KEYS.indexOf(resolveModelKey(k))
+  return KEY_COLORS[index >= 0 ? index : 0] ?? '#4f8ef7'
+}
 
 CHAR_KEYS.forEach(k => useGLTF.preload(`/models/character-${k}.glb`))
-useGLTF.preload('/models/bricks/bevel-hq-plate-2x2.glb')
 
 const TARGET_HEIGHT = 1.7
 
@@ -51,7 +60,8 @@ function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7',
   const lit = hovered || selected
   const { gl } = useThree()
 
-  const { scene, animations } = useGLTF(`/models/character-${modelKey}.glb`)
+  const resolvedModelKey = resolveModelKey(modelKey)
+  const { scene, animations } = useGLTF(`/models/character-${resolvedModelKey}.glb`)
 
   const { cloned, scale, yShift } = useMemo(() => {
     const c = scene.clone(true)
@@ -139,10 +149,10 @@ function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7',
   )
 }
 
-// ── Brick island ─────────────────────────────────────────────────────────────
+// ── Category island ──────────────────────────────────────────────────────────
 const ISLAND_W     = 5.0
 const ISLAND_D     = 5.0
-const ISLAND_H     = 0.22
+const ISLAND_H     = 0.04
 const ISLAND_COLS  = 4
 const ISLAND_SLOT_GRID = 10
 const TILE_GRID    = 8
@@ -151,64 +161,64 @@ const ISLAND_RENDER_D = ISLAND_D * TILE_GRID / ISLAND_SLOT_GRID
 const LOCKED_CATEGORY_X = -7.5
 const LOCKED_CATEGORY_Z = -7.5
 
-function darkenColor(hexColor, factor = 0.76) {
-  return new THREE.Color(hexColor).multiplyScalar(factor)
-}
+function CategoryIsland({ position, color, name }) {
+  const floorTexture = useMemo(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 96
+    canvas.height = 96
+    const ctx = canvas.getContext('2d')
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-function coloredClone(sourceScene, color, roughness = 0.52) {
-  const c = sourceScene.clone(true)
-  const col = new THREE.Color(color)
-  c.traverse(child => {
-    if (!child.isMesh) return
-    child.castShadow = true
-    child.receiveShadow = true
-    child.material = child.material.clone()
-    child.material.color.copy(col)
-    child.material.roughness = roughness
-    child.material.metalness = 0.0
-  })
-  return c
-}
+    ctx.strokeStyle = 'rgba(255,255,255,0.46)'
+    ctx.lineWidth = 1.35
+    for (let i = -96; i < 192; i += 24) {
+      ctx.beginPath()
+      ctx.moveTo(i, 0)
+      ctx.lineTo(i + 96, 96)
+      ctx.stroke()
+    }
 
-function BrickIsland({ position, color, name }) {
-  const { scene: plateScene } = useGLTF('/models/bricks/bevel-hq-plate-2x2.glb')
-
-  const parts = useMemo(() => {
-    const plateBox = new THREE.Box3().setFromObject(plateScene)
-    const pW = plateBox.max.x - plateBox.min.x
-    const pD = plateBox.max.z - plateBox.min.z
-
-    const tW = ISLAND_W / ISLAND_SLOT_GRID
-    const tD = ISLAND_D / ISLAND_SLOT_GRID
-    const sx = tW / pW
-    const sz = tD / pD
-    const sy = sx
-    const yShift = -plateBox.min.y * sy
-    const plateTop = plateBox.max.y * sy + yShift
-
-    const dark = darkenColor(color, 0.76)
-    const floorTiles = []
-    for (let row = 0; row < TILE_GRID; row++) {
-      for (let col = 0; col < TILE_GRID; col++) {
-        const tileColor = (row + col) % 2 === 0 ? color : `#${dark.getHexString()}`
-        floorTiles.push({
-          scene: coloredClone(plateScene, tileColor),
-          pos: [(col - (TILE_GRID - 1) / 2) * tW, yShift, (row - (TILE_GRID - 1) / 2) * tD],
-          scale: [sx, sy, sz],
-        })
+    ctx.fillStyle = 'rgba(0,0,0,0.22)'
+    for (let y = 12; y < 96; y += 24) {
+      for (let x = 12; x < 96; x += 24) {
+        ctx.beginPath()
+        ctx.arc(x, y, 1.2, 0, Math.PI * 2)
+        ctx.fill()
       }
     }
 
-    return { floorTiles, labelY: plateTop + 0.3 }
-  }, [plateScene, color])
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.wrapS = THREE.RepeatWrapping
+    texture.wrapT = THREE.RepeatWrapping
+    texture.repeat.set(3, 3)
+    texture.needsUpdate = true
+    return texture
+  }, [])
 
   return (
     <group position={position}>
-      {parts.floorTiles.map((t, i) => (
-        <primitive key={i} object={t.scene} position={t.pos} scale={t.scale} />
-      ))}
+      <mesh
+        receiveShadow
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0.035, 0]}
+      >
+        <planeGeometry args={[ISLAND_RENDER_W, ISLAND_RENDER_D]} />
+        <meshStandardMaterial color={color} roughness={0.86} metalness={0} />
+      </mesh>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0.041, 0]}
+      >
+        <planeGeometry args={[ISLAND_RENDER_W, ISLAND_RENDER_D]} />
+        <meshBasicMaterial
+          map={floorTexture}
+          transparent
+          opacity={0.82}
+          depthWrite={false}
+        />
+      </mesh>
       <Text
-        position={[0, parts.labelY, 0]}
+        position={[0, 0.24, 0]}
         fontSize={0.24}
         color="#fff"
         anchorX="center"
@@ -417,7 +427,7 @@ function Scene({
       />
 
       {islands.map(cat => (
-        <BrickIsland key={cat.id} position={cat.islandPos} color={cat.color || '#aaa'} name={cat.name} />
+        <CategoryIsland key={cat.id} position={cat.islandPos} color={cat.color || '#aaa'} name={cat.name} />
       ))}
 
       <ContactShadows position={[0, 0.002, 0]} opacity={0.22} scale={20} blur={2.5} far={1} color="#7788aa" />
@@ -552,18 +562,105 @@ function AddPersonaPanel({ onClose, onCreate }) {
   )
 }
 
-// ── Confirm delete modal ──────────────────────────────────────────────────────
-function ConfirmModal({ name, onConfirm, onCancel }) {
+// ── Edit Persona modal ────────────────────────────────────────────────────────
+function EditPersonaModal({ persona, onClose, onSave, onDelete }) {
+  const [name, setName] = useState(persona.name)
+  const [modelKey, setModelKey] = useState(resolveModelKey(persona.modelKey))
+  const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  const handleSave = async () => {
+    if (!name.trim()) return
+    setSaving(true)
+    try {
+      await onSave(persona.id, { name: name.trim(), modelKey })
+      onClose()
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    try {
+      await onDelete(persona.id)
+      onClose()
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
-    <div className={styles.modalOverlay} onClick={onCancel}>
-      <div className={styles.modal} onClick={e => e.stopPropagation()}>
-        <p className={styles.modalText}>
-          Delete <strong>{name}</strong>? This cannot be undone.
-        </p>
-        <div className={styles.modalActions}>
-          <button className={styles.modalCancel} onClick={onCancel}>Cancel</button>
-          <button className={styles.modalConfirm} onClick={onConfirm}>Delete</button>
+    <div className={styles.modalOverlay} onClick={onClose}>
+      <div className={styles.editPanel} onClick={e => e.stopPropagation()}>
+        <div className={styles.addPanelHeader}>
+          <span className={styles.addPanelTitle}>Edit Persona</span>
+          <button className={styles.addPanelClose} onClick={onClose} title="Close">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
         </div>
+
+        <label className={styles.addPanelLabel}>Name</label>
+        <input
+          className={styles.addPanelInput}
+          placeholder="Persona name"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleSave()}
+          autoFocus
+        />
+
+        <label className={styles.addPanelLabel}>Character</label>
+        <div className={styles.charGrid}>
+          {CHAR_KEYS.map(k => (
+            <button
+              key={k}
+              className={`${styles.charCard} ${modelKey === k ? styles.charCardSelected : ''}`}
+              onClick={() => setModelKey(k)}
+              title={`Character ${k.toUpperCase()}`}
+            >
+              <img
+                src={`/models/previews/character-${k}.png`}
+                alt={`character-${k}`}
+                className={styles.charImg}
+              />
+            </button>
+          ))}
+        </div>
+
+        {confirmDelete ? (
+          <div className={styles.deleteConfirmBox}>
+            <p>Delete <strong>{persona.name}</strong>?</p>
+            <div className={styles.modalActions}>
+              <button className={styles.modalCancel} onClick={() => setConfirmDelete(false)} disabled={deleting}>
+                Cancel
+              </button>
+              <button className={styles.modalConfirm} onClick={handleDelete} disabled={deleting}>
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className={styles.editPanelActions}>
+            <button className={styles.editDeleteBtn} onClick={() => setConfirmDelete(true)}>
+              Delete Persona
+            </button>
+            <button
+              className={styles.addBtn}
+              onClick={handleSave}
+              disabled={!name.trim() || saving}
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -621,7 +718,7 @@ export default function PeoplePage() {
   const [personaAssignments, setPersonaAssignments] = useState([])
   const [selected, setSelected]         = useState(null)
   const [showAddPanel, setShowAddPanel] = useState(false)
-  const [confirmId, setConfirmId]       = useState(null)
+  const [editPersonaId, setEditPersonaId] = useState(null)
   const [layoutLocked, setLayoutLocked] = useState(false)
   const [sourceDragPersonaId, setSourceDragPersonaId] = useState(null)
 
@@ -674,21 +771,34 @@ export default function PeoplePage() {
     }
   }
 
-  const confirmPersona = confirmId ? personas.find(p => p.id === confirmId) : null
+  const handleUpdatePersona = async (id, patch) => {
+    const previous = personas.find(p => p.id === id)
+    setPersonas(prev => prev.map(p => p.id === id
+      ? { ...p, name: patch.name, modelKey: patch.modelKey }
+      : p
+    ))
+    try {
+      const saved = await api.updatePersona(id, { name: patch.name, model_key: patch.modelKey })
+      setPersonas(prev => prev.map(p => p.id === id ? saved : p))
+    } catch (e) {
+      if (previous) setPersonas(prev => prev.map(p => p.id === id ? previous : p))
+      throw e
+    }
+  }
 
-  const handleDeleteConfirmed = async () => {
-    const id = confirmId
-    setConfirmId(null)
-    // Optimistic: remove immediately
+  const handleDeletePersona = async (id) => {
+    const previousPersonas = personas
+    const previousAssignments = personaAssignments
     setPersonas(prev => prev.filter(p => p.id !== id))
     setPersonaAssignments(prev => prev.filter(a => a.personaId !== id))
     setSelected(null)
+    setEditPersonaId(null)
     try {
       await api.deletePersona(id)
     } catch (e) {
-      console.error(e)
-      // Restore on failure
-      api.getPersonas().then(setPersonas).catch(console.error)
+      setPersonas(previousPersonas)
+      setPersonaAssignments(previousAssignments)
+      throw e
     }
   }
 
@@ -708,10 +818,22 @@ export default function PeoplePage() {
   }, [sourceDragPersonaId])
 
   const startSourceDrag = (personaId, e) => {
+    if (e.detail > 1) return
     e.preventDefault()
     setSourceDragPersonaId(personaId)
     setSelected(personaId)
   }
+
+  const openEditPersona = (personaId, e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setSourceDragPersonaId(null)
+    setShowAddPanel(false)
+    setSelected(personaId)
+    setEditPersonaId(personaId)
+  }
+
+  const editPersona = editPersonaId ? personas.find(p => p.id === editPersonaId) : null
 
   return (
     <div className={styles.page}>
@@ -783,12 +905,13 @@ export default function PeoplePage() {
               key={persona.id}
               className={`${styles.personaListItem} ${selected === persona.id ? styles.personaListItemActive : ''}`}
               onPointerDown={e => startSourceDrag(persona.id, e)}
+              onDoubleClick={e => openEditPersona(persona.id, e)}
               onClick={() => setSelected(selected === persona.id ? null : persona.id)}
-              title="Drag this persona to a category island"
+              title="Drag to assign. Double-click to edit."
             >
               <img
-                src={`/models/previews/character-${persona.modelKey}.png`}
-                alt={persona.modelKey}
+                src={`/models/previews/character-${resolveModelKey(persona.modelKey)}.png`}
+                alt={resolveModelKey(persona.modelKey)}
                 className={styles.personaListAvatar}
               />
               <span>{persona.name}</span>
@@ -805,12 +928,21 @@ export default function PeoplePage() {
         />
       )}
 
+      {editPersona && (
+        <EditPersonaModal
+          persona={editPersona}
+          onClose={() => setEditPersonaId(null)}
+          onSave={handleUpdatePersona}
+          onDelete={handleDeletePersona}
+        />
+      )}
+
       {selectedPersona && (
         <div className={styles.selectionBar}>
           <div className={styles.selectionInfo}>
             <img
-              src={`/models/previews/character-${selectedPersona.modelKey}.png`}
-              alt={selectedPersona.modelKey}
+              src={`/models/previews/character-${resolveModelKey(selectedPersona.modelKey)}.png`}
+              alt={resolveModelKey(selectedPersona.modelKey)}
               className={styles.selectionAvatar}
             />
             <span className={styles.selectionName}>{selectedPersona.name}</span>
@@ -831,25 +963,7 @@ export default function PeoplePage() {
               ))}
             </div>
           )}
-          <button
-            className={styles.deleteBtn}
-            onClick={() => setConfirmId(selectedPersona.id)}
-            title="Delete persona"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>
-            </svg>
-            Delete
-          </button>
         </div>
-      )}
-
-      {confirmPersona && (
-        <ConfirmModal
-          name={confirmPersona.name}
-          onConfirm={handleDeleteConfirmed}
-          onCancel={() => setConfirmId(null)}
-        />
       )}
 
       <div className={styles.hint}>{layoutLocked ? 'Locked view · Drag from panel to assign · Drag off island to unassign' : 'Unlocked · Orbit · Zoom · Drag off island to unassign'}</div>
