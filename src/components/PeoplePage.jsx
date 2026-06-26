@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useMemo, useCallback } from 'react'
+import { flushSync } from 'react-dom'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls, Grid, Environment, Text, ContactShadows, useGLTF, useAnimations } from '@react-three/drei'
 import * as THREE from 'three'
@@ -37,17 +38,54 @@ function CursorManager({ dragging }) {
   return null
 }
 
-function CameraLock({ locked }) {
+function CameraDirector({ locked, focusTarget, resetRevision = 0 }) {
   const { camera, controls } = useThree()
+  const movingRef = useRef(false)
+  const overviewRef = useRef(false)
+
   useEffect(() => {
+    if (focusTarget) {
+      movingRef.current = true
+      overviewRef.current = false
+      return
+    }
+    if (resetRevision > 0) {
+      movingRef.current = true
+      overviewRef.current = true
+      return
+    }
     if (!locked) return
     camera.position.set(0, 8, 14)
     camera.lookAt(0, 0, 0)
-    if (controls?.target) {
-      controls.target.set(0, 0, 0)
-      controls.update()
+    if (controls?.target) controls.target.set(0, 0, 0)
+    controls?.update?.()
+  }, [camera, controls, focusTarget, locked, resetRevision])
+
+  useFrame(() => {
+    if (!movingRef.current) return
+    const [x, , z] = focusTarget ?? [0, 0, 0]
+    const desiredPosition = overviewRef.current
+      ? new THREE.Vector3(0, 8, 14)
+      : new THREE.Vector3(x + 0.45, 3.85, z + 3.55)
+    const desiredTarget = overviewRef.current
+      ? new THREE.Vector3(0, 0, 0)
+      : new THREE.Vector3(x, ISLAND_H + 0.06, z)
+    camera.position.lerp(desiredPosition, 0.12)
+    if (controls?.target) controls.target.lerp(desiredTarget, 0.12)
+    camera.lookAt(controls?.target ?? desiredTarget)
+    controls?.update?.()
+    if (
+      camera.position.distanceTo(desiredPosition) < 0.025 &&
+      (!controls?.target || controls.target.distanceTo(desiredTarget) < 0.025)
+    ) {
+      movingRef.current = false
+      overviewRef.current = false
+      camera.position.copy(desiredPosition)
+      if (controls?.target) controls.target.copy(desiredTarget)
+      controls?.update?.()
     }
-  }, [camera, controls, locked])
+  })
+
   return null
 }
 
@@ -161,38 +199,85 @@ const ISLAND_RENDER_D = ISLAND_D * TILE_GRID / ISLAND_SLOT_GRID
 const LOCKED_CATEGORY_X = -7.5
 const LOCKED_CATEGORY_Z = -7.5
 
-function CategoryIsland({ position, color, name }) {
+function CategoryIsland({ position, color, name, focused = false, onDoubleClick }) {
   const floorTexture = useMemo(() => {
     const canvas = document.createElement('canvas')
-    canvas.width = 96
-    canvas.height = 96
+    canvas.width = 128
+    canvas.height = 128
     const ctx = canvas.getContext('2d')
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-    ctx.strokeStyle = 'rgba(255,255,255,0.46)'
-    ctx.lineWidth = 1.35
-    for (let i = -96; i < 192; i += 24) {
-      ctx.beginPath()
-      ctx.moveTo(i, 0)
-      ctx.lineTo(i + 96, 96)
-      ctx.stroke()
-    }
-
-    ctx.fillStyle = 'rgba(0,0,0,0.22)'
-    for (let y = 12; y < 96; y += 24) {
-      for (let x = 12; x < 96; x += 24) {
+    if (focused) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.42)'
+      ctx.lineWidth = 1
+      for (let i = 0; i <= 128; i += 16) {
         ctx.beginPath()
-        ctx.arc(x, y, 1.2, 0, Math.PI * 2)
-        ctx.fill()
+        ctx.moveTo(i, 0)
+        ctx.lineTo(i, 128)
+        ctx.moveTo(0, i)
+        ctx.lineTo(128, i)
+        ctx.stroke()
+      }
+
+      ctx.strokeStyle = 'rgba(0,0,0,0.18)'
+      ctx.lineWidth = 2
+      for (let i = 0; i <= 128; i += 64) {
+        ctx.beginPath()
+        ctx.moveTo(i, 0)
+        ctx.lineTo(i, 128)
+        ctx.moveTo(0, i)
+        ctx.lineTo(128, i)
+        ctx.stroke()
+      }
+    } else {
+      ctx.strokeStyle = 'rgba(255,255,255,0.46)'
+      ctx.lineWidth = 1.35
+      for (let i = -128; i < 256; i += 32) {
+        ctx.beginPath()
+        ctx.moveTo(i, 0)
+        ctx.lineTo(i + 128, 128)
+        ctx.stroke()
+      }
+
+      ctx.fillStyle = 'rgba(0,0,0,0.22)'
+      for (let y = 16; y < 128; y += 32) {
+        for (let x = 16; x < 128; x += 32) {
+          ctx.beginPath()
+          ctx.arc(x, y, 1.4, 0, Math.PI * 2)
+          ctx.fill()
+        }
       }
     }
 
     const texture = new THREE.CanvasTexture(canvas)
     texture.wrapS = THREE.RepeatWrapping
     texture.wrapT = THREE.RepeatWrapping
-    texture.repeat.set(3, 3)
+    texture.repeat.set(focused ? 4 : 3, focused ? 4 : 3)
     texture.needsUpdate = true
     return texture
+  }, [focused])
+  const dashSegments = useMemo(() => {
+    const dash = 0.34
+    const gap = 0.18
+    const y = ISLAND_H + 0.024
+    const segments = []
+    const addHorizontal = (z) => {
+      for (let x = -ISLAND_RENDER_W / 2; x < ISLAND_RENDER_W / 2; x += dash + gap) {
+        const len = Math.min(dash, ISLAND_RENDER_W / 2 - x)
+        if (len > 0.04) segments.push({ pos: [x + len / 2, y, z], size: [len, 0.018], rot: 0 })
+      }
+    }
+    const addVertical = (x) => {
+      for (let z = -ISLAND_RENDER_D / 2; z < ISLAND_RENDER_D / 2; z += dash + gap) {
+        const len = Math.min(dash, ISLAND_RENDER_D / 2 - z)
+        if (len > 0.04) segments.push({ pos: [x, y, z + len / 2], size: [len, 0.018], rot: Math.PI / 2 })
+      }
+    }
+    addHorizontal(ISLAND_RENDER_D / 2 + 0.018)
+    addHorizontal(-ISLAND_RENDER_D / 2 - 0.018)
+    addVertical(ISLAND_RENDER_W / 2 + 0.018)
+    addVertical(-ISLAND_RENDER_W / 2 - 0.018)
+    return segments
   }, [])
   const sideLabelY = ISLAND_H / 2
   const sideLabelOffsetX = ISLAND_RENDER_W / 2 + 0.012
@@ -208,7 +293,13 @@ function CategoryIsland({ position, color, name }) {
   }
 
   return (
-    <group position={position}>
+    <group
+      position={position}
+      onDoubleClick={(e) => {
+        e.stopPropagation()
+        onDoubleClick?.()
+      }}
+    >
       <mesh
         castShadow
         receiveShadow
@@ -233,10 +324,20 @@ function CategoryIsland({ position, color, name }) {
         <meshBasicMaterial
           map={floorTexture}
           transparent
-          opacity={0.82}
+          opacity={focused ? 0.92 : 0.82}
           depthWrite={false}
         />
       </mesh>
+      {focused && dashSegments.map((segment, i) => (
+        <mesh
+          key={i}
+          rotation={[-Math.PI / 2, 0, segment.rot]}
+          position={segment.pos}
+        >
+          <planeGeometry args={segment.size} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.9} depthWrite={false} />
+        </mesh>
+      ))}
       <Text
         position={[0, ISLAND_H + 0.16, 0]}
         fontSize={0.24}
@@ -310,12 +411,17 @@ function Scene({
   activeCats = [],
   personas = [],
   personaAssignments = [],
+  assignmentRevision = 0,
+  focusedCategoryId = null,
+  viewResetRevision = 0,
   layoutLocked = true,
   sourceDragPersonaId = null,
   onSourceDragEnd,
   onPositionUpdate,
   onAssign,
   onUnassign,
+  onMoveAssignment,
+  onFocusCategory,
   onSelect,
   selected,
 }) {
@@ -327,6 +433,7 @@ function Scene({
   const dragMovedRef   = useRef(false)
 
   const islands = computeIslandLayout(activeCats, layoutLocked)
+  const focusedIsland = islands.find(cat => cat.id === focusedCategoryId)
   const activeDragId = dragId ?? sourceDragPersonaId
   const activeDragPersona = activeDragId ? personas.find(p => p.id === activeDragId) : null
   const activeDragPos = activeDragId ? posOverrides[activeDragId] : null
@@ -342,14 +449,16 @@ function Scene({
           Math.abs(pos[0] - cat.islandPos[0]) <= ISLAND_RENDER_W / 2 &&
           Math.abs(pos[2] - cat.islandPos[2]) <= ISLAND_RENDER_D / 2
         )
+        const assignment = dragAssignmentRef.current
         if (targetIsland && activeDimensionId) {
-          onAssign?.(id, activeDimensionId, targetIsland.id)
-          if (dragAssignmentRef.current && dragAssignmentRef.current.categoryId !== targetIsland.id) {
-            const assignment = dragAssignmentRef.current
-            onUnassign?.(assignment.personaId, assignment.dimensionId, assignment.categoryId)
+          if (assignment && assignment.categoryId !== targetIsland.id) {
+            dragAssignmentRef.current = null
+            onMoveAssignment?.(assignment.personaId, assignment.dimensionId, assignment.categoryId, targetIsland.id)
+          } else if (!assignment) {
+            onAssign?.(id, activeDimensionId, targetIsland.id)
           }
-        } else if (dragAssignmentRef.current) {
-          const assignment = dragAssignmentRef.current
+        } else if (assignment) {
+          dragAssignmentRef.current = null
           onUnassign?.(assignment.personaId, assignment.dimensionId, assignment.categoryId)
         }
       }
@@ -367,7 +476,7 @@ function Scene({
     dragAssignmentRef.current = null
     setDragId(null)
     onSourceDragEnd?.()
-  }, [activeDimensionId, islands, layoutLocked, onAssign, onPositionUpdate, onSourceDragEnd, onUnassign, sourceDragPersonaId])
+  }, [activeDimensionId, islands, layoutLocked, onAssign, onMoveAssignment, onPositionUpdate, onSourceDragEnd, onUnassign, sourceDragPersonaId])
 
   useEffect(() => {
     window.addEventListener('pointerup', stopDrag)
@@ -431,7 +540,11 @@ function Scene({
       <fog attach="fog" args={['#f8f8f6', 28, 70]} />
       <Environment preset="dawn" background={false} />
       <CursorManager dragging={activeDragId !== null} />
-      <CameraLock locked={layoutLocked} />
+      <CameraDirector
+        locked={layoutLocked}
+        focusTarget={focusedIsland?.islandPos ?? null}
+        resetRevision={viewResetRevision}
+      />
 
       {/* Infinite white floor — sits slightly below y=0 to avoid z-fighting with brick tile bottoms */}
       <mesh
@@ -459,7 +572,14 @@ function Scene({
       />
 
       {islands.map(cat => (
-        <CategoryIsland key={cat.id} position={cat.islandPos} color={cat.color || '#aaa'} name={cat.name} />
+        <CategoryIsland
+          key={cat.id}
+          position={cat.islandPos}
+          color={cat.color || '#aaa'}
+          name={cat.name}
+          focused={focusedCategoryId === cat.id}
+          onDoubleClick={() => onFocusCategory?.(cat.id)}
+        />
       ))}
 
       <ContactShadows position={[0, 0.002, 0]} opacity={0.22} scale={20} blur={2.5} far={1} color="#7788aa" />
@@ -493,7 +613,7 @@ function Scene({
 
       {assignedCopies.map(({ persona, catId, assignment, position }, i) => (
         <PersonAvatar
-          key={`${catId}:${persona.id}`}
+          key={`${assignmentRevision}:${catId}:${persona.id}`}
           modelKey={persona.modelKey}
           position={position}
           name={persona.name}
@@ -594,13 +714,22 @@ function AddPersonaPanel({ onClose, onCreate }) {
   )
 }
 
-// ── Edit Persona modal ────────────────────────────────────────────────────────
-function EditPersonaModal({ persona, onClose, onSave, onDelete }) {
+// ── Protopersona modal ────────────────────────────────────────────────────────
+function ProtopersonaModal({ persona, assignments = [], categories = [], dimensions = [], onClose, onSave, onDelete }) {
+  const [editing, setEditing] = useState(false)
   const [name, setName] = useState(persona.name)
   const [modelKey, setModelKey] = useState(resolveModelKey(persona.modelKey))
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const personaAssignments = assignments
+    .filter(a => a.personaId === persona.id)
+    .map(a => ({
+      ...a,
+      category: categories.find(c => c.id === a.categoryId),
+      dimension: dimensions.find(d => d.id === a.dimensionId),
+    }))
+    .filter(a => a.category && a.dimension)
 
   const handleSave = async () => {
     if (!name.trim()) return
@@ -631,7 +760,7 @@ function EditPersonaModal({ persona, onClose, onSave, onDelete }) {
     <div className={styles.modalOverlay} onClick={onClose}>
       <div className={styles.editPanel} onClick={e => e.stopPropagation()}>
         <div className={styles.addPanelHeader}>
-          <span className={styles.addPanelTitle}>Edit Persona</span>
+          <span className={styles.addPanelTitle}>{editing ? 'Edit Protopersona' : 'Protopersona'}</span>
           <button className={styles.addPanelClose} onClick={onClose} title="Close">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -639,59 +768,108 @@ function EditPersonaModal({ persona, onClose, onSave, onDelete }) {
           </button>
         </div>
 
-        <label className={styles.addPanelLabel}>Name</label>
-        <input
-          className={styles.addPanelInput}
-          placeholder="Persona name"
-          value={name}
-          onChange={e => setName(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleSave()}
-          autoFocus
-        />
-
-        <label className={styles.addPanelLabel}>Character</label>
-        <div className={styles.charGrid}>
-          {CHAR_KEYS.map(k => (
-            <button
-              key={k}
-              className={`${styles.charCard} ${modelKey === k ? styles.charCardSelected : ''}`}
-              onClick={() => setModelKey(k)}
-              title={`Character ${k.toUpperCase()}`}
-            >
+        {!editing ? (
+          <>
+            <div className={styles.protoHero}>
               <img
-                src={`/models/previews/character-${k}.png`}
-                alt={`character-${k}`}
-                className={styles.charImg}
+                src={`/models/previews/character-${resolveModelKey(persona.modelKey)}.png`}
+                alt={resolveModelKey(persona.modelKey)}
+                className={styles.protoAvatar}
               />
-            </button>
-          ))}
-        </div>
+              <div className={styles.protoInfo}>
+                <div className={styles.protoName}>{persona.name}</div>
+                <div className={styles.protoMeta}>Character {resolveModelKey(persona.modelKey).toUpperCase()}</div>
+              </div>
+            </div>
 
-        {confirmDelete ? (
-          <div className={styles.deleteConfirmBox}>
-            <p>Delete <strong>{persona.name}</strong>?</p>
-            <div className={styles.modalActions}>
-              <button className={styles.modalCancel} onClick={() => setConfirmDelete(false)} disabled={deleting}>
-                Cancel
-              </button>
-              <button className={styles.modalConfirm} onClick={handleDelete} disabled={deleting}>
-                {deleting ? 'Deleting…' : 'Delete'}
+            <div className={styles.protoSection}>
+              <div className={styles.addPanelLabel}>Assignments</div>
+              {personaAssignments.length === 0 ? (
+                <div className={styles.protoEmpty}>No category assignments yet</div>
+              ) : (
+                <div className={styles.protoAssignments}>
+                  {personaAssignments.map(({ category, dimension, categoryId, dimensionId }) => (
+                    <span
+                      key={`${dimensionId}:${categoryId}`}
+                      className={styles.protoAssignment}
+                      style={{ borderColor: category.color, color: category.color }}
+                    >
+                      {dimension.name}: {category.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className={styles.editPanelActions}>
+              <span />
+              <button className={styles.addBtn} onClick={() => setEditing(true)}>
+                Edit
               </button>
             </div>
-          </div>
+          </>
         ) : (
-          <div className={styles.editPanelActions}>
-            <button className={styles.editDeleteBtn} onClick={() => setConfirmDelete(true)}>
-              Delete Persona
-            </button>
-            <button
-              className={styles.addBtn}
-              onClick={handleSave}
-              disabled={!name.trim() || saving}
-            >
-              {saving ? 'Saving…' : 'Save'}
-            </button>
-          </div>
+          <>
+            <label className={styles.addPanelLabel}>Name</label>
+            <input
+              className={styles.addPanelInput}
+              placeholder="Persona name"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSave()}
+              autoFocus
+            />
+
+            <label className={styles.addPanelLabel}>Character</label>
+            <div className={styles.charGrid}>
+              {CHAR_KEYS.map(k => (
+                <button
+                  key={k}
+                  className={`${styles.charCard} ${modelKey === k ? styles.charCardSelected : ''}`}
+                  onClick={() => setModelKey(k)}
+                  title={`Character ${k.toUpperCase()}`}
+                >
+                  <img
+                    src={`/models/previews/character-${k}.png`}
+                    alt={`character-${k}`}
+                    className={styles.charImg}
+                  />
+                </button>
+              ))}
+            </div>
+
+            {confirmDelete ? (
+              <div className={styles.deleteConfirmBox}>
+                <p>Delete <strong>{persona.name}</strong>?</p>
+                <div className={styles.modalActions}>
+                  <button className={styles.modalCancel} onClick={() => setConfirmDelete(false)} disabled={deleting}>
+                    Cancel
+                  </button>
+                  <button className={styles.modalConfirm} onClick={handleDelete} disabled={deleting}>
+                    {deleting ? 'Deleting…' : 'Delete'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className={styles.editPanelActions}>
+                <button className={styles.editDeleteBtn} onClick={() => setConfirmDelete(true)}>
+                  Delete Persona
+                </button>
+                <div className={styles.editPanelButtonGroup}>
+                  <button className={styles.modalCancel} onClick={() => setEditing(false)}>
+                    Back
+                  </button>
+                  <button
+                    className={styles.addBtn}
+                    onClick={handleSave}
+                    disabled={!name.trim() || saving}
+                  >
+                    {saving ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -748,11 +926,25 @@ export default function PeoplePage() {
   const [categories, setCategories]   = useState([])
   const [personas, setPersonas]         = useState([])
   const [personaAssignments, setPersonaAssignments] = useState([])
+  const personaAssignmentsRef = useRef([])
+  const [assignmentRevision, setAssignmentRevision] = useState(0)
   const [selected, setSelected]         = useState(null)
   const [showAddPanel, setShowAddPanel] = useState(false)
   const [editPersonaId, setEditPersonaId] = useState(null)
   const [layoutLocked, setLayoutLocked] = useState(false)
   const [sourceDragPersonaId, setSourceDragPersonaId] = useState(null)
+  const [focusedCategoryId, setFocusedCategoryId] = useState(null)
+  const [viewResetRevision, setViewResetRevision] = useState(0)
+
+  const replacePersonaAssignments = useCallback((nextAssignments, { immediate = false, revise = true } = {}) => {
+    personaAssignmentsRef.current = nextAssignments
+    const apply = () => {
+      setPersonaAssignments(nextAssignments)
+      if (revise) setAssignmentRevision(v => v + 1)
+    }
+    if (immediate) flushSync(apply)
+    else apply()
+  }, [])
 
   useEffect(() => {
     Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getPersonaAssignments()])
@@ -761,15 +953,35 @@ export default function PeoplePage() {
         setCategories(cats)
         setDimIndex(0)
         setPersonas(pers)
-        setPersonaAssignments(personaAsns)
+        replacePersonaAssignments(personaAsns, { revise: true })
       })
       .catch(console.error)
-  }, [])
+  }, [replacePersonaAssignments])
+
+  useEffect(() => {
+    personaAssignmentsRef.current = personaAssignments
+  }, [personaAssignments])
 
   const activeDimension = dimensions[dimIndex] ?? null
   const activeCats = activeDimension
     ? categories.filter(c => c.dimensionId === activeDimension.id)
     : []
+  const focusedCategory = focusedCategoryId
+    ? activeCats.find(c => c.id === focusedCategoryId) ?? null
+    : null
+
+  useEffect(() => {
+    if (!focusedCategoryId) return
+    if (!activeCats.some(c => c.id === focusedCategoryId)) {
+      setFocusedCategoryId(null)
+      setViewResetRevision(v => v + 1)
+    }
+  }, [activeCats, focusedCategoryId])
+
+  const clearCategoryFocus = () => {
+    setFocusedCategoryId(null)
+    setViewResetRevision(v => v + 1)
+  }
 
   const handlePositionUpdate = async (id, x, z) => {
     try {
@@ -778,28 +990,64 @@ export default function PeoplePage() {
   }
 
   const handleAssignPersona = async (personaId, dimId, catId) => {
-    if (personaAssignments.some(a => a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId)) return
+    const currentAssignments = personaAssignmentsRef.current
+    if (currentAssignments.some(a => a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId)) return
     const optimistic = { personaId, dimensionId: dimId, categoryId: catId }
-    setPersonaAssignments(prev => [...prev, optimistic])
+    const nextAssignments = [...currentAssignments, optimistic]
+    replacePersonaAssignments(nextAssignments, { immediate: true })
     try {
       const saved = await api.assignPersona(personaId, dimId, catId)
-      setPersonaAssignments(prev => prev.map(a =>
+      const savedAssignments = personaAssignmentsRef.current.map(a =>
         a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId ? saved : a
-      ))
+      )
+      replacePersonaAssignments(savedAssignments, { revise: false })
     } catch (e) {
       console.error(e)
-      setPersonaAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId)))
+      const revertedAssignments = personaAssignmentsRef.current.filter(a => !(a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId))
+      replacePersonaAssignments(revertedAssignments)
     }
   }
 
   const handleUnassignPersona = async (personaId, dimId, catId) => {
-    const removed = personaAssignments.find(a => a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId)
-    setPersonaAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId)))
+    const currentAssignments = personaAssignmentsRef.current
+    const removed = currentAssignments.find(a => a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId)
+    const nextAssignments = currentAssignments.filter(a => !(a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId))
+    replacePersonaAssignments(nextAssignments, { immediate: true })
     try {
       await api.unassignPersona(personaId, dimId, catId)
     } catch (e) {
       console.error(e)
-      if (removed) setPersonaAssignments(prev => [...prev, removed])
+      if (removed) {
+        const revertedAssignments = [...personaAssignmentsRef.current, removed]
+        replacePersonaAssignments(revertedAssignments)
+      }
+    }
+  }
+
+  const handleMovePersonaAssignment = async (personaId, dimId, fromCatId, toCatId) => {
+    if (fromCatId === toCatId) return
+    const previousAssignments = personaAssignmentsRef.current
+    const nextAssignment = { personaId, dimensionId: dimId, categoryId: toCatId }
+    const withoutOld = previousAssignments.filter(a => !(
+      a.personaId === personaId &&
+      a.dimensionId === dimId &&
+      a.categoryId === fromCatId
+    ))
+    const alreadyTargeted = withoutOld.some(a =>
+      a.personaId === personaId &&
+      a.dimensionId === dimId &&
+      a.categoryId === toCatId
+    )
+    const nextAssignments = alreadyTargeted ? withoutOld : [...withoutOld, nextAssignment]
+    replacePersonaAssignments(nextAssignments, { immediate: true })
+    try {
+      if (!previousAssignments.some(a => a.personaId === personaId && a.dimensionId === dimId && a.categoryId === toCatId)) {
+        await api.assignPersona(personaId, dimId, toCatId)
+      }
+      await api.unassignPersona(personaId, dimId, fromCatId)
+    } catch (e) {
+      console.error(e)
+      replacePersonaAssignments(previousAssignments)
     }
   }
 
@@ -822,14 +1070,14 @@ export default function PeoplePage() {
     const previousPersonas = personas
     const previousAssignments = personaAssignments
     setPersonas(prev => prev.filter(p => p.id !== id))
-    setPersonaAssignments(prev => prev.filter(a => a.personaId !== id))
+    replacePersonaAssignments(personaAssignmentsRef.current.filter(a => a.personaId !== id))
     setSelected(null)
     setEditPersonaId(null)
     try {
       await api.deletePersona(id)
     } catch (e) {
       setPersonas(previousPersonas)
-      setPersonaAssignments(previousAssignments)
+      replacePersonaAssignments(previousAssignments)
       throw e
     }
   }
@@ -856,7 +1104,7 @@ export default function PeoplePage() {
     setSelected(personaId)
   }
 
-  const openEditPersona = (personaId, e) => {
+  const openProtopersona = (personaId, e) => {
     e.preventDefault()
     e.stopPropagation()
     setSourceDragPersonaId(null)
@@ -881,18 +1129,40 @@ export default function PeoplePage() {
           activeCats={activeCats}
           personas={personas}
           personaAssignments={personaAssignments}
+          assignmentRevision={assignmentRevision}
+          focusedCategoryId={focusedCategoryId}
+          viewResetRevision={viewResetRevision}
           layoutLocked={layoutLocked}
           sourceDragPersonaId={sourceDragPersonaId}
           onSourceDragEnd={() => setSourceDragPersonaId(null)}
           onPositionUpdate={handlePositionUpdate}
           onAssign={handleAssignPersona}
           onUnassign={handleUnassignPersona}
+          onMoveAssignment={handleMovePersonaAssignment}
+          onFocusCategory={setFocusedCategoryId}
           onSelect={setSelected}
           selected={selected}
         />
       </Canvas>
 
       <DimensionScroller dimensions={dimensions} index={dimIndex} onChange={setDimIndex} />
+
+      {focusedCategory && (
+        <div className={styles.categoryFocusPanel}>
+          <span
+            className={styles.categoryFocusSwatch}
+            style={{ background: focusedCategory.color || '#aaa' }}
+          />
+          <span className={styles.categoryFocusName}>{focusedCategory.name}</span>
+          <button
+            className={styles.categoryFocusClear}
+            onClick={clearCategoryFocus}
+            title="Back to full view"
+          >
+            Full view
+          </button>
+        </div>
+      )}
 
       <button
         className={`${styles.layoutLockBtn} ${layoutLocked ? styles.layoutLockBtnActive : ''}`}
@@ -937,9 +1207,9 @@ export default function PeoplePage() {
               key={persona.id}
               className={`${styles.personaListItem} ${selected === persona.id ? styles.personaListItemActive : ''}`}
               onPointerDown={e => startSourceDrag(persona.id, e)}
-              onDoubleClick={e => openEditPersona(persona.id, e)}
+              onDoubleClick={e => openProtopersona(persona.id, e)}
               onClick={() => setSelected(selected === persona.id ? null : persona.id)}
-              title="Drag to assign. Double-click to edit."
+              title="Drag to assign. Double-click to open."
             >
               <img
                 src={`/models/previews/character-${resolveModelKey(persona.modelKey)}.png`}
@@ -961,8 +1231,11 @@ export default function PeoplePage() {
       )}
 
       {editPersona && (
-        <EditPersonaModal
+        <ProtopersonaModal
           persona={editPersona}
+          assignments={personaAssignments}
+          categories={categories}
+          dimensions={dimensions}
           onClose={() => setEditPersonaId(null)}
           onSave={handleUpdatePersona}
           onDelete={handleDeletePersona}
