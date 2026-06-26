@@ -49,7 +49,7 @@ function ChevronIcon({ down }) {
 }
 
 // ── Main popup ────────────────────────────────────────────────────────────────
-export default function NotePopup({ note, onClose, onNoteUpdated, onNoteDeleted }) {
+export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsChanged, onNoteDeleted }) {
   const [expanded, setExpanded]           = useState(false)
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false)
   const [headlineMode, setHeadlineMode]   = useState(false)
@@ -74,7 +74,7 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onNoteDeleted 
 
   useEffect(() => {
     setCategoryPickerOpen(false)
-  }, [expanded, note.id])
+  }, [note.id])
 
   // Focus title input when editing starts
   useEffect(() => {
@@ -94,9 +94,8 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onNoteDeleted 
     return () => document.removeEventListener('keydown', handler)
   }, [headlineMode, confirmDelete, onClose])
 
-  // Fetch dimension/category/assignment data when expanded
+  // Fetch dimension/category/assignment data for compact and expanded views
   useEffect(() => {
-    if (!expanded) return
     Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments()])
       .then(([dims, cats, asns]) => {
         setDimensions(dims)
@@ -108,7 +107,7 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onNoteDeleted 
         setAssignments(map)
       })
       .catch(console.error)
-  }, [expanded, note.id])
+  }, [note.id])
 
   // ── Title commit ──────────────────────────────────────────────────────────
   const commitTitle = useCallback(async (val) => {
@@ -165,6 +164,13 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onNoteDeleted 
     return categories.find(c => c.id === catId)
   }
 
+  const assignedSummary = dimensions
+    .map(dim => {
+      const cat = categoryName(dim.id)
+      return cat ? { dim, cat } : null
+    })
+    .filter(Boolean)
+
   const handleCategoryChange = async (newSels) => {
     const old = { ...assignments }
     const allDimIds = new Set([...Object.keys(old), ...Object.keys(newSels)])
@@ -174,11 +180,17 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onNoteDeleted 
       if (oldCat === newCat) continue
       if (!newCat) {
         setAssignments(prev => { const n = { ...prev }; delete n[dimId]; return n })
-        try { await api.unassign(note.id, dimId) }
+        try {
+          await api.unassign(note.id, dimId)
+          onAssignmentsChanged?.()
+        }
         catch (e) { console.error(e); setAssignments(old) }
       } else {
         setAssignments(prev => ({ ...prev, [dimId]: newCat }))
-        try { await api.assign(note.id, dimId, newCat) }
+        try {
+          await api.assign(note.id, dimId, newCat)
+          onAssignmentsChanged?.()
+        }
         catch (e) { console.error(e); setAssignments(old) }
       }
       break
@@ -234,6 +246,39 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onNoteDeleted 
               </svg>
             </button>
           </div>
+        </div>
+
+        <div className={styles.compactCategories}>
+          <div className={styles.compactCategoriesHeader}>
+            <span className={styles.sectionLabel}>Categories</span>
+            {dimensions.length > 0 && (
+              <button
+                className={styles.editCategoriesBtn}
+                onClick={() => setCategoryPickerOpen(true)}
+              >
+                Edit categorization
+              </button>
+            )}
+          </div>
+          {dimensions.length === 0 ? (
+            <p className={styles.emptyNote}>No dimensions defined yet.</p>
+          ) : assignedSummary.length === 0 ? (
+            <p className={styles.emptyNote}>No categories assigned.</p>
+          ) : (
+            <div className={styles.compactCategoryList}>
+              {assignedSummary.map(({ dim, cat }) => (
+                <span
+                  key={dim.id}
+                  className={styles.compactCategoryBadge}
+                  style={{ borderColor: cat.color, background: `${cat.color}18`, color: cat.color }}
+                >
+                  <span className={styles.compactCategoryDim}>{dim.name}</span>
+                  <span className={styles.catDot} style={{ background: cat.color }} />
+                  {cat.name}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Description section */}

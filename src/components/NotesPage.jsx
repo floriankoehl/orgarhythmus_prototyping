@@ -1,9 +1,16 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
-import styles from './BrainstormV2.module.css'
+import styles from './NotesPage.module.css'
 import { api } from '../api'
 import CategoryAssignmentPicker from './CategoryAssignmentPicker'
+import DimensionDropUp from './DimensionDropUp'
 
 const DRIFT_VARIANTS = 6
+
+function makeColorCursor(color) {
+  const safeColor = /^#[0-9a-f]{3,8}$/i.test(String(color)) ? color : '#1a73e8'
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><circle cx="9" cy="9" r="7" fill="${safeColor}" stroke="white" stroke-width="2"/><path d="M14 14l8 8" stroke="black" stroke-width="2.5" stroke-linecap="round"/></svg>`
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 9 9, pointer`
+}
 
 function deriveTitle(text) {
   const words = text.trim().split(/\s+/).filter(Boolean)
@@ -20,6 +27,18 @@ function stripHtml(html) {
     .replace(/&amp;/g, '&')
     .replace(/\n{4,}/g, '\n\n\n')
     .trim()
+}
+
+function PaletteIcon({ size = 11 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" stroke="none"/>
+      <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" stroke="none"/>
+      <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" stroke="none"/>
+      <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" stroke="none"/>
+      <path d="M12 22a10 10 0 1 1 10-10c0 2.2-1.8 4-4 4h-1.5a2 2 0 0 0-1.7 3l.2.4A1.8 1.8 0 0 1 13.4 22H12z"/>
+    </svg>
+  )
 }
 
 function computeWordRects(el) {
@@ -41,7 +60,7 @@ function computeWordRects(el) {
 }
 
 // ── PostIt card ───────────────────────────────────────────────────────────────
-function PostIt({ note, position, size, isMergeTarget, assignedCategories, onDragStart, onCollapse, onOpen, onSplit, onResize, onEditCategories }) {
+function PostIt({ note, position, size, isMergeTarget, backgroundColor, paintCat, onPaint, onDragStart, onCollapse, onOpen, onSplit, onResize, onRegisterCard }) {
   const [splitActive, setSplitActive] = useState(false)
   const [cutY, setCutY]               = useState(null) // px from top of card
   const [cutOffset, setCutOffset]     = useState(null) // char index in snippet text
@@ -50,6 +69,11 @@ function PostIt({ note, position, size, isMergeTarget, assignedCategories, onDra
   const lineBreaksRef = useRef(null)
 
   const snippet = stripHtml(note.html || '')
+
+  useEffect(() => {
+    onRegisterCard?.(note.id, cardRef.current)
+    return () => onRegisterCard?.(note.id, null)
+  }, [note.id, onRegisterCard])
 
   // Compute paragraph-based line break positions relative to body element
   const buildLineBreaks = () => {
@@ -132,7 +156,12 @@ function PostIt({ note, position, size, isMergeTarget, assignedCategories, onDra
     const startW = card.offsetWidth
     const startH = card.offsetHeight
     const onMove = ev => {
-      onResize?.(Math.max(180, startW + ev.clientX - startX), Math.max(80, startH + ev.clientY - startY))
+      const cardRect = card.getBoundingClientRect()
+      const maxW = Math.max(220, window.innerWidth - cardRect.left - 24)
+      const maxH = Math.max(120, window.innerHeight - cardRect.top - 24)
+      const nextW = Math.min(maxW, Math.max(180, startW + ev.clientX - startX))
+      const nextH = Math.min(maxH, Math.max(80, startH + ev.clientY - startY))
+      onResize?.(nextW, nextH)
     }
     const onUp = () => {
       window.removeEventListener('pointermove', onMove)
@@ -143,6 +172,11 @@ function PostIt({ note, position, size, isMergeTarget, assignedCategories, onDra
   }
 
   const handleClick = (e) => {
+    if (paintCat) {
+      e.stopPropagation()
+      onPaint?.(note.id)
+      return
+    }
     if (splitActive && cutY !== null && cutOffset !== null) {
       e.stopPropagation()
       const part1 = snippet.slice(0, cutOffset).trimEnd()
@@ -156,25 +190,14 @@ function PostIt({ note, position, size, isMergeTarget, assignedCategories, onDra
     <div
       ref={cardRef}
       className={`${styles.postit} ${isMergeTarget ? styles.postitMergeTarget : ''} ${splitActive ? styles.postitSplitMode : ''}`}
-      style={{ left: position.x, top: position.y, ...(size ? { width: size.w, height: size.h } : {}) }}
+      style={{ left: position.x, top: position.y, backgroundColor, ...(size ? { width: size.w, height: size.h } : {}) }}
       onClick={handleClick}
-      onDoubleClick={splitActive ? undefined : e => { e.stopPropagation(); onOpen() }}
+      onDoubleClick={splitActive || paintCat ? undefined : e => { e.stopPropagation(); onOpen() }}
       onMouseMove={handleMouseMove}
       onMouseLeave={() => { if (splitActive) { setCutY(null); setCutOffset(null) } }}
     >
-      <div className={styles.postitHeader} onPointerDown={splitActive ? undefined : onDragStart}>
+      <div className={styles.postitHeader} onPointerDown={splitActive || paintCat ? undefined : onDragStart}>
         <span className={styles.postitTitle}>{note.title || 'Untitled'}</span>
-        <button
-          className={styles.postitTagBtn}
-          title="Edit categories"
-          onPointerDown={e => e.stopPropagation()}
-          onClick={e => { e.stopPropagation(); onEditCategories?.() }}
-        >
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/>
-            <line x1="7" y1="7" x2="7.01" y2="7"/>
-          </svg>
-        </button>
         <button
           className={`${styles.postitSplitBtn} ${splitActive ? styles.postitSplitBtnActive : ''}`}
           title="Split note"
@@ -192,17 +215,6 @@ function PostIt({ note, position, size, isMergeTarget, assignedCategories, onDra
       </div>
 
       {snippet && <p ref={bodyRef} className={styles.postitBody}>{snippet}</p>}
-
-      {assignedCategories?.length > 0 && (
-        <div className={styles.postitTags}>
-          {assignedCategories.map((ac, i) => (
-            <span key={i} className={styles.postitTag}>
-              <span className={styles.postitTagDot} style={{ background: ac.color }} />
-              <span className={styles.postitTagName}>{ac.dimName}</span>
-            </span>
-          ))}
-        </div>
-      )}
 
       <div className={styles.resizeHandle} onPointerDown={handleResizeDown}>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
@@ -226,8 +238,86 @@ function PostIt({ note, position, size, isMergeTarget, assignedCategories, onDra
   )
 }
 
+function NotesColorLegendWidget({
+  dimensions,
+  categories,
+  colorDimId,
+  categoryNoteCounts,
+  onColorDimChange,
+  paintCat,
+  onPaintActivate,
+  onExpandCategory,
+  expanded,
+  onExpandedChange,
+}) {
+  const legendCats = categories.filter(c => c.dimensionId === colorDimId)
+  return (
+    <div className={styles.legendWidget} onClick={e => e.stopPropagation()}>
+      {expanded && (
+        <div className={styles.legendPanel}>
+          {legendCats.map(cat => (
+            <div
+              key={cat.id}
+              className={styles.legendItem}
+            >
+              <button
+                className={styles.legendPaintArea}
+                onClick={() => onPaintActivate(cat.id, cat.color)}
+                title="Click notes to assign this category"
+              >
+                <span className={styles.legendDot} style={{ background: cat.color }} />
+                <span className={styles.legendName}>{cat.name}</span>
+              </button>
+              <button
+                className={styles.legendExpandBtn}
+                onClick={() => onExpandCategory(cat.id)}
+                disabled={(categoryNoteCounts[cat.id] ?? 0) === 0}
+                title="Open matching notes on canvas"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 3H3v5" />
+                  <path d="M16 3h5v5" />
+                  <path d="M8 21H3v-5" />
+                  <path d="M16 21h5v-5" />
+                  <path d="M3 3l7 7" />
+                  <path d="M21 3l-7 7" />
+                  <path d="M3 21l7-7" />
+                  <path d="M21 21l-7-7" />
+                </svg>
+              </button>
+            </div>
+          ))}
+          {colorDimId && legendCats.length === 0 && (
+            <div className={styles.legendEmpty}>No categories</div>
+          )}
+          <DimensionDropUp
+            dimensions={dimensions}
+            value={colorDimId}
+            onChange={onColorDimChange}
+            emptyLabel="Color legend"
+          />
+        </div>
+      )}
+
+      <button
+        className={`${styles.legendToggleBtn} ${expanded ? styles.legendToggleActive : ''}`}
+        onClick={() => onExpandedChange(!expanded)}
+        title={expanded ? 'Collapse legend' : 'Color legend'}
+      >
+        <PaletteIcon size={16} />
+      </button>
+      {!expanded && (
+        <span className={styles.floatingHint}>
+          <strong>Color dimension</strong>
+          <small>Color notes</small>
+        </span>
+      )}
+    </div>
+  )
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
-export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefresh }) {
+export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onRefresh, refreshKey = 0 }) {
   // Canvas state
   const [openNoteIds, setOpenNoteIds]       = useState(new Set())
   const [notePositions, setNotePositions]   = useState({})
@@ -239,6 +329,7 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
   const draggingRef   = useRef(null)
   const wasDraggedRef = useRef(false)
   const canvasRef     = useRef(null)
+  const cardRefs      = useRef({})
 
   // Canvas search
   const [findQuery, setFindQuery] = useState('')
@@ -257,8 +348,9 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
   const [categorySelections, setCategorySelections] = useState({})
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false)
   const [allAssignments, setAllAssignments] = useState([])
-  const [editingNoteId, setEditingNoteId] = useState(null)
-  const [pickerSelections, setPickerSelections] = useState({})
+  const [colorDimId, setColorDimId] = useState('')
+  const [paintCat, setPaintCat] = useState(null)
+  const [floatingPanel, setFloatingPanel] = useState(null)
 
   const editorRef    = useRef(null)
   const titleInputRef = useRef(null)
@@ -285,7 +377,7 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
     return () => document.removeEventListener('mousedown', handler)
   }, [findFocused])
 
-  // ── Load category metadata on mount ─────────────────────────────────────────
+  // ── Load category metadata ──────────────────────────────────────────────────
   useEffect(() => {
     Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments()])
       .then(([dims, cats, asns]) => {
@@ -294,43 +386,46 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
         setAllAssignments(asns)
       })
       .catch(console.error)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [refreshKey])
 
-  // ── Note category editor ─────────────────────────────────────────────────────
-  const openNoteEditor = (noteId) => {
-    const sels = {}
-    allAssignments.filter(a => a.noteId === noteId).forEach(a => { sels[a.dimensionId] = a.categoryId })
-    setPickerSelections(sels)
-    setEditingNoteId(noteId)
+  useEffect(() => {
+    if (colorDimId && !dimensions.some(d => d.id === colorDimId)) {
+      setColorDimId('')
+      setPaintCat(null)
+    }
+  }, [colorDimId, dimensions])
+
+  const changeColorDim = dimId => {
+    setColorDimId(dimId)
+    setPaintCat(null)
   }
 
-  const handlePickerChange = async (newSels) => {
-    const noteId = editingNoteId
-    const oldSels = pickerSelections
-    setPickerSelections(newSels)
-    const allDimIds = new Set([...Object.keys(oldSels), ...Object.keys(newSels)])
-    for (const dimId of allDimIds) {
-      const oldCat = oldSels[dimId] || null
-      const newCat = newSels[dimId] || null
-      if (oldCat === newCat) continue
-      try {
-        if (!newCat) {
-          await api.unassign(noteId, dimId)
-          setAllAssignments(prev => prev.filter(a => !(a.noteId === noteId && a.dimensionId === dimId)))
-        } else {
-          await api.assign(noteId, dimId, newCat)
-          setAllAssignments(prev => [
-            ...prev.filter(a => !(a.noteId === noteId && a.dimensionId === dimId)),
-            { noteId, dimensionId: dimId, categoryId: newCat },
-          ])
-        }
-      } catch (e) {
-        console.error(e)
-        setPickerSelections(oldSels)
-      }
-      break
+  const activatePaint = (catId, color) => {
+    setPaintCat(prev => prev?.id === catId ? null : { id: catId, color })
+  }
+
+  const paintNote = async noteId => {
+    if (!paintCat || !colorDimId) return
+    try {
+      await api.assign(noteId, colorDimId, paintCat.id)
+      setAllAssignments(prev => [
+        ...prev.filter(a => !(a.noteId === noteId && a.dimensionId === colorDimId)),
+        { noteId, dimensionId: colorDimId, categoryId: paintCat.id },
+      ])
+    } catch (e) {
+      console.error(e)
     }
   }
+
+  const categoryNoteCounts = useMemo(() => {
+    const counts = {}
+    if (!colorDimId) return counts
+    allAssignments.forEach(a => {
+      if (a.dimensionId !== colorDimId) return
+      counts[a.categoryId] = (counts[a.categoryId] ?? 0) + 1
+    })
+    return counts
+  }, [allAssignments, colorDimId])
 
   // ── Canvas helpers ───────────────────────────────────────────────────────────
   const randomPos = () => {
@@ -353,8 +448,59 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
     })
   }
 
+  const layoutNotesOnCanvas = noteIds => {
+    if (noteIds.length === 0) return
+    const canvas = canvasRef.current
+    const w = canvas?.offsetWidth || 900
+    const h = canvas?.offsetHeight || 640
+    const cardW = 240
+    const cardH = 150
+    const marginX = 48
+    const top = 72
+    const bottomReserve = 220
+    const usableW = Math.max(cardW, w - marginX * 2 - cardW)
+    const usableH = Math.max(cardH, h - top - bottomReserve - cardH)
+    const cols = Math.max(1, Math.min(noteIds.length, Math.ceil(Math.sqrt(noteIds.length * (usableW / Math.max(usableH, 1))))))
+    const rows = Math.ceil(noteIds.length / cols)
+    const xStep = cols > 1 ? usableW / (cols - 1) : 0
+    const yStep = rows > 1 ? usableH / (rows - 1) : 0
+    const nextPositions = {}
+
+    noteIds.forEach((noteId, idx) => {
+      const row = Math.floor(idx / cols)
+      const col = idx % cols
+      const rowCount = row === rows - 1 ? noteIds.length - row * cols : cols
+      const rowOffset = rowCount < cols ? ((cols - rowCount) * xStep) / 2 : 0
+      nextPositions[noteId] = {
+        x: Math.round(marginX + rowOffset + col * xStep),
+        y: Math.round(top + row * yStep),
+      }
+    })
+
+    setOpenNoteIds(prev => new Set([...prev, ...noteIds]))
+    setNotePositions(prev => ({ ...prev, ...nextPositions }))
+  }
+
+  const expandCategoryOnCanvas = catId => {
+    if (!colorDimId) return
+    const noteIds = notes
+      .filter(note => allAssignments.some(a =>
+        a.noteId === note.id &&
+        a.dimensionId === colorDimId &&
+        a.categoryId === catId
+      ))
+      .map(note => note.id)
+    layoutNotesOnCanvas(noteIds)
+  }
+
   const collapseNote = (id) => {
     setOpenNoteIds(prev => { const n = new Set(prev); n.delete(id); return n })
+  }
+
+  const clearCanvas = () => {
+    setOpenNoteIds(new Set())
+    setMergeCandidate(null)
+    setMergeProposal(null)
   }
 
   // ── Merge ────────────────────────────────────────────────────────────────────
@@ -407,6 +553,57 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
     e.currentTarget.setPointerCapture(e.pointerId)
   }
 
+  const registerCard = (id, el) => {
+    if (el) cardRefs.current[id] = el
+    else delete cardRefs.current[id]
+  }
+
+  const findMergeCandidate = (dragId, dragPos) => {
+    const draggedEl = cardRefs.current[dragId]
+    const draggedSize = {
+      width: draggedEl?.offsetWidth || 240,
+      height: draggedEl?.offsetHeight || 150,
+    }
+    const dragRect = {
+      left: dragPos.x,
+      top: dragPos.y,
+      right: dragPos.x + draggedSize.width,
+      bottom: dragPos.y + draggedSize.height,
+      width: draggedSize.width,
+      height: draggedSize.height,
+    }
+
+    let best = null
+    let bestArea = 0
+    for (const otherId of openNoteIds) {
+      if (otherId === dragId) continue
+      const otherEl = cardRefs.current[otherId]
+      const otherPos = notePositions[otherId]
+      if (!otherEl || !otherPos) continue
+      const otherRect = {
+        left: otherPos.x,
+        top: otherPos.y,
+        right: otherPos.x + otherEl.offsetWidth,
+        bottom: otherPos.y + otherEl.offsetHeight,
+        width: otherEl.offsetWidth,
+        height: otherEl.offsetHeight,
+      }
+      const overlapW = Math.min(dragRect.right, otherRect.right) - Math.max(dragRect.left, otherRect.left)
+      const overlapH = Math.min(dragRect.bottom, otherRect.bottom) - Math.max(dragRect.top, otherRect.top)
+      if (overlapW <= 0 || overlapH <= 0) continue
+
+      const overlapArea = overlapW * overlapH
+      const smallerArea = Math.min(dragRect.width * dragRect.height, otherRect.width * otherRect.height)
+      const overlapRatio = overlapArea / Math.max(smallerArea, 1)
+      if (overlapRatio < 0.18 || overlapW < 48 || overlapH < 36) continue
+      if (overlapArea > bestArea) {
+        best = otherId
+        bestArea = overlapArea
+      }
+    }
+    return best
+  }
+
   const handlePointerMove = (e) => {
     if (!draggingRef.current) return
     const { id, startX, startY, origX, origY } = draggingRef.current
@@ -417,20 +614,7 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
 
     const newPos = { x: origX + dx, y: origY + dy }
     setNotePositions(prev => ({ ...prev, [id]: newPos }))
-
-    // Detect if dragged card overlaps another (estimated card size)
-    const W = 280, H = 180
-    let candidate = null
-    for (const otherId of openNoteIds) {
-      if (otherId === id) continue
-      const op = notePositions[otherId]
-      if (!op) continue
-      if (newPos.x < op.x + W && newPos.x + W > op.x &&
-          newPos.y < op.y + H && newPos.y + H > op.y) {
-        candidate = otherId; break
-      }
-    }
-    setMergeCandidate(candidate)
+    setMergeCandidate(findMergeCandidate(id, newPos))
   }
 
   const handlePointerUp = () => {
@@ -530,7 +714,11 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
 
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
-    <div className={styles.note}>
+    <div
+      className={`${styles.note} ${paintCat ? styles.paintMode : ''}`}
+      style={paintCat ? { cursor: makeColorCursor(paintCat.color) } : undefined}
+      onClick={paintCat ? () => setPaintCat(null) : undefined}
+    >
 
       {/* Floating background */}
       <div className={styles.floatingLayer} aria-hidden="true">
@@ -565,11 +753,8 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
           if (!note) return null
           const pos = notePositions[id] || { x: 100, y: 100 }
           const noteAsns = allAssignments.filter(a => a.noteId === id)
-          const assignedCats = noteAsns.map(a => {
-            const dim = dimensions.find(d => d.id === a.dimensionId)
-            const cat = categories.find(c => c.id === a.categoryId)
-            return dim && cat ? { dimName: dim.name, catName: cat.name, color: cat.color } : null
-          }).filter(Boolean)
+          const colorCatId = colorDimId ? noteAsns.find(a => a.dimensionId === colorDimId)?.categoryId : null
+          const noteBackground = colorCatId ? categories.find(c => c.id === colorCatId)?.color ?? '#fff' : '#fff'
           return (
             <PostIt
               key={id}
@@ -577,16 +762,47 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
               position={pos}
               size={noteSizes[id] || null}
               isMergeTarget={mergeCandidate === id}
-              assignedCategories={assignedCats}
+              backgroundColor={noteBackground}
               onDragStart={e => handlePointerDown(e, id)}
               onCollapse={() => collapseNote(id)}
               onOpen={() => { if (!wasDraggedRef.current) onNoteOpen?.(id) }}
               onSplit={(t1, t2) => handleSplitNote(id, t1, t2)}
               onResize={(w, h) => setNoteSizes(prev => ({ ...prev, [id]: { w, h } }))}
-              onEditCategories={() => openNoteEditor(id)}
+              onRegisterCard={registerCard}
+              paintCat={paintCat}
+              onPaint={paintNote}
             />
           )
         })}
+      </div>
+
+      <div className={styles.floatingViewTools}>
+        <button
+          className={styles.clearCanvasBtn}
+          onClick={clearCanvas}
+          disabled={openNoteIds.size === 0}
+          title="Clear canvas"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 6h18" />
+            <path d="M8 6V4h8v2" />
+            <path d="M19 6l-1 14H6L5 6" />
+            <path d="M10 11v5" />
+            <path d="M14 11v5" />
+          </svg>
+        </button>
+        <NotesColorLegendWidget
+          dimensions={dimensions}
+          categories={categories}
+          colorDimId={colorDimId}
+          categoryNoteCounts={categoryNoteCounts}
+          onColorDimChange={changeColorDim}
+          paintCat={paintCat}
+          onPaintActivate={activatePaint}
+          onExpandCategory={expandCategoryOnCanvas}
+          expanded={floatingPanel === 'color'}
+          onExpandedChange={open => setFloatingPanel(open ? 'color' : null)}
+        />
       </div>
 
       {/* Merge proposal dialog */}
@@ -686,15 +902,6 @@ export default function BrainstormV2({ notes, onNoteCreated, onNoteOpen, onRefre
         selections={categorySelections}
         onChange={setCategorySelections}
         onClose={() => setCategoryPickerOpen(false)}
-      />
-
-      <CategoryAssignmentPicker
-        open={editingNoteId !== null}
-        dimensions={dimensions}
-        categories={categories}
-        selections={pickerSelections}
-        onChange={handlePickerChange}
-        onClose={() => setEditingNoteId(null)}
       />
 
       {ghost && (

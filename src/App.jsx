@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import Header from './components/Header'
 import ClassificationPage from './components/ClassificationPage'
 import SchedulePage from './components/SchedulePage'
-import BrainstormV2 from './components/BrainstormV2'
+import NotesPage from './components/NotesPage'
 import NotePopup from './components/NotePopup'
 import ProjectsPage from './components/ProjectsPage'
 import ProjectDashboard from './components/ProjectDashboard'
@@ -160,6 +160,10 @@ export default function App() {
     setNotes(prev => prev.map(g => g.id === noteId ? { ...g, ...patch } : g))
   }
 
+  const handleNoteAssignmentsChanged = () => {
+    setNoteDataVersion(v => v + 1)
+  }
+
   const handleNoteDeleted = (noteId) => {
     setNotes(prev => prev.filter(g => g.id !== noteId))
     setRefreshKey(k => k + 1)
@@ -226,7 +230,7 @@ export default function App() {
           <ProjectDashboard project={activeProject} onUpdate={handleProjectUpdate} isActive={view === 0} />
         </div>
         <div className={styles.view} style={{ display: view === 1 ? 'flex' : 'none' }}>
-          <BrainstormV2 notes={notes} onNoteCreated={handleNoteCreated} onNoteOpen={openNotePopup} onRefresh={() => setRefreshKey(k => k + 1)} />
+          <NotesPage notes={notes} onNoteCreated={handleNoteCreated} onNoteOpen={openNotePopup} onRefresh={() => setRefreshKey(k => k + 1)} refreshKey={noteDataVersion} />
         </div>
         <div className={styles.view} style={{ display: view === 2 ? 'flex' : 'none' }}>
           <ClassificationPage notes={notes} isActive={view === 2} onNoteOpen={openNotePopup} refreshKey={noteDataVersion} />
@@ -247,6 +251,7 @@ export default function App() {
           note={popupNote}
           onClose={closeNotePopup}
           onNoteUpdated={handleNoteUpdated}
+          onAssignmentsChanged={handleNoteAssignmentsChanged}
           onNoteDeleted={handleNoteDeleted}
         />
       )}
