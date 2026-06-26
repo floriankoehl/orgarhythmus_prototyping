@@ -66,6 +66,7 @@ function PostIt({
   position,
   size,
   isMergeTarget,
+  selected,
   backgroundColor,
   zIndex,
   interactionMode,
@@ -267,7 +268,7 @@ function PostIt({
   return (
     <div
       ref={cardRef}
-      className={`${styles.postit} ${isMergeTarget ? styles.postitMergeTarget : ''} ${splitActive ? styles.postitSplitMode : ''}`}
+      className={`${styles.postit} ${isMergeTarget ? styles.postitMergeTarget : ''} ${splitActive ? styles.postitSplitMode : ''} ${selected ? styles.postitSelected : ''}`}
       style={{ left: position.x, top: position.y, backgroundColor, zIndex, ...(renderedSize ? { width: renderedSize.w, height: renderedSize.h } : {}) }}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
@@ -296,6 +297,20 @@ function PostIt({
           />
         ) : (
           <span className={styles.postitTitle}>{note.title || 'Untitled'}</span>
+        )}
+        {!inlineEditing && interactionMode === 'edit' && (
+          <button
+            className={styles.postitOpenBtn}
+            title="Open detailed view"
+            onPointerDown={e => e.stopPropagation()}
+            onClick={e => { e.stopPropagation(); onOpen() }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>
+              <polyline points="15 3 21 3 21 9"/>
+              <line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+          </button>
         )}
         <button className={styles.postitClose} title="Collapse" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onCollapse() }}>×</button>
       </div>
@@ -499,6 +514,8 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   const [paintCat, setPaintCat] = useState(null)
   const [floatingPanel, setFloatingPanel] = useState(null)
   const [interactionMode, setInteractionMode] = useState('edit')
+  const [selectedIds, setSelectedIds] = useState(new Set())
+  const [marquee, setMarquee] = useState(null) // { startX, startY, endX, endY } canvas coords
 
   const editorRef    = useRef(null)
   const titleInputRef = useRef(null)
@@ -724,9 +741,65 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   const handlePointerDown = (e, id) => {
     if (e.button !== 0) return
     e.stopPropagation()
+
+    if (e.ctrlKey || e.metaKey) {
+      setSelectedIds(prev => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+      })
+      return
+    }
+
     wasDraggedRef.current = false
-    const pos = notePositions[id] || { x: 100, y: 100 }
-    draggingRef.current = { id, startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y }
+    const dragIds = selectedIds.has(id) ? [...selectedIds] : [id]
+    if (!selectedIds.has(id)) setSelectedIds(new Set([id]))
+    bringNotesToFront(dragIds)
+
+    const origPositions = {}
+    dragIds.forEach(did => {
+      const pos = notePositions[did] || { x: 100, y: 100 }
+      origPositions[did] = { x: pos.x, y: pos.y }
+    })
+
+    draggingRef.current = {
+      type: 'card', id, ids: dragIds,
+      startX: e.clientX, startY: e.clientY,
+      origPositions,
+    }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const handleCanvasPointerDown = (e) => {
+    if (e.button !== 0 || paintCat) return
+
+    let clickedId = null
+    for (const [id, el] of Object.entries(cardRefs.current)) {
+      if (el && el.contains(e.target)) { clickedId = id; break }
+    }
+
+    if (clickedId !== null) {
+      if (e.ctrlKey || e.metaKey) {
+        setSelectedIds(prev => {
+          const next = new Set(prev)
+          if (next.has(clickedId)) next.delete(clickedId)
+          else next.add(clickedId)
+          return next
+        })
+      } else if (!selectedIds.has(clickedId)) {
+        setSelectedIds(new Set([clickedId]))
+      }
+      return
+    }
+
+    // Empty canvas — deselect all, start marquee
+    setSelectedIds(new Set())
+    const canvasRect = canvasRef.current.getBoundingClientRect()
+    const x = e.clientX - canvasRect.left
+    const y = e.clientY - canvasRect.top
+    draggingRef.current = { type: 'marquee', startX: x, startY: y }
+    setMarquee({ startX: x, startY: y, endX: x, endY: y })
     e.currentTarget.setPointerCapture(e.pointerId)
   }
 
@@ -783,31 +856,70 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
 
   const handlePointerMove = (e) => {
     if (!draggingRef.current) return
-    const { id, startX, startY, origX, origY } = draggingRef.current
-    const dx = e.clientX - startX
-    const dy = e.clientY - startY
-    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) wasDraggedRef.current = true
-    if (!wasDraggedRef.current) return
+    const { type } = draggingRef.current
 
-    const newPos = { x: origX + dx, y: origY + dy }
-    setNotePositions(prev => ({ ...prev, [id]: newPos }))
-    if (interactionMode === 'refractor') {
-      setMergeCandidate(findMergeCandidate(id, newPos))
-    } else {
-      setMergeCandidate(null)
+    if (type === 'marquee') {
+      const canvasRect = canvasRef.current.getBoundingClientRect()
+      const endX = e.clientX - canvasRect.left
+      const endY = e.clientY - canvasRect.top
+      const { startX, startY } = draggingRef.current
+      setMarquee({ startX, startY, endX, endY })
+
+      const x1 = Math.min(startX, endX), x2 = Math.max(startX, endX)
+      const y1 = Math.min(startY, endY), y2 = Math.max(startY, endY)
+      const newSelected = new Set()
+      for (const id of openNoteIds) {
+        const el = cardRefs.current[id]; const pos = notePositions[id]
+        if (!el || !pos) continue
+        if (pos.x < x2 && pos.x + el.offsetWidth > x1 && pos.y < y2 && pos.y + el.offsetHeight > y1)
+          newSelected.add(id)
+      }
+      setSelectedIds(newSelected)
+      return
+    }
+
+    if (type === 'card') {
+      const { id, ids, startX, startY, origPositions } = draggingRef.current
+      const dx = e.clientX - startX
+      const dy = e.clientY - startY
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) wasDraggedRef.current = true
+      if (!wasDraggedRef.current) return
+
+      setNotePositions(prev => {
+        const next = { ...prev }
+        ids.forEach(did => {
+          const orig = origPositions[did]
+          if (orig) next[did] = { x: orig.x + dx, y: orig.y + dy }
+        })
+        return next
+      })
+
+      if (interactionMode === 'refractor' && ids.length === 1) {
+        setMergeCandidate(findMergeCandidate(id, { x: origPositions[id].x + dx, y: origPositions[id].y + dy }))
+      } else {
+        setMergeCandidate(null)
+      }
     }
   }
 
   const handlePointerUp = () => {
-    const { id } = draggingRef.current || {}
+    const dragging = draggingRef.current
     draggingRef.current = null
 
-    if (interactionMode === 'refractor' && id && mergeCandidate && wasDraggedRef.current) {
-      const pos = notePositions[id] || { x: 200, y: 200 }
-      setMergeProposal({ sourceId: id, targetId: mergeCandidate, x: pos.x + 130, y: pos.y + 70 })
-      setMergeCandidate(null)
-    } else {
-      setMergeCandidate(null)
+    if (dragging?.type === 'marquee') {
+      setMarquee(null)
+      return
+    }
+
+    if (dragging?.type === 'card') {
+      const { id, ids } = dragging
+      if (interactionMode === 'refractor' && ids.length === 1 && mergeCandidate && wasDraggedRef.current) {
+        const pos = notePositions[id] || { x: 200, y: 200 }
+        setMergeProposal({ sourceId: id, targetId: mergeCandidate, x: pos.x + 130, y: pos.y + 70 })
+        setMergeCandidate(null)
+      } else {
+        setMergeCandidate(null)
+      }
     }
 
     requestAnimationFrame(() => { wasDraggedRef.current = false })
@@ -926,6 +1038,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
       <div
         ref={canvasRef}
         className={styles.canvas}
+        onPointerDown={handleCanvasPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
       >
@@ -943,6 +1056,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
               position={pos}
               size={noteSizes[id] || null}
               isMergeTarget={mergeCandidate === id}
+              selected={selectedIds.has(id)}
               backgroundColor={noteBackground}
               zIndex={noteZIndexes[id] ?? undefined}
               interactionMode={interactionMode}
@@ -958,6 +1072,18 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
             />
           )
         })}
+
+        {marquee && (
+          <div
+            className={styles.marquee}
+            style={{
+              left: Math.min(marquee.startX, marquee.endX),
+              top: Math.min(marquee.startY, marquee.endY),
+              width: Math.abs(marquee.endX - marquee.startX),
+              height: Math.abs(marquee.endY - marquee.startY),
+            }}
+          />
+        )}
       </div>
 
       <div className={styles.floatingModeTools}>

@@ -122,8 +122,18 @@
 }
 
 .postitSelected {
-  border-color: #1a73e8;
-  box-shadow: 0 0 0 2px rgba(26,115,232,0.2), 2px 4px 14px rgba(0,0,0,0.1);
+  border-color: #1a73e8 !important;
+  box-shadow: 0 0 0 2px rgba(26,115,232,0.28), 2px 4px 14px rgba(0,0,0,0.1) !important;
+}
+
+/* ── Marquee selection rectangle ─────────────────────────────────────────── */
+.marquee {
+  position: absolute;
+  border: 1.5px solid #1a73e8;
+  background: rgba(26, 115, 232, 0.06);
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 35;
 }
 
 
@@ -210,6 +220,25 @@
 }
 .postit:hover .postitClose { opacity: 1; }
 .postitClose:hover { background: rgba(0,0,0,0.06); color: #333; }
+
+.postitOpenBtn {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #c0c0c0;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0.5;
+  padding: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.postit:hover .postitOpenBtn { opacity: 1; }
+.postitOpenBtn:hover { background: rgba(26,115,232,0.08); color: #1a73e8; }
 
 .resizeHandle {
   position: absolute;
