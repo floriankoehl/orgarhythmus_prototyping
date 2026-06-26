@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useMemo, useCallback } from 'react'
 import { flushSync } from 'react-dom'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls, Grid, Environment, Text, ContactShadows, useGLTF, useAnimations } from '@react-three/drei'
+import { OrbitControls, Grid, Environment, Text, ContactShadows, useGLTF, useAnimations, RoundedBox } from '@react-three/drei'
 import * as THREE from 'three'
 import { api } from '../api'
 import styles from './PeoplePage.module.css'
@@ -66,10 +66,10 @@ function CameraDirector({ locked, focusTarget, resetRevision = 0 }) {
     const [x, , z] = focusTarget ?? [0, 0, 0]
     const desiredPosition = overviewRef.current
       ? new THREE.Vector3(0, 32, 56)
-      : new THREE.Vector3(x + 0.8, 9.6, z + 10.4)
+      : new THREE.Vector3(x + 0.5, 14, z + 16)
     const desiredTarget = overviewRef.current
       ? new THREE.Vector3(0, 0, 0)
-      : new THREE.Vector3(x, ISLAND_H + 0.16, z - 1.2)
+      : new THREE.Vector3(x, ISLAND_H + 0.16, z + 2)
     camera.position.lerp(desiredPosition, 0.12)
     if (controls?.target) controls.target.lerp(desiredTarget, 0.12)
     camera.lookAt(controls?.target ?? desiredTarget)
@@ -303,27 +303,29 @@ function CategoryIsland({ position, color, name, focused = false, onDoubleClick 
         onDoubleClick?.()
       }}
     >
-      <mesh
+      <RoundedBox
         castShadow
         receiveShadow
+        args={[ISLAND_RENDER_W, ISLAND_H, ISLAND_RENDER_D]}
+        radius={0.3}
+        smoothness={4}
         position={[0, ISLAND_H / 2, 0]}
       >
-        <boxGeometry args={[ISLAND_RENDER_W, ISLAND_H, ISLAND_RENDER_D]} />
         <meshStandardMaterial color={color} roughness={0.88} metalness={0} />
-      </mesh>
+      </RoundedBox>
       <mesh
         receiveShadow
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, ISLAND_H + 0.006, 0]}
       >
-        <planeGeometry args={[ISLAND_RENDER_W, ISLAND_RENDER_D]} />
+        <planeGeometry args={[ISLAND_RENDER_W - 0.6, ISLAND_RENDER_D - 0.6]} />
         <meshStandardMaterial color={color} roughness={0.86} metalness={0} />
       </mesh>
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, ISLAND_H + 0.012, 0]}
       >
-        <planeGeometry args={[ISLAND_RENDER_W, ISLAND_RENDER_D]} />
+        <planeGeometry args={[ISLAND_RENDER_W - 0.6, ISLAND_RENDER_D - 0.6]} />
         <meshBasicMaterial
           map={floorTexture}
           transparent
@@ -398,11 +400,11 @@ function computeIslandLayout(cats, locked = false) {
 }
 
 // ── Note card (rendered on focused island floor) ─────────────────────────────
-const NOTE_W = 4.20
-const NOTE_D = 2.72
-const NOTE_H = 0.20
-const NOTE_SLOT_W = NOTE_W + 0.80
-const NOTE_SLOT_D = NOTE_D + 1.08
+const NOTE_W = 2.10
+const NOTE_D = 1.36
+const NOTE_H = 0.10
+const NOTE_SLOT_W = NOTE_W + 0.40
+const NOTE_SLOT_D = NOTE_D + 0.54
 const MINI_TARGET_HEIGHT = 1.04
 const MINI_PERSONA_SPACING = 1.76
 const PLATEAU_W = 13.6
@@ -413,8 +415,14 @@ function LeaderPlateau({ islandPos, color, highlighted = false }) {
   const centerZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D / 2
   return (
     <group position={[islandPos[0], 0, centerZ]}>
-      <mesh castShadow receiveShadow position={[0, ISLAND_H + PLATEAU_H / 2, 0]}>
-        <boxGeometry args={[PLATEAU_W, PLATEAU_H, PLATEAU_D]} />
+      <RoundedBox
+        castShadow
+        receiveShadow
+        args={[PLATEAU_W, PLATEAU_H, PLATEAU_D]}
+        radius={0.18}
+        smoothness={4}
+        position={[0, ISLAND_H + PLATEAU_H / 2, 0]}
+      >
         <meshStandardMaterial
           color={color}
           roughness={0.72}
@@ -422,7 +430,7 @@ function LeaderPlateau({ islandPos, color, highlighted = false }) {
           emissive={color}
           emissiveIntensity={highlighted ? 0.28 : 0.06}
         />
-      </mesh>
+      </RoundedBox>
       {/* Subtle grid on top surface */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, ISLAND_H + PLATEAU_H + 0.004, 0]}>
         <planeGeometry args={[PLATEAU_W, PLATEAU_D]} />
@@ -451,8 +459,13 @@ function NoteCard({ position, title, color = '#888', highlighted = false }) {
   const active = highlighted || hovered
   return (
     <group position={position}>
-      <mesh castShadow position={[0, NOTE_H / 2, 0]}>
-        <boxGeometry args={[NOTE_W, NOTE_H, NOTE_D]} />
+      <RoundedBox
+        castShadow
+        args={[NOTE_W, NOTE_H, NOTE_D]}
+        radius={0.03}
+        smoothness={4}
+        position={[0, NOTE_H / 2, 0]}
+      >
         <meshStandardMaterial
           color={active ? '#eef4ff' : '#ffffff'}
           roughness={0.55}
@@ -460,7 +473,7 @@ function NoteCard({ position, title, color = '#888', highlighted = false }) {
           emissive={highlighted ? '#3366ff' : '#000'}
           emissiveIntensity={highlighted ? 0.08 : 0}
         />
-      </mesh>
+      </RoundedBox>
       {/* Thin colored accent strip on front face */}
       <mesh position={[0, NOTE_H * 0.5, NOTE_D / 2 + 0.001]}>
         <planeGeometry args={[NOTE_W, NOTE_H]} />
@@ -468,11 +481,12 @@ function NoteCard({ position, title, color = '#888', highlighted = false }) {
       </mesh>
       <Text
         position={[0, NOTE_H + 0.012, 0]}
-        fontSize={0.32}
+        rotation={[-Math.PI / 2, 0, 0]}
+        fontSize={0.18}
         color={color}
         anchorX="center"
         anchorY="middle"
-        maxWidth={NOTE_W - 0.40}
+        maxWidth={NOTE_W - 0.20}
         onPointerOver={() => setHovered(true)}
         onPointerOut={() => setHovered(false)}
       >
@@ -482,16 +496,19 @@ function NoteCard({ position, title, color = '#888', highlighted = false }) {
   )
 }
 
-function computeNotesOnIsland(islandPos, notes) {
-  if (notes.length === 0) return []
+function computeNotesOnIsland(islandPos, notes, pageIndex = 0) {
+  if (notes.length === 0) return { notes: [], pageCount: 1, noteStartZ: 0, maxRows: 0, cols: 0 }
   const availW = ISLAND_RENDER_W - 0.48
-  // Notes start after plateau + member row gap
-  const noteStartZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D + 2.60 + NOTE_D / 2
+  const noteStartZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D + 1.60 + NOTE_D / 2
   const availD = (islandPos[2] + ISLAND_RENDER_D / 2 - 1.00) - noteStartZ
   const cols = Math.max(1, Math.min(notes.length, Math.floor(availW / NOTE_SLOT_W)))
   const maxRows = Math.max(1, Math.floor(availD / NOTE_SLOT_D))
+  const perPage = cols * maxRows
+  const pageCount = Math.ceil(notes.length / perPage)
+  const page = Math.min(pageIndex, pageCount - 1)
+  const start = page * perPage
   const usedW = (cols - 1) * NOTE_SLOT_W
-  return notes.slice(0, cols * maxRows).map((note, i) => ({
+  const displayed = notes.slice(start, start + perPage).map((note, i) => ({
     ...note,
     notePos: [
       islandPos[0] - usedW / 2 + (i % cols) * NOTE_SLOT_W,
@@ -499,6 +516,81 @@ function computeNotesOnIsland(islandPos, notes) {
       noteStartZ + Math.floor(i / cols) * NOTE_SLOT_D,
     ],
   }))
+  return { notes: displayed, pageCount, noteStartZ, maxRows, cols }
+}
+
+function NotePagination({ pageIndex, pageCount, islandPos, color, onPrev, onNext, onGo }) {
+  if (pageCount <= 1) return null
+
+  const noteStartZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D + 1.60 + NOTE_D / 2
+  const availD = (islandPos[2] + ISLAND_RENDER_D / 2 - 1.00) - noteStartZ
+  const maxRows = Math.max(1, Math.floor(availD / NOTE_SLOT_D))
+  const paginationZ = noteStartZ + maxRows * NOTE_SLOT_D + 0.7
+
+  const dotSpacing = 0.7
+  const dotsWidth = (pageCount - 1) * dotSpacing
+  const btnW = 1.4
+  const btnH = 0.6
+  const btnGap = 0.5
+
+  return (
+    <group
+      position={[islandPos[0], ISLAND_H + 0.018, paginationZ]}
+      rotation={[-Math.PI / 2, 0, 0]}
+    >
+      {/* Prev button */}
+      <mesh
+        position={[-dotsWidth / 2 - btnW / 2 - btnGap, 0, 0]}
+        onClick={(e) => { e.stopPropagation(); if (pageIndex > 0) onPrev() }}
+      >
+        <planeGeometry args={[btnW, btnH]} />
+        <meshBasicMaterial color={pageIndex > 0 ? color : '#bbb'} transparent opacity={pageIndex > 0 ? 1 : 0.35} />
+      </mesh>
+      <Text
+        position={[-dotsWidth / 2 - btnW / 2 - btnGap, 0, 0.004]}
+        fontSize={0.36}
+        color="#fff"
+        anchorX="center"
+        anchorY="middle"
+        outlineWidth={0.03}
+        outlineColor={color}
+      >
+        {'‹'}
+      </Text>
+
+      {/* Page dots */}
+      {Array.from({ length: pageCount }, (_, i) => (
+        <mesh
+          key={i}
+          position={[i * dotSpacing - dotsWidth / 2, 0, 0]}
+          onClick={(e) => { e.stopPropagation(); onGo(i) }}
+        >
+          <circleGeometry args={[i === pageIndex ? 0.22 : 0.16, 24]} />
+          <meshBasicMaterial color={i === pageIndex ? color : '#888'} transparent opacity={i === pageIndex ? 1 : 0.6} />
+        </mesh>
+      ))}
+
+      {/* Next button */}
+      <mesh
+        position={[dotsWidth / 2 + btnW / 2 + btnGap, 0, 0]}
+        onClick={(e) => { e.stopPropagation(); if (pageIndex < pageCount - 1) onNext() }}
+      >
+        <planeGeometry args={[btnW, btnH]} />
+        <meshBasicMaterial color={pageIndex < pageCount - 1 ? color : '#bbb'} transparent opacity={pageIndex < pageCount - 1 ? 1 : 0.35} />
+      </mesh>
+      <Text
+        position={[dotsWidth / 2 + btnW / 2 + btnGap, 0, 0.004]}
+        fontSize={0.36}
+        color="#fff"
+        anchorX="center"
+        anchorY="middle"
+        outlineWidth={0.03}
+        outlineColor={color}
+      >
+        {'›'}
+      </Text>
+    </group>
+  )
 }
 
 function computeMiniPersonaLine(islandPos, personas) {
@@ -559,6 +651,7 @@ function Scene({
   const [posOverrides, setPosOverrides] = useState({})
   const [hoveredNoteId, setHoveredNoteId] = useState(null)
   const [hoveringPlateau, setHoveringPlateau] = useState(false)
+  const [notePageIndex, setNotePageIndex] = useState(0)
   const dragIdRef      = useRef(null)
   const dragAssignmentRef = useRef(null)
   const posOverridesRef = useRef({})
@@ -567,6 +660,7 @@ function Scene({
   const focusedIslandRef = useRef(null)
   const focusedCategoryIdRef = useRef(focusedCategoryId)
   useEffect(() => { focusedCategoryIdRef.current = focusedCategoryId }, [focusedCategoryId])
+  useEffect(() => { setNotePageIndex(0) }, [focusedCategoryId])
 
   const islands = computeIslandLayout(activeCats, layoutLocked)
   const focusedIsland = islands.find(cat => cat.id === focusedCategoryId)
@@ -718,9 +812,9 @@ function Scene({
         .map(a => notes.find(n => n.id === a.noteId))
         .filter(Boolean)
     : []
-  const focusedNotesOnIsland = focusedIsland
-    ? computeNotesOnIsland(focusedIsland.islandPos, focusedNotes)
-    : []
+  const { notes: focusedNotesOnIsland, pageCount: notesPageCount } = focusedIsland
+    ? computeNotesOnIsland(focusedIsland.islandPos, focusedNotes, notePageIndex)
+    : { notes: [], pageCount: 1 }
 
   const leaderIdsInFocused = new Set(
     categoryLeaders.filter(l => l.categoryId === focusedCategoryId).map(l => l.personaId)
@@ -897,6 +991,18 @@ function Scene({
           </group>
         )
       })}
+
+      {focusedIsland && notesPageCount > 1 && (
+        <NotePagination
+          pageIndex={notePageIndex}
+          pageCount={notesPageCount}
+          islandPos={focusedIsland.islandPos}
+          color={focusedIsland.color || '#888'}
+          onPrev={() => setNotePageIndex(p => Math.max(0, p - 1))}
+          onNext={() => setNotePageIndex(p => Math.min(notesPageCount - 1, p + 1))}
+          onGo={setNotePageIndex}
+        />
+      )}
 
       {focusedIsland && (
         <LeaderPlateau
