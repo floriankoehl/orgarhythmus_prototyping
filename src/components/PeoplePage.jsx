@@ -28,6 +28,22 @@ CHAR_KEYS.forEach(k => useGLTF.preload(`/models/character-${k}.glb`))
 
 const TARGET_HEIGHT = 1.7
 
+function peopleColToDate(col) {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  d.setDate(d.getDate() + Math.max(0, Number(col) || 0))
+  return d
+}
+
+function formatMilestoneDate(ms) {
+  const start = Math.max(0, Number(ms.startCol) || 0)
+  const duration = Math.max(1, Number(ms.duration) || 1)
+  const startLabel = peopleColToDate(start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  if (duration <= 1) return startLabel
+  const endLabel = peopleColToDate(start + duration - 1).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return `${startLabel} - ${endLabel}`
+}
+
 // ── Cursor sync (must live inside Canvas) ────────────────────────────────────
 function CursorManager({ dragging }) {
   const { gl } = useThree()
@@ -38,7 +54,7 @@ function CursorManager({ dragging }) {
   return null
 }
 
-function CameraDirector({ locked, focusTarget, resetRevision = 0 }) {
+function CameraDirector({ locked, focusTarget, focusLevel = 'category', resetRevision = 0 }) {
   const { camera, controls } = useThree()
   const movingRef = useRef(false)
   const overviewRef = useRef(false)
@@ -59,17 +75,21 @@ function CameraDirector({ locked, focusTarget, resetRevision = 0 }) {
     camera.lookAt(0, 0, 0)
     if (controls?.target) controls.target.set(0, 0, 0)
     controls?.update?.()
-  }, [camera, controls, focusTarget, locked, resetRevision])
+  }, [camera, controls, focusTarget, focusLevel, locked, resetRevision])
 
   useFrame(() => {
     if (!movingRef.current) return
     const [x, , z] = focusTarget ?? [0, 0, 0]
     const desiredPosition = overviewRef.current
       ? new THREE.Vector3(0, 32, 56)
-      : new THREE.Vector3(x + 0.5, 14, z + 16)
+      : focusLevel === 'note'
+        ? new THREE.Vector3(x + 0.16, 2.8, z + 3.1)
+        : new THREE.Vector3(x + 0.5, 14, z + 16)
     const desiredTarget = overviewRef.current
       ? new THREE.Vector3(0, 0, 0)
-      : new THREE.Vector3(x, ISLAND_H + 0.16, z + 2)
+      : focusLevel === 'note'
+        ? new THREE.Vector3(x, ISLAND_H + 0.18, z + 0.02)
+        : new THREE.Vector3(x, ISLAND_H + 0.16, z + 2)
     camera.position.lerp(desiredPosition, 0.12)
     if (controls?.target) controls.target.lerp(desiredTarget, 0.12)
     camera.lookAt(controls?.target ?? desiredTarget)
@@ -403,6 +423,11 @@ function computeIslandLayout(cats, locked = false) {
 const NOTE_W = 2.10
 const NOTE_D = 1.36
 const NOTE_H = 0.10
+const NOTE_MILESTONE_TRACK_W = NOTE_W - 0.34
+const NOTE_MILESTONE_MIN_W = 0.34
+const NOTE_MILESTONE_D = 0.17
+const NOTE_MILESTONE_START_Z = -NOTE_D * 0.10
+const NOTE_MILESTONE_ROW_D = 0.26
 const NOTE_SLOT_W = NOTE_W + 0.40
 const NOTE_SLOT_D = NOTE_D + 0.54
 const MINI_TARGET_HEIGHT = 1.04
@@ -410,6 +435,26 @@ const MINI_PERSONA_SPACING = 1.76
 const PLATEAU_W = 13.6
 const PLATEAU_D = 3.8
 const PLATEAU_H = 0.72
+
+function layoutMilestonesOnNote(milestones) {
+  const sorted = [...milestones].sort((a, b) => (a.startCol ?? 0) - (b.startCol ?? 0))
+  const maxCol = sorted.reduce((max, ms) => (
+    Math.max(max, (Number(ms.startCol) || 0) + Math.max(1, Number(ms.duration) || 1))
+  ), 1)
+  return sorted.map((ms, i) => {
+    const start = Math.max(0, Number(ms.startCol) || 0)
+    const duration = Math.max(1, Number(ms.duration) || 1)
+    const x = -NOTE_MILESTONE_TRACK_W / 2 + (start / maxCol) * NOTE_MILESTONE_TRACK_W
+    const w = Math.max(NOTE_MILESTONE_MIN_W, Math.min(NOTE_MILESTONE_TRACK_W, (duration / maxCol) * NOTE_MILESTONE_TRACK_W))
+    return {
+      milestone: ms,
+      x: x + w / 2,
+      z: NOTE_MILESTONE_START_Z + i * NOTE_MILESTONE_ROW_D,
+      w,
+      d: NOTE_MILESTONE_D,
+    }
+  })
+}
 
 function LeaderPlateau({ islandPos, color, highlighted = false }) {
   const centerZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D / 2
@@ -454,44 +499,102 @@ function computeLeaderPositions(islandPos, leaders) {
   }))
 }
 
-function NoteCard({ position, title, color = '#888', highlighted = false }) {
+function NoteCard({ position, title, color = '#888', highlighted = false, focused = false, dimmed = false, milestones = [], highlightedMilestoneId = null, onDoubleClick }) {
   const [hovered, setHovered] = useState(false)
-  const active = highlighted || hovered
+  const active = highlighted || hovered || focused
+  const opacity = dimmed ? 0.38 : 1
+  const milestoneLayout = layoutMilestonesOnNote(milestones)
+  const handleDoubleClick = e => {
+    e.stopPropagation()
+    onDoubleClick?.()
+  }
   return (
-    <group position={position}>
+    <group position={position} onDoubleClick={handleDoubleClick}>
       <RoundedBox
         castShadow
         args={[NOTE_W, NOTE_H, NOTE_D]}
         radius={0.03}
         smoothness={4}
         position={[0, NOTE_H / 2, 0]}
+        onDoubleClick={handleDoubleClick}
       >
         <meshStandardMaterial
           color={active ? '#eef4ff' : '#ffffff'}
           roughness={0.55}
           metalness={0}
-          emissive={highlighted ? '#3366ff' : '#000'}
-          emissiveIntensity={highlighted ? 0.08 : 0}
+          emissive={focused ? color : highlighted ? '#3366ff' : '#000'}
+          emissiveIntensity={focused ? 0.13 : highlighted ? 0.08 : 0}
+          transparent={dimmed}
+          opacity={opacity}
         />
       </RoundedBox>
       {/* Thin colored accent strip on front face */}
-      <mesh position={[0, NOTE_H * 0.5, NOTE_D / 2 + 0.001]}>
+      <mesh position={[0, NOTE_H * 0.5, NOTE_D / 2 + 0.001]} onDoubleClick={handleDoubleClick}>
         <planeGeometry args={[NOTE_W, NOTE_H]} />
-        <meshBasicMaterial color={color} transparent opacity={active ? 0.75 : 0.55} depthWrite={false} />
+        <meshBasicMaterial color={color} transparent opacity={dimmed ? 0.25 : active ? 0.75 : 0.55} depthWrite={false} />
       </mesh>
       <Text
-        position={[0, NOTE_H + 0.012, 0]}
+        position={[0, NOTE_H + 0.012, focused ? -NOTE_D * 0.34 : 0]}
         rotation={[-Math.PI / 2, 0, 0]}
-        fontSize={0.18}
+        fontSize={focused ? 0.13 : 0.18}
         color={color}
         anchorX="center"
         anchorY="middle"
         maxWidth={NOTE_W - 0.20}
         onPointerOver={() => setHovered(true)}
         onPointerOut={() => setHovered(false)}
+        onDoubleClick={handleDoubleClick}
+        fillOpacity={dimmed ? 0.38 : 1}
       >
         {title}
       </Text>
+      {focused && (
+        <group position={[0, NOTE_H + 0.024, 0]}>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
+            <planeGeometry args={[NOTE_W - 0.14, NOTE_D - 0.14]} />
+            <meshBasicMaterial color={color} transparent opacity={0.08} depthWrite={false} />
+          </mesh>
+          {milestoneLayout.length === 0 ? (
+            <Text
+              position={[0, 0.012, NOTE_D * 0.18]}
+              rotation={[-Math.PI / 2, 0, 0]}
+              fontSize={0.095}
+              color="#777"
+              anchorX="center"
+              anchorY="middle"
+              maxWidth={NOTE_W - 0.22}
+            >
+              No milestones yet
+            </Text>
+          ) : milestoneLayout.map(({ milestone: ms, x, z, w }) => {
+            const milestoneHighlighted = highlightedMilestoneId === ms.id
+            return (
+              <group key={ms.id} position={[x, 0.014, z]}>
+                <RoundedBox args={[w, 0.035, 0.17]} radius={0.025} smoothness={2} position={[0, 0.014, 0]}>
+                  <meshStandardMaterial
+                    color={milestoneHighlighted ? '#ffffff' : ms.color || color}
+                    roughness={0.56}
+                    metalness={0}
+                    emissive={ms.color || color}
+                    emissiveIntensity={milestoneHighlighted ? 0.34 : 0.08}
+                  />
+                </RoundedBox>
+                <Text
+                  position={[0, 0.038, 0]}
+                  rotation={[-Math.PI / 2, 0, 0]}
+                  fontSize={0.064}
+                  color="#fff"
+                  anchorX="center"
+                  anchorY="middle"
+                  maxWidth={Math.max(0.24, w - 0.04)}
+                >
+                  {formatMilestoneDate(ms)}
+                </Text>
+              </group>
+            )
+          })}
+        </group>
+      )}
     </group>
   )
 }
@@ -630,9 +733,12 @@ function Scene({
   assignmentRevision = 0,
   notes = [],
   noteAssignments = [],
+  milestones = [],
   personaNoteAssignments = [],
+  personaMilestoneAssignments = [],
   categoryLeaders = [],
   focusedCategoryId = null,
+  focusedNoteId = null,
   viewResetRevision = 0,
   layoutLocked = true,
   sourceDragPersonaId = null,
@@ -642,14 +748,17 @@ function Scene({
   onUnassign,
   onMoveAssignment,
   onFocusCategory,
+  onFocusNote,
   onSelect,
   onAssignPersonaToNote,
+  onAssignPersonaToMilestone,
   onAssignLeader,
   selected,
 }) {
   const [dragId, setDragId]       = useState(null)
   const [posOverrides, setPosOverrides] = useState({})
   const [hoveredNoteId, setHoveredNoteId] = useState(null)
+  const [hoveredMilestoneId, setHoveredMilestoneId] = useState(null)
   const [hoveringPlateau, setHoveringPlateau] = useState(false)
   const [notePageIndex, setNotePageIndex] = useState(0)
   const dragIdRef      = useRef(null)
@@ -657,9 +766,12 @@ function Scene({
   const posOverridesRef = useRef({})
   const dragMovedRef   = useRef(false)
   const focusedNotesRef = useRef([])
+  const milestoneTargetsRef = useRef([])
   const focusedIslandRef = useRef(null)
   const focusedCategoryIdRef = useRef(focusedCategoryId)
+  const focusedNoteIdRef = useRef(focusedNoteId)
   useEffect(() => { focusedCategoryIdRef.current = focusedCategoryId }, [focusedCategoryId])
+  useEffect(() => { focusedNoteIdRef.current = focusedNoteId }, [focusedNoteId])
   useEffect(() => { setNotePageIndex(0) }, [focusedCategoryId])
 
   const islands = computeIslandLayout(activeCats, layoutLocked)
@@ -678,19 +790,27 @@ function Scene({
           // Check plateau drop first
           const fi = focusedIslandRef.current
           if (fi) {
-            const plateauCZ = fi.islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D / 2
-            const onPlateau =
-              Math.abs(pos[0] - fi.islandPos[0]) <= PLATEAU_W / 2 &&
-              Math.abs(pos[2] - plateauCZ) <= PLATEAU_D / 2
-            if (onPlateau) {
-              onAssignLeader?.(id, focusedCategoryIdRef.current)
-            } else {
-              // Then check note drop
-              const targetNote = focusedNotesRef.current.find(note =>
-                Math.abs(pos[0] - note.notePos[0]) <= NOTE_W / 2 &&
-                Math.abs(pos[2] - note.notePos[2]) <= NOTE_D / 2
+            if (focusedNoteIdRef.current) {
+              const targetMilestone = milestoneTargetsRef.current.find(target =>
+                Math.abs(pos[0] - target.x) <= target.w / 2 &&
+                Math.abs(pos[2] - target.z) <= target.d / 2
               )
-              if (targetNote) onAssignPersonaToNote?.(id, targetNote.id)
+              if (targetMilestone) onAssignPersonaToMilestone?.(id, targetMilestone.id)
+            } else {
+              const plateauCZ = fi.islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D / 2
+              const onPlateau =
+                Math.abs(pos[0] - fi.islandPos[0]) <= PLATEAU_W / 2 &&
+                Math.abs(pos[2] - plateauCZ) <= PLATEAU_D / 2
+              if (onPlateau) {
+                onAssignLeader?.(id, focusedCategoryIdRef.current)
+              } else {
+                // Then check note drop
+                const targetNote = focusedNotesRef.current.find(note =>
+                  Math.abs(pos[0] - note.notePos[0]) <= NOTE_W / 2 &&
+                  Math.abs(pos[2] - note.notePos[2]) <= NOTE_D / 2
+                )
+                if (targetNote) onAssignPersonaToNote?.(id, targetNote.id)
+              }
             }
           }
         } else {
@@ -726,10 +846,11 @@ function Scene({
     dragIdRef.current = null
     dragAssignmentRef.current = null
     setHoveredNoteId(null)
+    setHoveredMilestoneId(null)
     setHoveringPlateau(false)
     setDragId(null)
     onSourceDragEnd?.()
-  }, [activeDimensionId, islands, layoutLocked, onAssign, onAssignLeader, onAssignPersonaToNote, onMoveAssignment, onPositionUpdate, onSourceDragEnd, onUnassign, sourceDragPersonaId])
+  }, [activeDimensionId, islands, layoutLocked, onAssign, onAssignLeader, onAssignPersonaToMilestone, onAssignPersonaToNote, onMoveAssignment, onPositionUpdate, onSourceDragEnd, onUnassign, sourceDragPersonaId])
 
   useEffect(() => {
     window.addEventListener('pointerup', stopDrag)
@@ -761,10 +882,20 @@ function Scene({
     if (id === null) return
     e.stopPropagation()
     dragMovedRef.current = true
-    const newPos = [e.point.x, ISLAND_H, e.point.z]
+    const newPos = [e.point.x, focusedNoteIdRef.current ? ISLAND_H + NOTE_H + 0.03 : ISLAND_H, e.point.z]
     posOverridesRef.current = { ...posOverridesRef.current, [id]: newPos }
     setPosOverrides(prev => ({ ...prev, [id]: newPos }))
     if (focusedCategoryIdRef.current) {
+      if (focusedNoteIdRef.current) {
+        const hm = milestoneTargetsRef.current.find(target =>
+          Math.abs(e.point.x - target.x) <= target.w / 2 &&
+          Math.abs(e.point.z - target.z) <= target.d / 2
+        )
+        setHoveredMilestoneId(hm?.id ?? null)
+        setHoveredNoteId(null)
+        setHoveringPlateau(false)
+        return
+      }
       const fi = focusedIslandRef.current
       let onPlat = false
       if (fi) {
@@ -815,6 +946,21 @@ function Scene({
   const { notes: focusedNotesOnIsland, pageCount: notesPageCount } = focusedIsland
     ? computeNotesOnIsland(focusedIsland.islandPos, focusedNotes, notePageIndex)
     : { notes: [], pageCount: 1 }
+  const focusedNoteOnIsland = focusedNoteId
+    ? focusedNotesOnIsland.find(note => note.id === focusedNoteId) ?? null
+    : null
+  const focusedNoteMilestones = focusedNoteId
+    ? milestones.filter(ms => ms.noteId === focusedNoteId)
+    : []
+  const focusedMilestoneTargets = focusedNoteOnIsland
+    ? layoutMilestonesOnNote(focusedNoteMilestones).map(target => ({
+        id: target.milestone.id,
+        x: focusedNoteOnIsland.notePos[0] + target.x,
+        z: focusedNoteOnIsland.notePos[2] + target.z,
+        w: target.w,
+        d: target.d,
+      }))
+    : []
 
   const leaderIdsInFocused = new Set(
     categoryLeaders.filter(l => l.categoryId === focusedCategoryId).map(l => l.personaId)
@@ -843,6 +989,7 @@ function Scene({
 
   // Keep refs in sync so stopDrag/handleDragMove always see latest state
   focusedNotesRef.current = focusedNotesOnIsland
+  milestoneTargetsRef.current = focusedMilestoneTargets
   focusedIslandRef.current = focusedIsland ?? null
 
   // Map noteId → [persona, …] for rendering tiny figures on each note
@@ -852,6 +999,14 @@ function Scene({
     if (!p) return
     if (!notePersonaMap[a.noteId]) notePersonaMap[a.noteId] = []
     notePersonaMap[a.noteId].push(p)
+  })
+
+  const milestonePersonaMap = {}
+  personaMilestoneAssignments.forEach(a => {
+    const p = personas.find(px => px.id === a.personaId)
+    if (!p) return
+    if (!milestonePersonaMap[a.milestoneId]) milestonePersonaMap[a.milestoneId] = []
+    milestonePersonaMap[a.milestoneId].push(p)
   })
 
   return (
@@ -865,7 +1020,8 @@ function Scene({
       <CursorManager dragging={activeDragId !== null} />
       <CameraDirector
         locked={layoutLocked}
-        focusTarget={focusedIsland?.islandPos ?? null}
+        focusTarget={focusedNoteOnIsland?.notePos ?? focusedIsland?.islandPos ?? null}
+        focusLevel={focusedNoteOnIsland ? 'note' : 'category'}
         resetRevision={viewResetRevision}
       />
 
@@ -927,8 +1083,8 @@ function Scene({
           name={activeDragPersona.name}
           color={keyColor(activeDragPersona.modelKey)}
           phaseId={99}
-          targetHeight={focusedCategoryId ? MINI_TARGET_HEIGHT : TARGET_HEIGHT}
-          showName={!focusedCategoryId}
+          targetHeight={focusedNoteId ? 0.28 : focusedCategoryId ? MINI_TARGET_HEIGHT : TARGET_HEIGHT}
+          showName={!focusedCategoryId && !focusedNoteId}
           selected
           dragging
           onPointerDown={e => e.stopPropagation()}
@@ -957,6 +1113,7 @@ function Scene({
       {focusedNotesOnIsland.map(note => {
         const notePersonas = notePersonaMap[note.id] || []
         const spacing = 0.45
+        const noteFocused = focusedNoteId === note.id
         return (
           <group key={note.id}>
             <NoteCard
@@ -964,6 +1121,11 @@ function Scene({
               title={note.title}
               color={focusedIsland?.color || '#888'}
               highlighted={hoveredNoteId === note.id}
+              focused={noteFocused}
+              dimmed={Boolean(focusedNoteId && !noteFocused)}
+              milestones={noteFocused ? focusedNoteMilestones : []}
+              highlightedMilestoneId={hoveredMilestoneId}
+              onDoubleClick={() => onFocusNote?.(note.id)}
             />
             {notePersonas.map((persona, i) => (
               <PersonAvatar
@@ -1003,6 +1165,34 @@ function Scene({
           onGo={setNotePageIndex}
         />
       )}
+
+      {focusedNoteOnIsland && focusedMilestoneTargets.flatMap(target => {
+        const assigned = milestonePersonaMap[target.id] || []
+        const spacing = 0.15
+        return assigned.map((persona, i) => (
+          <PersonAvatar
+            key={`ms:${target.id}:${persona.id}`}
+            modelKey={persona.modelKey}
+            position={[
+              target.x - (assigned.length - 1) * spacing / 2 + i * spacing,
+              focusedNoteOnIsland.notePos[1] + NOTE_H + 0.06,
+              target.z,
+            ]}
+            name={persona.name}
+            color={keyColor(persona.modelKey)}
+            phaseId={i + 520}
+            targetHeight={0.24}
+            showName={false}
+            selected={selected === persona.id}
+            dragging={false}
+            onPointerDown={e => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              onSelect?.(selected === persona.id ? null : persona.id)
+            }}
+          />
+        ))
+      })}
 
       {focusedIsland && (
         <LeaderPlateau
@@ -1350,7 +1540,9 @@ export default function PeoplePage() {
   const [personas, setPersonas]         = useState([])
   const [notes, setNotes]               = useState([])
   const [noteAssignments, setNoteAssignments] = useState([])
+  const [milestones, setMilestones]     = useState([])
   const [personaNoteAssignments, setPersonaNoteAssignments] = useState([])
+  const [personaMilestoneAssignments, setPersonaMilestoneAssignments] = useState([])
   const [categoryLeaders, setCategoryLeaders] = useState([])
   const [personaAssignments, setPersonaAssignments] = useState([])
   const personaAssignmentsRef = useRef([])
@@ -1361,6 +1553,7 @@ export default function PeoplePage() {
   const [layoutLocked, setLayoutLocked] = useState(false)
   const [sourceDragPersonaId, setSourceDragPersonaId] = useState(null)
   const [focusedCategoryId, setFocusedCategoryId] = useState(null)
+  const [focusedNoteId, setFocusedNoteId] = useState(null)
   const [viewResetRevision, setViewResetRevision] = useState(0)
 
   const replacePersonaAssignments = useCallback((nextAssignments, { immediate = false, revise = true } = {}) => {
@@ -1374,8 +1567,8 @@ export default function PeoplePage() {
   }, [])
 
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getPersonaAssignments(), api.getNotes(), api.getAssignments(), api.getPersonaNoteAssignments(), api.getCategoryLeaders()])
-      .then(([dims, cats, pers, personaAsns, notesList, noteAsns, pnAsns, leaders]) => {
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getPersonaAssignments(), api.getNotes(), api.getAssignments(), api.getMilestones(), api.getPersonaNoteAssignments(), api.getPersonaMilestoneAssignments(), api.getCategoryLeaders()])
+      .then(([dims, cats, pers, personaAsns, notesList, noteAsns, ms, pnAsns, pmAsns, leaders]) => {
         setDimensions(dims)
         setCategories(cats)
         setDimIndex(0)
@@ -1383,7 +1576,9 @@ export default function PeoplePage() {
         replacePersonaAssignments(personaAsns, { revise: true })
         setNotes(notesList)
         setNoteAssignments(noteAsns)
+        setMilestones(ms)
         setPersonaNoteAssignments(pnAsns)
+        setPersonaMilestoneAssignments(pmAsns)
         setCategoryLeaders(leaders)
       })
       .catch(console.error)
@@ -1405,13 +1600,38 @@ export default function PeoplePage() {
     if (!focusedCategoryId) return
     if (!activeCats.some(c => c.id === focusedCategoryId)) {
       setFocusedCategoryId(null)
+      setFocusedNoteId(null)
       setViewResetRevision(v => v + 1)
     }
   }, [activeCats, focusedCategoryId])
 
+  useEffect(() => {
+    if (!focusedNoteId) return
+    if (!focusedCategoryId || !activeDimension) {
+      setFocusedNoteId(null)
+      return
+    }
+    const stillInFocusedCategory = noteAssignments.some(a =>
+      a.noteId === focusedNoteId &&
+      a.dimensionId === activeDimension.id &&
+      a.categoryId === focusedCategoryId
+    )
+    if (!stillInFocusedCategory) setFocusedNoteId(null)
+  }, [activeDimension, focusedCategoryId, focusedNoteId, noteAssignments])
+
   const clearCategoryFocus = () => {
     setFocusedCategoryId(null)
+    setFocusedNoteId(null)
     setViewResetRevision(v => v + 1)
+  }
+
+  const handleFocusCategory = catId => {
+    setFocusedCategoryId(catId)
+    setFocusedNoteId(null)
+  }
+
+  const clearNoteFocus = () => {
+    setFocusedNoteId(null)
   }
 
   const handlePositionUpdate = async (id, x, z) => {
@@ -1514,6 +1734,27 @@ export default function PeoplePage() {
     }
   }
 
+  const handleAssignPersonaToMilestone = async (personaId, milestoneId) => {
+    if (personaMilestoneAssignments.some(a => a.personaId === personaId && a.milestoneId === milestoneId)) return
+    setPersonaMilestoneAssignments(prev => [...prev, { personaId, milestoneId }])
+    try {
+      await api.assignPersonaToMilestone(personaId, milestoneId)
+    } catch (e) {
+      console.error(e)
+      setPersonaMilestoneAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.milestoneId === milestoneId)))
+    }
+  }
+
+  const handleUnassignPersonaFromMilestone = async (personaId, milestoneId) => {
+    setPersonaMilestoneAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.milestoneId === milestoneId)))
+    try {
+      await api.unassignPersonaFromMilestone(personaId, milestoneId)
+    } catch (e) {
+      console.error(e)
+      setPersonaMilestoneAssignments(prev => [...prev, { personaId, milestoneId }])
+    }
+  }
+
   const handleUnassignPersonaFromNote = async (personaId, noteId) => {
     setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.noteId === noteId)))
     try {
@@ -1542,8 +1783,12 @@ export default function PeoplePage() {
   const handleDeletePersona = async (id) => {
     const previousPersonas = personas
     const previousAssignments = personaAssignments
+    const previousNoteAssignments = personaNoteAssignments
+    const previousMilestoneAssignments = personaMilestoneAssignments
     setPersonas(prev => prev.filter(p => p.id !== id))
     replacePersonaAssignments(personaAssignmentsRef.current.filter(a => a.personaId !== id))
+    setPersonaNoteAssignments(prev => prev.filter(a => a.personaId !== id))
+    setPersonaMilestoneAssignments(prev => prev.filter(a => a.personaId !== id))
     setSelected(null)
     setEditPersonaId(null)
     try {
@@ -1551,11 +1796,14 @@ export default function PeoplePage() {
     } catch (e) {
       setPersonas(previousPersonas)
       replacePersonaAssignments(previousAssignments)
+      setPersonaNoteAssignments(previousNoteAssignments)
+      setPersonaMilestoneAssignments(previousMilestoneAssignments)
       throw e
     }
   }
 
   const selectedPersona = personas.find(p => p.id === selected) ?? null
+  const focusedNote = focusedNoteId ? notes.find(n => n.id === focusedNoteId) ?? null : null
   const selectedAssignments = selectedPersona && activeDimension
     ? personaAssignments
       .filter(a => a.personaId === selectedPersona.id && a.dimensionId === activeDimension.id)
@@ -1567,6 +1815,12 @@ export default function PeoplePage() {
       .filter(a => a.personaId === selectedPersona.id)
       .map(a => ({ ...a, note: notes.find(n => n.id === a.noteId) }))
       .filter(a => a.note)
+    : []
+  const selectedMilestoneAssignments = selectedPersona && focusedNoteId
+    ? personaMilestoneAssignments
+      .filter(a => a.personaId === selectedPersona.id)
+      .map(a => ({ ...a, milestone: milestones.find(m => m.id === a.milestoneId) }))
+      .filter(a => a.milestone)
     : []
   const isSelectedLeader = selectedPersona && focusedCategoryId
     ? categoryLeaders.some(l => l.personaId === selectedPersona.id && l.categoryId === focusedCategoryId)
@@ -1614,9 +1868,12 @@ export default function PeoplePage() {
           assignmentRevision={assignmentRevision}
           notes={notes}
           noteAssignments={noteAssignments}
+          milestones={milestones}
           personaNoteAssignments={personaNoteAssignments}
+          personaMilestoneAssignments={personaMilestoneAssignments}
           categoryLeaders={categoryLeaders}
           focusedCategoryId={focusedCategoryId}
+          focusedNoteId={focusedNoteId}
           viewResetRevision={viewResetRevision}
           layoutLocked={layoutLocked}
           sourceDragPersonaId={sourceDragPersonaId}
@@ -1625,9 +1882,11 @@ export default function PeoplePage() {
           onAssign={handleAssignPersona}
           onUnassign={handleUnassignPersona}
           onMoveAssignment={handleMovePersonaAssignment}
-          onFocusCategory={setFocusedCategoryId}
+          onFocusCategory={handleFocusCategory}
+          onFocusNote={setFocusedNoteId}
           onSelect={setSelected}
           onAssignPersonaToNote={handleAssignPersonaToNote}
+          onAssignPersonaToMilestone={handleAssignPersonaToMilestone}
           onAssignLeader={handleAssignLeader}
           selected={selected}
         />
@@ -1641,7 +1900,18 @@ export default function PeoplePage() {
             className={styles.categoryFocusSwatch}
             style={{ background: focusedCategory.color || '#aaa' }}
           />
-          <span className={styles.categoryFocusName}>{focusedCategory.name}</span>
+          <span className={styles.categoryFocusName}>
+            {focusedNote ? `${focusedCategory.name} / ${focusedNote.title || 'Untitled'}` : focusedCategory.name}
+          </span>
+          {focusedNote && (
+            <button
+              className={styles.categoryFocusClear}
+              onClick={clearNoteFocus}
+              title="Back to category"
+            >
+              Category
+            </button>
+          )}
           <button
             className={styles.categoryFocusClear}
             onClick={clearCategoryFocus}
@@ -1675,7 +1945,9 @@ export default function PeoplePage() {
         <div className={styles.personaPanelHeader}>
           <div>
             <div className={styles.personaPanelTitle}>People</div>
-            <div className={styles.personaPanelSub}>Drag to a category</div>
+            <div className={styles.personaPanelSub}>
+              {focusedNote ? 'Drag to a milestone' : focusedCategory ? 'Drag to a note' : 'Drag to a category'}
+            </div>
           </div>
           <button
             className={styles.personaPanelAdd}
@@ -1740,7 +2012,7 @@ export default function PeoplePage() {
             />
             <span className={styles.selectionName}>{selectedPersona.name}</span>
           </div>
-          {(selectedAssignments.length > 0 || selectedNoteAssignments.length > 0 || isSelectedLeader) && (
+          {(selectedAssignments.length > 0 || selectedNoteAssignments.length > 0 || selectedMilestoneAssignments.length > 0 || isSelectedLeader) && (
             <div className={styles.assignmentChips}>
               {isSelectedLeader && (
                 <button
@@ -1774,6 +2046,18 @@ export default function PeoplePage() {
                   title={`Remove from note "${note.title}"`}
                 >
                   {note.title || 'Untitled'}
+                  <span>×</span>
+                </button>
+              ))}
+              {selectedMilestoneAssignments.map(({ milestone, milestoneId }) => (
+                <button
+                  key={milestoneId}
+                  className={styles.assignmentChip}
+                  style={{ borderColor: milestone.color || focusedCategory?.color || '#888', color: milestone.color || focusedCategory?.color || '#888' }}
+                  onClick={() => handleUnassignPersonaFromMilestone(selectedPersona.id, milestoneId)}
+                  title={`Remove from milestone "${milestone.title || formatMilestoneDate(milestone)}"`}
+                >
+                  {milestone.title || formatMilestoneDate(milestone)}
                   <span>×</span>
                 </button>
               ))}

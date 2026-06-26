@@ -244,6 +244,13 @@ def _init_db():
             )
         """)
         con.execute("""
+            CREATE TABLE IF NOT EXISTS persona_milestone_assignments (
+                persona_id   TEXT NOT NULL,
+                milestone_id TEXT NOT NULL,
+                PRIMARY KEY (persona_id, milestone_id)
+            )
+        """)
+        con.execute("""
             CREATE TABLE IF NOT EXISTS category_leaders (
                 persona_id  TEXT NOT NULL,
                 category_id TEXT NOT NULL,
@@ -1351,6 +1358,7 @@ def delete_project(project_id: str, user: dict = Depends(current_user)):
             if ms_ids:
                 mph = ','.join('?' * len(ms_ids))
                 con.execute(f"DELETE FROM dependencies WHERE from_id IN ({mph}) OR to_id IN ({mph})", ms_ids + ms_ids)
+                con.execute(f"DELETE FROM persona_milestone_assignments WHERE milestone_id IN ({mph})", ms_ids)
                 con.execute(f"DELETE FROM milestones WHERE id IN ({mph})", ms_ids)
             con.execute(f"DELETE FROM deadlines WHERE note_id IN ({ph})", note_ids)
             con.execute(f"DELETE FROM assignments WHERE note_id IN ({ph})", note_ids)
@@ -1416,6 +1424,11 @@ def update_note(note_id: str, data: NotePatch, user: dict = Depends(current_user
 def delete_note(note_id: str, user: dict = Depends(current_user)):
     with _db() as con:
         assert_project_access(_project_id_for_note(con, note_id), user)
+        ms_rows = con.execute("SELECT id FROM milestones WHERE note_id = ?", (note_id,)).fetchall()
+        ms_ids = [r["id"] for r in ms_rows]
+        if ms_ids:
+            ph = ','.join('?' * len(ms_ids))
+            con.execute(f"DELETE FROM persona_milestone_assignments WHERE milestone_id IN ({ph})", ms_ids)
         con.execute("DELETE FROM persona_note_assignments WHERE note_id = ?", (note_id,))
         con.execute("DELETE FROM notes WHERE id = ?", (note_id,))
 
@@ -1612,6 +1625,7 @@ def delete_persona(persona_id: str, user: dict = Depends(current_user)):
         assert_project_access(row["project_id"], user)
         con.execute("DELETE FROM persona_assignments WHERE persona_id = ?", (persona_id,))
         con.execute("DELETE FROM persona_note_assignments WHERE persona_id = ?", (persona_id,))
+        con.execute("DELETE FROM persona_milestone_assignments WHERE persona_id = ?", (persona_id,))
         con.execute("DELETE FROM category_leaders WHERE persona_id = ?", (persona_id,))
         con.execute("DELETE FROM personas WHERE id = ?", (persona_id,))
     return Response(status_code=204)
@@ -1705,6 +1719,56 @@ def unassign_persona_from_note(persona_id: str, note_id: str, user: dict = Depen
         con.execute(
             "DELETE FROM persona_note_assignments WHERE persona_id = ? AND note_id = ?",
             (persona_id, note_id),
+        )
+    return Response(status_code=204)
+
+
+@app.get("/persona-milestone-assignments")
+def list_persona_milestone_assignments(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    with _db() as con:
+        rows = con.execute(
+            "SELECT pma.persona_id, pma.milestone_id FROM persona_milestone_assignments pma "
+            "JOIN milestones m ON m.id = pma.milestone_id "
+            "JOIN notes n ON n.id = m.note_id WHERE n.project_id = ?",
+            (project_id,),
+        ).fetchall()
+    return [{"personaId": r["persona_id"], "milestoneId": r["milestone_id"]} for r in rows]
+
+@app.put("/personas/{persona_id}/milestone-assign/{milestone_id}", status_code=204)
+def assign_persona_to_milestone(persona_id: str, milestone_id: str, user: dict = Depends(current_user)):
+    with _db() as con:
+        ms_row = con.execute(
+            "SELECT n.project_id FROM milestones m JOIN notes n ON n.id = m.note_id WHERE m.id = ?",
+            (milestone_id,),
+        ).fetchone()
+        if not ms_row:
+            raise HTTPException(404, "Milestone not found")
+        assert_project_access(ms_row["project_id"], user)
+        persona_row = con.execute("SELECT project_id FROM personas WHERE id = ?", (persona_id,)).fetchone()
+        if not persona_row:
+            raise HTTPException(404, "Persona not found")
+        if persona_row["project_id"] != ms_row["project_id"]:
+            raise HTTPException(400, "Cannot assign persona across projects")
+        con.execute(
+            "INSERT OR IGNORE INTO persona_milestone_assignments (persona_id, milestone_id) VALUES (?, ?)",
+            (persona_id, milestone_id),
+        )
+    return Response(status_code=204)
+
+@app.delete("/personas/{persona_id}/milestone-assign/{milestone_id}", status_code=204)
+def unassign_persona_from_milestone(persona_id: str, milestone_id: str, user: dict = Depends(current_user)):
+    with _db() as con:
+        ms_row = con.execute(
+            "SELECT n.project_id FROM milestones m JOIN notes n ON n.id = m.note_id WHERE m.id = ?",
+            (milestone_id,),
+        ).fetchone()
+        if not ms_row:
+            raise HTTPException(404, "Milestone not found")
+        assert_project_access(ms_row["project_id"], user)
+        con.execute(
+            "DELETE FROM persona_milestone_assignments WHERE persona_id = ? AND milestone_id = ?",
+            (persona_id, milestone_id),
         )
     return Response(status_code=204)
 
@@ -2119,6 +2183,7 @@ def update_milestone(ms_id: str, data: MilestonePatch, user: dict = Depends(curr
 def delete_milestone(ms_id: str, user: dict = Depends(current_user)):
     with _db() as con:
         assert_project_access(_project_id_for_milestone(con, ms_id), user)
+        con.execute("DELETE FROM persona_milestone_assignments WHERE milestone_id = ?", (ms_id,))
         con.execute("DELETE FROM milestones WHERE id = ?", (ms_id,))
 
 
