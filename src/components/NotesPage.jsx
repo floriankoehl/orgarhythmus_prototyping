@@ -255,21 +255,20 @@ function PostIt({
 
   const handleDoubleClick = (e) => {
     e.stopPropagation()
-    if (paintCat || splitActive) return
-    if (interactionMode === 'edit') {
-      startInlineEdit()
-      return
-    }
+    if (paintCat) return
+    if (splitActive) { onOpen(); return }
+    if (interactionMode === 'edit') { startInlineEdit(); return }
     onOpen()
   }
 
   const renderedSize = inlineEditing && inlineEditSize ? inlineEditSize : size
+  const hasAccent = backgroundColor && backgroundColor !== '#fff'
 
   return (
     <div
       ref={cardRef}
       className={`${styles.postit} ${isMergeTarget ? styles.postitMergeTarget : ''} ${splitActive ? styles.postitSplitMode : ''} ${selected ? styles.postitSelected : ''}`}
-      style={{ left: position.x, top: position.y, backgroundColor, zIndex, ...(renderedSize ? { width: renderedSize.w, height: renderedSize.h } : {}) }}
+      style={{ left: position.x, top: position.y, zIndex, ...(renderedSize ? { width: renderedSize.w, height: renderedSize.h } : {}) }}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
       onBlurCapture={e => {
@@ -280,7 +279,11 @@ function PostIt({
       onMouseMove={handleMouseMove}
       onMouseLeave={() => { if (splitActive) { setCutY(null); setCutOffset(null) } }}
     >
-      <div className={styles.postitHeader} onPointerDown={paintCat || inlineEditing ? undefined : onDragStart}>
+      <div
+        className={styles.postitHeader}
+        style={hasAccent ? { backgroundColor, borderBottomColor: backgroundColor + '55' } : undefined}
+        onPointerDown={paintCat || inlineEditing ? undefined : onDragStart}
+      >
         {inlineEditing ? (
           <input
             ref={titleEditRef}
@@ -319,6 +322,7 @@ function PostIt({
         <textarea
           ref={bodyRef}
           className={styles.inlineBodyInput}
+          style={hasAccent ? { backgroundColor: backgroundColor + '22' } : undefined}
           value={draftText}
           onChange={e => setDraftText(e.target.value)}
           onPointerDown={e => e.stopPropagation()}
@@ -330,7 +334,7 @@ function PostIt({
           placeholder="Description..."
         />
       ) : (
-        snippet && <p ref={bodyRef} className={styles.postitBody}>{snippet}</p>
+        snippet && <p ref={bodyRef} className={styles.postitBody} style={hasAccent ? { backgroundColor: backgroundColor + '22' } : undefined}>{snippet}</p>
       )}
 
       <div className={styles.resizeHandle} onPointerDown={handleResizeDown}>
@@ -723,10 +727,16 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     const original = notes.find(n => n.id === noteId)
     if (!original) return
     const title2 = deriveTitle(text2) || 'Untitled'
+    const originalAsns = allAssignments.filter(a => a.noteId === noteId)
     try {
       await api.updateNote(noteId, { html: text1, title: original.title })
       const newId = crypto.randomUUID()
       await api.createNote({ id: newId, html: text2, title: title2, collapsed: false })
+      await Promise.all(originalAsns.map(a => api.assign(newId, a.dimensionId, a.categoryId)))
+      setAllAssignments(prev => [
+        ...prev,
+        ...originalAsns.map(a => ({ noteId: newId, dimensionId: a.dimensionId, categoryId: a.categoryId })),
+      ])
       const base = notePositions[noteId] || randomPos()
       setNotePositions(prev => ({ ...prev, [newId]: { x: base.x + 260, y: base.y + 20 } }))
       setOpenNoteIds(prev => new Set([...prev, newId]))
