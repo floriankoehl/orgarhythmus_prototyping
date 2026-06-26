@@ -129,8 +129,6 @@ function PersonAvatar({ modelKey = 'a', position, name, color = '#4f8ef7',
 const ISLAND_W     = 5.0
 const ISLAND_D     = 5.0
 const ISLAND_H     = 0.22
-const ISLAND_GAP_X = 2.0
-const ISLAND_GAP_Z = 2.0
 const ISLAND_COLS  = 4
 const TILE_GRID    = 10
 
@@ -208,15 +206,19 @@ function BrickIsland({ position, color, name }) {
 
 function computeIslandLayout(cats) {
   if (cats.length === 0) return []
-  const cols   = Math.min(cats.length, ISLAND_COLS)
-  const rows   = Math.ceil(cats.length / cols)
-  const totalW = cols * ISLAND_W + (cols - 1) * ISLAND_GAP_X
-  const totalD = rows * ISLAND_D + (rows - 1) * ISLAND_GAP_Z
+  const cols     = Math.min(cats.length, ISLAND_COLS)
+  const rows     = Math.ceil(cats.length / cols)
+  // Snap to section-cell midpoints so thick grid lines form island borders.
+  // Section lines land at multiples of ISLAND_W (= sectionSize = 5).
+  // Cell midpoints are at 5k + 2.5; startCol/Row picks the leftmost cell index
+  // for a layout that is as centered around the origin as possible.
+  const startCol = -Math.floor(cols / 2)
+  const startRow = -Math.floor(rows / 2)
   return cats.map((cat, i) => {
     const col = i % cols
     const row = Math.floor(i / cols)
-    const x   = col * (ISLAND_W + ISLAND_GAP_X) - totalW / 2 + ISLAND_W / 2
-    const z   = row * (ISLAND_D + ISLAND_GAP_Z) - totalD / 2 + ISLAND_D / 2
+    const x   = (startCol + col) * ISLAND_W + ISLAND_W / 2
+    const z   = (startRow + row) * ISLAND_D + ISLAND_D / 2
     return { ...cat, islandPos: [x, 0, z] }
   })
 }
@@ -278,11 +280,11 @@ function Scene({ activeCats = [], personas = [], onPositionUpdate, onSelect, sel
       <Environment preset="dawn" background={false} />
       <CursorManager dragging={dragId !== null} />
 
-      {/* Infinite white floor — large enough that it disappears into fog */}
+      {/* Infinite white floor — sits slightly below y=0 to avoid z-fighting with brick tile bottoms */}
       <mesh
         receiveShadow
         rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, 0, 0]}
+        position={[0, -0.005, 0]}
         onClick={dragId === null ? () => onSelect?.(null) : undefined}
       >
         <planeGeometry args={[800, 800]} />
@@ -299,8 +301,8 @@ function Scene({ activeCats = [], personas = [], onPositionUpdate, onSelect, sel
         sectionSize={5}
         sectionThickness={1.6}
         sectionColor="#aaaaaa"
-        fadeDistance={40}
-        fadeStrength={1.4}
+        fadeDistance={60}
+        fadeStrength={1}
       />
 
       {islands.map(cat => (
