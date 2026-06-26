@@ -1788,6 +1788,10 @@
   box-shadow: 0 0 0 3px rgba(26,115,232,0.7), 0 1px 4px rgba(0,0,0,0.22);
 }
 
+.milestonePinned {
+  box-shadow: 0 0 0 3px rgba(245,158,11,0.9), 0 0 0 6px rgba(245,158,11,0.18), 0 1px 4px rgba(0,0,0,0.22);
+}
+
 .milestoneUnassigned {
   border: 1.5px solid rgba(0, 0, 0, 0.28);
   box-shadow: 0 1px 4px rgba(0,0,0,0.14);

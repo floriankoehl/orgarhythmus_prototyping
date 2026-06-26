@@ -138,6 +138,15 @@ function durationScaleBucketIndex(bucket) {
   return ['minute', 'hour', 'day', 'week', 'month'].indexOf(bucket)
 }
 
+function zoomForConflictGap(minutes) {
+  const gap = Math.abs(Number(minutes) || 0)
+  if (gap >= 43200) return 'months'
+  if (gap >= 10080) return 'weeks'
+  if (gap >= 1440) return 'days'
+  if (gap >= 60) return 'hours'
+  return 'minutes'
+}
+
 function formatMinutesDuration(minutes) {
   const value = Math.max(MIN_MILESTONE_DURATION, Number(minutes) || MIN_MILESTONE_DURATION)
   if (value < 60) return `${value} min`
@@ -228,6 +237,35 @@ function getDependencyViolations(msList, deps) {
       return { dep, from, to }
     })
     .filter(Boolean)
+}
+
+function getCascadingDependencyConflict(msList, deps, initialViolations = null) {
+  const msMap = Object.fromEntries(msList.map(m => [m.id, m]))
+  const seedViolations = initialViolations ?? getDependencyViolations(msList, deps)
+  const violations = []
+  const violationIds = new Set()
+  const milestoneIds = new Set()
+  const queue = []
+  const addViolation = violation => {
+    if (!violation || violationIds.has(violation.dep.id)) return
+    violationIds.add(violation.dep.id)
+    violations.push(violation)
+    milestoneIds.add(violation.from.id)
+    milestoneIds.add(violation.to.id)
+    queue.push(violation.to.id)
+  }
+  seedViolations.forEach(addViolation)
+  while (queue.length) {
+    const fromId = queue.shift()
+    const from = msMap[fromId]
+    if (!from) continue
+    deps.forEach(dep => {
+      if (dep.fromId !== fromId || violationIds.has(dep.id)) return
+      const to = msMap[dep.toId]
+      if (to && from.startCol + from.duration > to.startCol) addViolation({ dep, from, to })
+    })
+  }
+  return { violations, depIds: [...violationIds], milestoneIds }
 }
 
 function hasAlternateDependencyPath(fromId, toId, deps, ignoredDepId) {
@@ -574,7 +612,7 @@ function WarningSettingsPanel({
             checked={autoResolveDependencyView}
             onChange={e => onAutoResolveDependencyViewChange(e.target.checked)}
           />
-          <span>Auto-enter dependency resolve view</span>
+          <span>Auto-select dependency conflicts</span>
         </label>
         <div className={styles.warningSettingsText}>
           Resize protection compares the new duration with the original duration using log10 of the ratio.
@@ -647,7 +685,10 @@ function WarningSettingsPanel({
 }
 
 // ── Context menu ──────────────────────────────────────────────────────────────
-function ContextMenu({ menu, onClose, onCreate, onInsertTimeUnit, onDeleteTimeUnit, onSetDeadline, onRemoveDeadline, onDeleteMilestone, onEditDepReason, onDeleteDep }) {
+function ContextMenu({
+  menu, onClose, onCreate, onInsertTimeUnit, onDeleteTimeUnit, onSetDeadline, onRemoveDeadline,
+  onDeleteMilestone, onToggleMilestonePin, pinnedMilestoneId, onEditDepReason, onDeleteDep,
+}) {
   if (!menu) return null
   return createPortal(
     <>
@@ -677,12 +718,16 @@ function ContextMenu({ menu, onClose, onCreate, onInsertTimeUnit, onDeleteTimeUn
             Remove this {menu.unitLabel || 'unit'}
           </button>
         </>)}
-        {menu.type === 'milestone' && (
+        {menu.type === 'milestone' && (<>
+          <button className={styles.ctxItem}
+            onClick={() => { onToggleMilestonePin(menu.milestoneId); onClose() }}>
+            {pinnedMilestoneId === menu.milestoneId ? 'Unpin milestone' : 'Pin milestone'}
+          </button>
           <button className={`${styles.ctxItem} ${styles.ctxItemDanger}`}
             onClick={() => { onDeleteMilestone(menu.milestoneId, menu.label); onClose() }}>
             Delete milestone
           </button>
-        )}
+        </>)}
         {menu.type === 'dep' && (<>
           <button className={styles.ctxItem}
             onClick={() => { onEditDepReason(menu.depId, menu.reason); onClose() }}>
@@ -1472,7 +1517,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [resizeConfirmDraft, setResizeConfirmDraft] = useState(null)
   const warningPromptTimerRef = useRef(null)
   const capturePerspectiveStateRef = useRef(null)
+  const restorePerspectiveSnapshotRef = useRef(null)
   const resolveDependencySelectionRef = useRef(null)
+  const reportDependencyViolationsRef = useRef(null)
   const autoResolveDependencyViewRef = useRef(false)
   const [dragOverNoteId, setDragOverNoteId] = useState(null)
   const [dragOverLaneCatId, setDragOverLaneCatId] = useState(null)
@@ -1522,7 +1569,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const showWarningPrompt = useCallback(prompt => {
     if (warningPromptTimerRef.current) window.clearTimeout(warningPromptTimerRef.current)
     setWarningPrompt(prompt)
-    if (prompt?.actions === 'confirm') {
+    if (prompt?.actions === 'confirm' || prompt?.actions === 'dependency') {
       warningPromptTimerRef.current = null
       return
     }
@@ -1694,18 +1741,6 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setSelectedIds(idSet)
   }, [activeDimId, activeLaneFilter, assignments, colorDimId])
 
-  const presentDependencyConflictMilestones = useCallback(ids => {
-    const idSet = new Set(ids)
-    const conflictMilestones = milestonesRef.current.filter(m => idSet.has(m.id))
-    const noteIds = new Set(conflictMilestones.map(m => m.noteId))
-    if (conflictMilestones.length === 0 || noteIds.size === 0) return
-
-    setRevealedConflictNoteIds(new Set(noteIds))
-    setPendingConflictMilestoneIds(idSet)
-    setPendingDependencyResolveIds(prev => new Set([...prev, ...idSet]))
-    setSelectedDepIds(new Set())
-  }, [])
-
   const toggleSavedFilter = useCallback(filterId => {
     setActiveFilterIds(prev => prev.includes(filterId) ? prev.filter(id => id !== filterId) : [...prev, filterId])
   }, [])
@@ -1756,6 +1791,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   // ── Selection + context menu ───────────────────────────────────────────────
   const [selectedIds,  setSelectedIds]  = useState(new Set())
   const [selectedDepIds, setSelectedDepIds] = useState(new Set())
+  const [pinnedMilestoneId, setPinnedMilestoneId] = useState(null)
   const [contextMenu,  setContextMenu]  = useState(null)
   const [clickedNoteId, setClickedNoteId] = useState(null)
 
@@ -1804,6 +1840,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   selectedIdsRef.current = selectedIds
   const selectedDepIdsRef = useRef(new Set())
   selectedDepIdsRef.current = selectedDepIds
+  const pinnedMilestoneIdRef = useRef(null)
+  pinnedMilestoneIdRef.current = pinnedMilestoneId
 
   const applyTransactionState = useCallback((nextState, previousState = {}) => {
     const next = normalizeTransactionState(nextState)
@@ -1869,24 +1907,32 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         showWarningPrompt({ title: 'Hard deadline', message: detail.message, actions: 'close' })
       } else if (detail?.type === 'dependency') {
         const depIds = detail.dependencyIds ?? []
-        const milestoneIds = new Set(detail.milestoneIds ?? [])
-        depIds.forEach(depId => {
-          const dep = dependenciesRef.current.find(d => d.id === depId)
-          if (dep) { milestoneIds.add(dep.fromId); milestoneIds.add(dep.toId) }
-        })
-        presentDependencyConflictMilestones(milestoneIds)
-        setBlinkingDepIds(new Set(depIds))
-        window.setTimeout(() => setBlinkingDepIds(new Set()), 3000)
-        showWarningPrompt({ title: 'Dependency violation', message: detail.message, actions: 'dependency', dependencyIds: depIds })
-        if (autoResolveDependencyViewRef.current) {
-          resolveDependencySelectionRef.current?.(milestoneIds)
-        }
+        const attemptedMilestones = [
+          ...milestonesRef.current.filter(m => !after.milestones.some(next => next.id === m.id)),
+          ...after.milestones,
+        ]
+        const attemptedDependencies = [
+          ...dependenciesRef.current.filter(d => !after.dependencies.some(next => next.id === d.id)),
+          ...after.dependencies,
+        ]
+        const msMap = Object.fromEntries(attemptedMilestones.map(m => [m.id, m]))
+        const depMap = Object.fromEntries(attemptedDependencies.map(d => [d.id, d]))
+        const violations = depIds
+          .map(depId => {
+            const dep = depMap[depId]
+            const from = dep && msMap[dep.fromId]
+            const to = dep && msMap[dep.toId]
+            return dep && from && to ? { dep, from, to } : null
+          })
+          .filter(Boolean)
+        if (violations.length) reportDependencyViolationsRef.current?.(violations, attemptedMilestones, attemptedDependencies)
+        else showWarningPrompt({ title: 'Dependency violation', message: detail.message, actions: 'dependency', dependencyIds: depIds })
       } else {
         showTransactionFailure(err)
       }
       return false
     }
-  }, [applyTransactionState, presentConflictMilestones, presentDependencyConflictMilestones, showTransactionFailure, showWarningPrompt])
+  }, [applyTransactionState, presentConflictMilestones, showTransactionFailure, showWarningPrompt])
 
   const undoGanttTransaction = useCallback(async () => {
     try {
@@ -1983,6 +2029,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     })
     if (changed) setSelectedIds(next)
   }, [noteRowMap, milestones, selectedIds])
+
+  useEffect(() => {
+    if (!pinnedMilestoneId) return
+    if (!milestones.some(m => m.id === pinnedMilestoneId)) setPinnedMilestoneId(null)
+  }, [milestones, pinnedMilestoneId])
 
   useEffect(() => {
     if (pendingConflictMilestoneIds.size === 0) return
@@ -2292,33 +2343,55 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     })
   }, [showWarningPrompt])
 
-  const reportDependencyViolations = useCallback(violations => {
-    const depIds = violations.map(v => v.dep.id).filter(Boolean)
-    const milestoneIds = new Set()
-    violations.forEach(v => {
-      milestoneIds.add(v.from.id)
-      milestoneIds.add(v.to.id)
-    })
-    presentDependencyConflictMilestones(milestoneIds)
+  const reportDependencyViolations = useCallback((violations, allMilestones = milestonesRef.current, allDependencies = dependenciesRef.current) => {
+    const conflict = getCascadingDependencyConflict(allMilestones, allDependencies, violations)
+    const depIds = conflict.depIds
+    const milestoneIds = conflict.milestoneIds
+    const conflictMilestones = allMilestones.filter(m => milestoneIds.has(m.id))
+    const noteIds = new Set(conflictMilestones.map(m => m.noteId))
+    const conflictGaps = conflict.violations.map(v => Math.abs((v.from.startCol + v.from.duration) - v.to.startCol))
+    const smallestGap = conflictGaps.length ? Math.min(...conflictGaps) : 0
+    const previousSnapshot = capturePerspectiveStateRef.current?.()
+    const shouldAutoSelect = autoResolveDependencyViewRef.current
+
+    if (shouldAutoSelect) {
+      resolveDependencySelectionRef.current?.(milestoneIds)
+    } else {
+      setSelectedDepIds(new Set())
+      setRevealedConflictNoteIds(new Set(noteIds))
+      setPendingConflictMilestoneIds(milestoneIds)
+      setPendingDependencyResolveIds(milestoneIds)
+      setActiveFilterIds([])
+      setQuickFilters([])
+      setPaintCat(null)
+      applyNoteVisibilityFilter(noteIds)
+      if (previousSnapshot) {
+        window.setTimeout(() => {
+          restorePerspectiveSnapshotRef.current?.(previousSnapshot)
+        }, 3000)
+      }
+    }
+
+    setTimeZoom(zoomForConflictGap(smallestGap))
     setBlinkingDepIds(new Set(depIds))
+    setBlinkingMilestoneIds(new Set(milestoneIds))
     window.setTimeout(() => setBlinkingDepIds(new Set()), 3000)
+    window.setTimeout(() => setBlinkingMilestoneIds(new Set()), 3000)
     showWarningPrompt({
       title: 'Dependency violation',
-      message: violations.length === 1
+      message: conflict.violations.length === 1
         ? 'A predecessor milestone must finish before its successor starts.'
-        : `${violations.length} dependency constraints were violated.`,
+        : `${conflict.violations.length} dependency constraints were violated.`,
       actions: 'dependency',
       dependencyIds: depIds,
     })
-    if (autoResolveDependencyViewRef.current) {
-      resolveDependencySelectionRef.current?.(milestoneIds)
-    }
-  }, [presentDependencyConflictMilestones, showWarningPrompt])
+  }, [applyNoteVisibilityFilter, showWarningPrompt])
+  reportDependencyViolationsRef.current = reportDependencyViolations
 
   const maybeBlockDependencyWarning = useCallback((nextMilestones, nextDependencies) => {
     const violations = getDependencyViolations(nextMilestones, nextDependencies)
     if (violations.length === 0) return false
-    reportDependencyViolations(violations)
+    reportDependencyViolations(violations, nextMilestones, nextDependencies)
     return true
   }, [reportDependencyViolations])
 
@@ -2461,18 +2534,29 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const prevZoom = timeZoomRef.current
     if (nextZoom === prevZoom) return
     const sp = spacingRef.current
-    const currentMinute = (scrollLeftRef.current / sp.colW) * getZoomUnit(prevZoom)
-    const nextScrollLeft = Math.max(0, Math.round((currentMinute / getZoomUnit(nextZoom)) * sp.colW))
+    const pinned = pinnedMilestoneIdRef.current
+      ? milestonesRef.current.find(m => m.id === pinnedMilestoneIdRef.current)
+      : null
+    const selectedAnchor = [...selectedIdsRef.current]
+      .map(id => milestonesRef.current.find(m => m.id === id))
+      .find(Boolean)
+    const anchor = pinned ?? selectedAnchor
+    const currentMinute = anchor
+      ? anchor.startCol + anchor.duration / 2
+      : (scrollLeftRef.current / sp.colW) * getZoomUnit(prevZoom)
+    const anchorLeft = (currentMinute / getZoomUnit(nextZoom)) * sp.colW
+    const nextScrollLeft = Math.max(0, Math.round(anchor ? anchorLeft - vpRef.current.w / 2 : anchorLeft))
+    const needed = Math.ceil((nextScrollLeft + vpRef.current.w) / sp.colW) + COL_BUF + EDGE_COLS + 1
+    if (needed > totalColsRef.current) {
+      totalColsRef.current = needed
+      setTotalCols(needed)
+      if (gridInnerRef.current) gridInnerRef.current.style.width = `${needed * sp.colW}px`
+    }
     setTimeZoom(nextZoom)
     requestAnimationFrame(() => {
       if (gridBodyRef.current) gridBodyRef.current.scrollLeft = nextScrollLeft
       scrollLeftRef.current = gridBodyRef.current?.scrollLeft ?? nextScrollLeft
       setScrollLeft(scrollLeftRef.current)
-      const needed = Math.ceil((scrollLeftRef.current + vpRef.current.w) / sp.colW) + COL_BUF + EDGE_COLS + 1
-      if (needed > totalColsRef.current) {
-        totalColsRef.current = needed
-        setTotalCols(needed)
-      }
     })
   }, [])
 
@@ -3087,6 +3171,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setDeleteDraft({ items: [{ key: `milestone:${milestoneId}`, type: 'milestone', id: milestoneId, label, checked: true }] })
   }, [])
 
+  const handleToggleMilestonePin = useCallback(milestoneId => {
+    setPinnedMilestoneId(prev => prev === milestoneId ? null : milestoneId)
+  }, [])
+
   const handleDeleteDepRequest = useCallback((depId, label) => {
     setDeleteDraft({ items: [{ key: `dependency:${depId}`, type: 'dependency', id: depId, label, checked: true }] })
   }, [])
@@ -3186,6 +3274,41 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     } catch (err) { console.error(err) }
   }, [commitTransaction, deleteDraft])
 
+  const handleWarningUndo = useCallback(async () => {
+    clearWarningPrompt()
+    setBlinkingDepIds(new Set())
+    setBlinkingMilestoneIds(new Set())
+    setPendingDependencyResolveIds(new Set())
+    await undoGanttTransaction()
+  }, [clearWarningPrompt, undoGanttTransaction])
+
+  const handleWarningDeleteConstraint = useCallback(async () => {
+    const depIds = new Set(warningPrompt?.dependencyIds ?? [])
+    if (depIds.size === 0) {
+      clearWarningPrompt()
+      return
+    }
+    const before = dependenciesRef.current.filter(dep => depIds.has(dep.id))
+    if (before.length === 0) {
+      clearWarningPrompt()
+      return
+    }
+    const ok = await commitTransaction({
+      id: newClientId('tx'),
+      type: before.length > 1 ? 'dependency.delete-many' : 'dependency.delete',
+      label: before.length > 1 ? 'Delete dependency constraints' : 'Delete dependency constraint',
+      before: { milestones: [], dependencies: before },
+      after: { milestones: [], dependencies: [] },
+    })
+    if (ok) {
+      clearWarningPrompt()
+      setSelectedDepIds(new Set())
+      setBlinkingDepIds(new Set())
+      setBlinkingMilestoneIds(new Set())
+      setPendingDependencyResolveIds(new Set())
+    }
+  }, [clearWarningPrompt, commitTransaction, warningPrompt])
+
   useEffect(() => {
     if (!isActive) return
     const onKeyDown = e => {
@@ -3260,6 +3383,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     selection: {
       milestoneIds: [...selectedIdsRef.current],
       dependencyIds: [...selectedDepIdsRef.current],
+      pinnedMilestoneId: pinnedMilestoneIdRef.current,
     },
   }), [
     activeDimId, activeFilterIds, activeLaneFilterId, activePerspectiveId, axisMode, colorDimId,
@@ -3300,6 +3424,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setPaintCat(null)
     setRevealedConflictNoteIds(new Set())
     setDependencyResolveSnapshot(null)
+    setPinnedMilestoneId(state.selection?.pinnedMilestoneId ?? null)
     setActivePerspectiveId(perspective?.id ?? NONE_PERSPECTIVE_ID)
 
     requestAnimationFrame(() => {
@@ -3309,6 +3434,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       setScrollLeft(scrollLeftRef.current)
     })
   }, [activeDimId, activeLaneFilterId, colorDimId])
+  restorePerspectiveSnapshotRef.current = state => {
+    applyPerspective({ id: state?.activePerspectiveId ?? NONE_PERSPECTIVE_ID, state: state ?? {} })
+  }
 
   const returnToDependencyResolveSnapshot = useCallback(() => {
     if (!dependencyResolveSnapshot) return
@@ -3344,6 +3472,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setRevealedConflictNoteIds(new Set())
     setSelectedIds(new Set(Array.isArray(state.selection?.milestoneIds) ? state.selection.milestoneIds : []))
     setSelectedDepIds(new Set(Array.isArray(state.selection?.dependencyIds) ? state.selection.dependencyIds : []))
+    setPinnedMilestoneId(state.selection?.pinnedMilestoneId ?? null)
     setActivePerspectiveId(state.activePerspectiveId ?? activePerspectiveId)
     setPendingDependencyResolveIds(new Set())
     setDependencyResolveSnapshot(null)
@@ -3916,6 +4045,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
               const row = noteRowMap[m.noteId]; if (!row) return null
               const visual = getVisualRange(m, timeZoom)
               const isSelected    = selectedIds.has(m.id)
+              const isPinned      = pinnedMilestoneId === m.id
               const isViolating   = violationIds.has(m.id)
               const isBlinking    = blinkingMilestoneIds.has(m.id)
               const isDepMode     = mode === 'dependency'
@@ -3929,6 +4059,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                   className={[
                     styles.milestone,
                     isSelected   && styles.milestoneSelected,
+                    isPinned     && styles.milestonePinned,
                     isViolating  && styles.milestoneViolation,
                     isBlinking   && styles.milestoneBlink,
                     isDepMode    && styles.milestoneDepMode,
@@ -4153,6 +4284,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         onSetDeadline={handleSetDeadline}
         onRemoveDeadline={handleRemoveDeadline}
         onDeleteMilestone={handleDeleteMilestoneRequest}
+        onToggleMilestonePin={handleToggleMilestonePin}
+        pinnedMilestoneId={pinnedMilestoneId}
         onEditDepReason={handleEditDepReason}
         onDeleteDep={handleDeleteDepRequest} />
 
@@ -4164,12 +4297,20 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
               `This change would make ${warningPrompt.count} milestone${warningPrompt.count === 1 ? '' : 's'} violate dependency timing.`}
           </div>
           <div className={styles.warningPromptActions}>
-            <button className={warningPrompt.actions === 'confirm' ? styles.warningSafeBtn : styles.warningUndoBtn} autoFocus={warningPrompt.actions === 'confirm'} onClick={() => {
-              if (warningPrompt.actions === 'dependency') resolveDependencySelection()
-              else clearWarningPrompt()
-            }}>
-              {warningPrompt.actions === 'dependency' ? 'Resolve dependency' : 'Close'}
-            </button>
+            {warningPrompt.actions === 'dependency' ? (
+              <>
+                <button className={styles.warningUndoBtn} onClick={handleWarningUndo}>
+                  Undo
+                </button>
+                <button className={styles.warningDangerBtn} autoFocus onClick={handleWarningDeleteConstraint}>
+                  Delete constraint
+                </button>
+              </>
+            ) : (
+              <button className={warningPrompt.actions === 'confirm' ? styles.warningSafeBtn : styles.warningUndoBtn} autoFocus={warningPrompt.actions === 'confirm'} onClick={clearWarningPrompt}>
+                Close
+              </button>
+            )}
             {warningPrompt.actions === 'confirm' && (
               <button className={styles.warningDangerBtn} onClick={async () => {
                 const action = warningPrompt.onConfirm

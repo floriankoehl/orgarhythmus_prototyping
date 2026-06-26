@@ -200,6 +200,7 @@ export const api = {
 
   // Dependencies
   getDependencies:       ()         => req('GET',    '/dependencies'),
+  getDependencyViolations: ()       => req('GET',    '/dependencies/violations'),
   createDependency:      (data)     => req('POST',   '/dependencies', data),
   updateDependencyReason:(id, reason) => req('PATCH', `/dependencies/${id}`, { reason }),
   deleteDependency:      (id)       => req('DELETE', `/dependencies/${id}`),

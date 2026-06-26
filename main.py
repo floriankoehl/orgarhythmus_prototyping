@@ -956,10 +956,20 @@ def _assert_before_matches(con, before: dict, after: dict):
         if item["id"] not in before_dep_ids and item["id"] in current_deps:
             raise HTTPException(409, {"message": "Dependency already exists", "id": item["id"]})
 
-def _assert_final_state_valid(con, before: dict, after: dict):
+def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
     touched_ms = _state_ids(before, "milestones") | _state_ids(after, "milestones")
     touched_deps = _state_ids(before, "dependencies") | _state_ids(after, "dependencies")
-    current_ms = {row["id"]: _ms(row) for row in con.execute("SELECT * FROM milestones").fetchall()}
+    current_ms = {
+        row["id"]: _ms(row)
+        for row in con.execute(
+            """
+            SELECT m.* FROM milestones m
+            JOIN notes n ON n.id = m.note_id
+            WHERE n.project_id = ?
+            """,
+            (project_id,),
+        ).fetchall()
+    }
     final_ms = {
         mid: milestone
         for mid, milestone in current_ms.items()
@@ -967,7 +977,17 @@ def _assert_final_state_valid(con, before: dict, after: dict):
     }
     final_deps = {
         row["id"]: _dep(row)
-        for row in con.execute("SELECT * FROM dependencies").fetchall()
+        for row in con.execute(
+            """
+            SELECT d.* FROM dependencies d
+            JOIN milestones from_ms ON from_ms.id = d.from_id
+            JOIN notes from_note ON from_note.id = from_ms.note_id
+            JOIN milestones to_ms ON to_ms.id = d.to_id
+            JOIN notes to_note ON to_note.id = to_ms.note_id
+            WHERE from_note.project_id = ? AND to_note.project_id = ?
+            """,
+            (project_id, project_id),
+        ).fetchall()
         if row["id"] not in touched_deps
     }
     final_ms.update({m["id"]: m for m in after["milestones"]})
@@ -1020,7 +1040,17 @@ def _assert_final_state_valid(con, before: dict, after: dict):
                     "milestoneIds": [first_id, second_id],
                 })
 
-    deadlines = {row["note_id"]: row["col"] for row in con.execute("SELECT note_id, col FROM deadlines").fetchall()}
+    deadlines = {
+        row["note_id"]: row["col"]
+        for row in con.execute(
+            """
+            SELECT d.note_id, d.col FROM deadlines d
+            JOIN notes n ON n.id = d.note_id
+            WHERE n.project_id = ?
+            """,
+            (project_id,),
+        ).fetchall()
+    }
     for milestone in final_ms.values():
         deadline = deadlines.get(milestone["noteId"])
         if deadline is not None and milestone["startCol"] + milestone["duration"] > deadline:
@@ -1191,13 +1221,74 @@ def _apply_transaction(con, project_id: str, transaction: TransactionPayload, re
     after = _normalize_tx_state(tx.get("after") or {})
     _assert_transaction_project_scope(con, project_id, before, after)
     _assert_before_matches(con, before, after)
-    _assert_final_state_valid(con, before, after)
+    _assert_final_state_valid(con, project_id, before, after)
     _apply_transaction_rows(con, before, after)
     if record_history:
         tx["before"] = before
         tx["after"] = after
         _push_history(con, project_id, tx, before, after)
     return {"ok": True, "transaction": tx, "history": _history_summary(con, project_id)}
+
+def _dependency_violations_for_project(con, project_id: str) -> list[dict]:
+    rows = con.execute(
+        """
+        SELECT
+            d.id AS dep_id,
+            d.reason AS reason,
+            from_ms.id AS from_id,
+            from_ms.title AS from_title,
+            from_ms.start_col AS from_start,
+            from_ms.duration AS from_duration,
+            from_note.id AS from_note_id,
+            from_note.title AS from_note_title,
+            to_ms.id AS to_id,
+            to_ms.title AS to_title,
+            to_ms.start_col AS to_start,
+            to_ms.duration AS to_duration,
+            to_note.id AS to_note_id,
+            to_note.title AS to_note_title
+        FROM dependencies d
+        JOIN milestones from_ms ON from_ms.id = d.from_id
+        JOIN notes from_note ON from_note.id = from_ms.note_id
+        JOIN milestones to_ms ON to_ms.id = d.to_id
+        JOIN notes to_note ON to_note.id = to_ms.note_id
+        WHERE from_note.project_id = ? AND to_note.project_id = ?
+        ORDER BY from_note.order_idx, from_ms.start_col, to_note.order_idx, to_ms.start_col
+        """,
+        (project_id, project_id),
+    ).fetchall()
+    violations = []
+    for row in rows:
+        from_end = int(row["from_start"]) + int(row["from_duration"])
+        to_start = int(row["to_start"])
+        if from_end <= to_start:
+            continue
+        violations.append({
+            "type": "dependency",
+            "dependencyId": row["dep_id"],
+            "reason": row["reason"] or "",
+            "message": "A predecessor milestone must finish before its successor starts",
+            "from": {
+                "milestoneId": row["from_id"],
+                "milestoneTitle": row["from_title"] or "",
+                "noteId": row["from_note_id"],
+                "noteTitle": row["from_note_title"],
+                "startCol": row["from_start"],
+                "duration": row["from_duration"],
+                "endCol": from_end,
+            },
+            "to": {
+                "milestoneId": row["to_id"],
+                "milestoneTitle": row["to_title"] or "",
+                "noteId": row["to_note_id"],
+                "noteTitle": row["to_note_title"],
+                "startCol": row["to_start"],
+                "duration": row["to_duration"],
+                "endCol": int(row["to_start"]) + int(row["to_duration"]),
+            },
+            "overlapMinutes": from_end - to_start,
+        })
+    return violations
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -2364,6 +2455,12 @@ def list_dependencies(project_id: str = Query(default='default'), user: dict = D
             (project_id,)
         ).fetchall()
     return [_dep(r) for r in rows]
+
+@app.get("/dependencies/violations")
+def list_dependency_violations(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    with _db() as con:
+        return {"violations": _dependency_violations_for_project(con, project_id)}
 
 @app.post("/dependencies", status_code=201)
 def create_dependency(data: DependencyIn, user: dict = Depends(current_user)):
