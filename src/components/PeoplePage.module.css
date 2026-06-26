@@ -3,11 +3,7 @@
   display: flex;
   flex: 1;
   overflow: hidden;
-  background:
-    radial-gradient(ellipse 70% 60% at 50% 50%, rgba(26,115,232,0.04) 0%, transparent 100%),
-    radial-gradient(ellipse 100% 80% at 20% 80%, rgba(139,92,246,0.03) 0%, transparent 60%),
-    radial-gradient(ellipse 80% 70% at 80% 20%, rgba(34,197,94,0.03) 0%, transparent 60%),
-    #fff;
+  background: #f8f8f6;
 }
 
 .canvas {
@@ -248,28 +244,6 @@
   pointer-events: none;
 }
 
-/* ── Color swatches ──────────────────────────────────────────────────────────── */
-.colorGrid {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 6px;
-}
-
-.colorSwatch {
-  border: 2.5px solid transparent;
-  border-radius: 50%;
-  width: 28px;
-  height: 28px;
-  cursor: pointer;
-  transition: transform 0.1s, border-color 0.12s, box-shadow 0.12s;
-  padding: 0;
-  justify-self: center;
-}
-.colorSwatch:hover { transform: scale(1.15); }
-.colorSwatchSelected {
-  border-color: #222;
-  box-shadow: 0 0 0 2px #fff inset;
-}
 
 /* ── Add button ──────────────────────────────────────────────────────────────── */
 .addBtn {
@@ -313,10 +287,10 @@
   gap: 8px;
 }
 
-.selectionDot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
+.selectionAvatar {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
   flex-shrink: 0;
 }
 
@@ -339,3 +313,63 @@
   transition: background 0.12s, border-color 0.12s;
 }
 .deleteBtn:hover { background: #fdeaea; border-color: #e88; }
+
+/* ── Confirm delete modal ────────────────────────────────────────────────────── */
+.modalOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0,0,0,0.28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(2px);
+}
+
+.modal {
+  background: #fff;
+  border-radius: 14px;
+  padding: 28px 28px 22px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.modalText {
+  margin: 0;
+  font: 14px Arial, sans-serif;
+  color: #333;
+  line-height: 1.5;
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.modalCancel {
+  padding: 8px 16px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  background: #f6f6f6;
+  color: #555;
+  font: 600 13px Arial, sans-serif;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.modalCancel:hover { background: #eee; }
+
+.modalConfirm {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  background: #c0392b;
+  color: #fff;
+  font: 600 13px Arial, sans-serif;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.modalConfirm:hover { background: #a93226; }

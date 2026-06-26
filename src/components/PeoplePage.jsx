@@ -6,11 +6,12 @@ import { api } from '../api'
 import styles from './PeoplePage.module.css'
 
 const CHAR_KEYS = 'abcdefghijklmnopqr'.split('')
-const PALETTE = [
-  '#4f8ef7', '#f77b4f', '#4fc97f', '#f7d44f',
-  '#b44ff7', '#f74f8e', '#4fe0f7', '#f7944f',
-  '#7f4ff7', '#4ff7d4', '#f74f4f', '#4fa8f7',
-]
+
+// Derive a consistent highlight color per character so avatars look distinct when selected
+const KEY_COLORS = ['#4f8ef7','#f77b4f','#4fc97f','#f7d44f','#b44ff7','#f74f8e',
+                    '#4fe0f7','#f7944f','#7f4ff7','#4ff7d4','#f74f4f','#4fa8f7',
+                    '#a0c44f','#f74fc9','#4fc9f7','#f7c44f','#c44ff7','#4ff7a0']
+const keyColor = (k) => KEY_COLORS[CHAR_KEYS.indexOf(k)] ?? '#4f8ef7'
 
 CHAR_KEYS.forEach(k => useGLTF.preload(`/models/character-${k}.glb`))
 useGLTF.preload('/models/bricks/bevel-hq-plate-2x2.glb')
@@ -129,7 +130,7 @@ const ISLAND_W     = 5.0
 const ISLAND_D     = 5.0
 const ISLAND_H     = 0.22
 const ISLAND_GAP_X = 2.0
-const ISLAND_GAP_Z = 2.4
+const ISLAND_GAP_Z = 2.0
 const ISLAND_COLS  = 4
 const TILE_GRID    = 10
 
@@ -273,31 +274,33 @@ function Scene({ activeCats = [], personas = [], onPositionUpdate, onSelect, sel
       <directionalLight position={[6, 10, 4]} intensity={1.0} castShadow />
       <pointLight position={[-4, 6, -4]} intensity={0.3} color="#c8d8ff" />
 
+      <fog attach="fog" args={['#f8f8f6', 28, 70]} />
       <Environment preset="dawn" background={false} />
       <CursorManager dragging={dragId !== null} />
 
-      {/* Base floor */}
+      {/* Infinite white floor — large enough that it disappears into fog */}
       <mesh
         receiveShadow
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, 0, 0]}
         onClick={dragId === null ? () => onSelect?.(null) : undefined}
       >
-        <planeGeometry args={[30, 22]} />
-        <meshStandardMaterial color="#e8e6e0" roughness={0.88} metalness={0} />
+        <planeGeometry args={[800, 800]} />
+        <meshStandardMaterial color="#f8f8f6" roughness={0.92} metalness={0} />
       </mesh>
 
+      {/* Grid lines sized to exactly match LEGO tile (0.5 units), sections at island width (5.0) */}
       <Grid
         position={[0, 0.001, 0]}
-        args={[30, 22]}
-        cellSize={1}
-        cellThickness={0.4}
-        cellColor="#d8d6cf"
+        infiniteGrid
+        cellSize={0.5}
+        cellThickness={0.9}
+        cellColor="#c8c8c8"
         sectionSize={5}
-        sectionThickness={0.9}
-        sectionColor="#cccac3"
-        fadeDistance={26}
-        fadeStrength={0}
+        sectionThickness={1.6}
+        sectionColor="#aaaaaa"
+        fadeDistance={40}
+        fadeStrength={1.4}
       />
 
       {islands.map(cat => (
@@ -324,7 +327,7 @@ function Scene({ activeCats = [], personas = [], onPositionUpdate, onSelect, sel
           modelKey={p.modelKey}
           position={getPos(p)}
           name={p.name}
-          color={p.color}
+          color={keyColor(p.modelKey)}
           phaseId={i}
           selected={selected === p.id}
           dragging={dragId === p.id}
@@ -354,7 +357,6 @@ function Scene({ activeCats = [], personas = [], onPositionUpdate, onSelect, sel
 function AddPersonaPanel({ onClose, onCreate }) {
   const [name, setName]         = useState('')
   const [modelKey, setModelKey] = useState('a')
-  const [color, setColor]       = useState(PALETTE[0])
   const [saving, setSaving]     = useState(false)
 
   const handleSubmit = async () => {
@@ -362,7 +364,7 @@ function AddPersonaPanel({ onClose, onCreate }) {
     setSaving(true)
     try {
       const persona = await api.createPersona({
-        name: name.trim(), model_key: modelKey, color, pos_x: 0, pos_z: 0,
+        name: name.trim(), model_key: modelKey, pos_x: 0, pos_z: 0,
       })
       onCreate(persona)
       onClose()
@@ -412,19 +414,6 @@ function AddPersonaPanel({ onClose, onCreate }) {
         ))}
       </div>
 
-      <label className={styles.addPanelLabel}>Color</label>
-      <div className={styles.colorGrid}>
-        {PALETTE.map(c => (
-          <button
-            key={c}
-            className={`${styles.colorSwatch} ${color === c ? styles.colorSwatchSelected : ''}`}
-            style={{ background: c }}
-            onClick={() => setColor(c)}
-            title={c}
-          />
-        ))}
-      </div>
-
       <button
         className={styles.addBtn}
         onClick={handleSubmit}
@@ -432,6 +421,23 @@ function AddPersonaPanel({ onClose, onCreate }) {
       >
         {saving ? 'Adding…' : 'Add Persona'}
       </button>
+    </div>
+  )
+}
+
+// ── Confirm delete modal ──────────────────────────────────────────────────────
+function ConfirmModal({ name, onConfirm, onCancel }) {
+  return (
+    <div className={styles.modalOverlay} onClick={onCancel}>
+      <div className={styles.modal} onClick={e => e.stopPropagation()}>
+        <p className={styles.modalText}>
+          Delete <strong>{name}</strong>? This cannot be undone.
+        </p>
+        <div className={styles.modalActions}>
+          <button className={styles.modalCancel} onClick={onCancel}>Cancel</button>
+          <button className={styles.modalConfirm} onClick={onConfirm}>Delete</button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -484,9 +490,10 @@ export default function PeoplePage() {
   const [dimensions, setDimensions]   = useState([])
   const [dimIndex, setDimIndex]       = useState(0)
   const [categories, setCategories]   = useState([])
-  const [personas, setPersonas]       = useState([])
-  const [selected, setSelected]       = useState(null)
+  const [personas, setPersonas]         = useState([])
+  const [selected, setSelected]         = useState(null)
   const [showAddPanel, setShowAddPanel] = useState(false)
+  const [confirmId, setConfirmId]       = useState(null)
 
   useEffect(() => {
     Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas()])
@@ -506,17 +513,25 @@ export default function PeoplePage() {
 
   const handlePositionUpdate = async (id, x, z) => {
     try {
-      await api.updatePersona(id, { posX: x, posZ: z })
+      await api.updatePersona(id, { pos_x: x, pos_z: z })
     } catch (e) { console.error(e) }
   }
 
-  const handleDelete = async () => {
-    if (!selected) return
+  const confirmPersona = confirmId ? personas.find(p => p.id === confirmId) : null
+
+  const handleDeleteConfirmed = async () => {
+    const id = confirmId
+    setConfirmId(null)
+    // Optimistic: remove immediately
+    setPersonas(prev => prev.filter(p => p.id !== id))
+    setSelected(null)
     try {
-      await api.deletePersona(selected)
-      setPersonas(prev => prev.filter(p => p.id !== selected))
-      setSelected(null)
-    } catch (e) { console.error(e) }
+      await api.deletePersona(id)
+    } catch (e) {
+      console.error(e)
+      // Restore on failure
+      api.getPersonas().then(setPersonas).catch(console.error)
+    }
   }
 
   const selectedPersona = personas.find(p => p.id === selected) ?? null
@@ -563,19 +578,32 @@ export default function PeoplePage() {
       {selectedPersona && (
         <div className={styles.selectionBar}>
           <div className={styles.selectionInfo}>
-            <div
-              className={styles.selectionDot}
-              style={{ background: selectedPersona.color }}
+            <img
+              src={`/models/previews/character-${selectedPersona.modelKey}.png`}
+              alt={selectedPersona.modelKey}
+              className={styles.selectionAvatar}
             />
             <span className={styles.selectionName}>{selectedPersona.name}</span>
           </div>
-          <button className={styles.deleteBtn} onClick={handleDelete} title="Delete persona">
+          <button
+            className={styles.deleteBtn}
+            onClick={() => setConfirmId(selectedPersona.id)}
+            title="Delete persona"
+          >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
               <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>
             </svg>
             Delete
           </button>
         </div>
+      )}
+
+      {confirmPersona && (
+        <ConfirmModal
+          name={confirmPersona.name}
+          onConfirm={handleDeleteConfirmed}
+          onCancel={() => setConfirmId(null)}
+        />
       )}
 
       <div className={styles.hint}>Orbit · Zoom · Drag to move</div>
