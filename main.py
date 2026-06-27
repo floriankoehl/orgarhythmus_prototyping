@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 DB_PATH = "notes.db"
 LEGACY_DB_PATH = "goals.db"
 MIN_TIME_SLOT_DURATION = 10
-MINUTE_SCALE_UNIT = 15
+MINUTE_SCALE_UNIT = 10
 DAY_MINUTES = 60 * 24
 MONTH_MINUTES = DAY_MINUTES * 30
 JWT_ALGORITHM = "HS256"
@@ -163,7 +163,7 @@ def _init_db():
                 id         TEXT PRIMARY KEY,
                 note_id    TEXT NOT NULL,
                 start_col  INTEGER NOT NULL,
-                duration   INTEGER NOT NULL DEFAULT 15,
+                duration   INTEGER NOT NULL DEFAULT 10,
                 title      TEXT NOT NULL DEFAULT '',
                 color      TEXT NOT NULL DEFAULT '#1a73e8'
             )

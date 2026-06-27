@@ -2,6 +2,8 @@ import { useState, useRef, useEffect } from 'react'
 import styles from './Header.module.css'
 import { api } from '../api'
 import CategoryAssignmentPicker from './CategoryAssignmentPicker'
+import CategoryHashtagSuggestions from './CategoryHashtagSuggestions'
+import { mergeSelectionsWithHashtags } from '../categoryHashtags'
 import { useProgressiveNoteSearch } from '../useProgressiveNoteSearch'
 
 const PAGES = [
@@ -77,10 +79,13 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
   }
 
   const handleDescInput = () => {
+    const text = editorRef.current?.innerText || ''
+    if (text.includes('#')) ensureCategoryData()
     if (!titleManual && editorRef.current) {
-      const words = (editorRef.current.innerText || '').trim().split(/\s+/).filter(Boolean)
+      const words = text.trim().split(/\s+/).filter(Boolean)
       setTitleVal(words.slice(0, 7).join(' '))
     }
+    setCategorySelections(prev => mergeSelectionsWithHashtags(prev, text, categories))
     if (headlineMode) setWordRects(computeWordRects(editorRef.current))
   }
 
@@ -98,7 +103,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
   const submit = () => {
     const desc = editorRef.current?.innerText?.trim() || ''
     if (!desc && !titleVal.trim()) return
-    onQuickAdd?.(desc, titleVal.trim() || null, categorySelections)
+    onQuickAdd?.(desc, titleVal.trim() || null, mergeSelectionsWithHashtags(categorySelections, desc, categories))
     closePopup()
   }
 
@@ -299,6 +304,15 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
                     />
                   ))}
                 </div>
+              )}
+              {!headlineMode && (
+                <CategoryHashtagSuggestions
+                  editorRef={editorRef}
+                  dimensions={dimensions}
+                  categories={categories}
+                  placement="above"
+                  onPick={cat => setCategorySelections(prev => ({ ...prev, [cat.dimensionId]: cat.id }))}
+                />
               )}
             </div>
 

@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom'
 import styles from './NotePopup.module.css'
 import { api } from '../api'
 import CategoryAssignmentPicker from './CategoryAssignmentPicker'
+import CategoryHashtagSuggestions from './CategoryHashtagSuggestions'
+import { mergeSelectionsWithHashtags } from '../categoryHashtags'
 
 // ── Headline-mode helpers ─────────────────────────────────────────────────────
 function computeWordRects(editorEl) {
@@ -193,7 +195,16 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsC
         }
         catch (e) { console.error(e); setAssignments(old) }
       }
-      break
+    }
+  }
+
+  const handleEditorInput = e => {
+    const html = e.currentTarget.innerHTML
+    const text = e.currentTarget.innerText || ''
+    saveHtml(html)
+    const nextAssignments = mergeSelectionsWithHashtags(assignments, text, categories)
+    if (JSON.stringify(nextAssignments) !== JSON.stringify(assignments)) {
+      handleCategoryChange(nextAssignments)
     }
   }
 
@@ -304,9 +315,17 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsC
               contentEditable={!headlineMode}
               suppressContentEditableWarning
               spellCheck={!headlineMode}
-              onInput={e => saveHtml(e.currentTarget.innerHTML)}
+              onInput={handleEditorInput}
               data-placeholder="Add a description…"
             />
+            {!headlineMode && (
+              <CategoryHashtagSuggestions
+                editorRef={editorRef}
+                dimensions={dimensions}
+                categories={categories}
+                onPick={cat => handleCategoryChange({ ...assignments, [cat.dimensionId]: cat.id })}
+              />
+            )}
             {headlineMode && (
               <div className={styles.headlineOverlay} onClick={() => setHeadlineMode(false)}>
                 {wordRects.map((w, i) => (

@@ -11,6 +11,7 @@ import AuthPage from './components/AuthPage'
 import PeoplePage from './components/PeoplePage'
 import InheritancePage from './components/InheritancePage'
 import { api, authApi, hasAuthSession, setProjectId } from './api'
+import { mergeSelectionsWithHashtags } from './categoryHashtags'
 import styles from './App.module.css'
 
 // ── Success toast ─────────────────────────────────────────────────────────────
@@ -140,8 +141,10 @@ export default function App() {
     const html = text.replace(/\n/g, '<br>')
     const newNote = { id: crypto.randomUUID(), html, title, collapsed: false }
     try {
+      const cats = text.includes('#') ? await api.getAllCategories().catch(() => []) : []
+      const selections = mergeSelectionsWithHashtags(categorySelections, text, cats)
       const savedNote = await api.createNote(newNote)
-      await assignNoteCategories(newNote.id, categorySelections)
+      await assignNoteCategories(newNote.id, selections)
       setNotes(prev => {
         const next = [savedNote, ...prev.filter(g => g.id !== savedNote.id)]
         api.reorderNotes(next.map(g => g.id)).catch(console.error)

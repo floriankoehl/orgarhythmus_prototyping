@@ -2,7 +2,9 @@ import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react'
 import styles from './NotesPage.module.css'
 import { api } from '../api'
 import CategoryAssignmentPicker from './CategoryAssignmentPicker'
+import CategoryHashtagSuggestions from './CategoryHashtagSuggestions'
 import DimensionDropUp from './DimensionDropUp'
+import { categoryMatchesForHashtags, mergeSelectionsWithHashtags } from '../categoryHashtags'
 import { useProgressiveNoteSearch } from '../useProgressiveNoteSearch'
 
 const DRIFT_VARIANTS = 6
@@ -774,6 +776,16 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
 
   const handleInlineUpdate = async (noteId, patch) => {
     await api.updateNote(noteId, patch)
+    if (patch.html !== undefined) {
+      const matches = categoryMatchesForHashtags(stripHtml(patch.html), categories)
+      if (matches.length) {
+        await Promise.all(matches.map(cat => api.assign(noteId, cat.dimensionId, cat.id).catch(console.error)))
+        setAllAssignments(prev => [
+          ...prev.filter(a => !matches.some(cat => a.noteId === noteId && a.dimensionId === cat.dimensionId)),
+          ...matches.map(cat => ({ noteId, dimensionId: cat.dimensionId, categoryId: cat.id })),
+        ])
+      }
+    }
     onNoteUpdated?.(noteId, patch)
   }
 
@@ -1052,8 +1064,11 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   }, [headlineMode, editingTitle])
 
   const handleDescInput = () => {
+    const text = editorRef.current?.innerText || ''
+    if (text.includes('#')) ensureCategoryData()
     if (!titleManual && editorRef.current)
-      setTitleVal(deriveTitle(editorRef.current.innerText || ''))
+      setTitleVal(deriveTitle(text))
+    setCategorySelections(prev => mergeSelectionsWithHashtags(prev, text, categories))
     if (headlineMode && editorRef.current)
       setWordRects(computeWordRects(editorRef.current))
   }
@@ -1077,7 +1092,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     setTitleManual(false)
     setEditingTitle(false)
     setHeadlineMode(false)
-    const selections = categorySelections
+    const selections = mergeSelectionsWithHashtags(categorySelections, content, categories)
     setCategorySelections({})
 
     const newNote = { id: crypto.randomUUID(), html, title: finalTitle, collapsed: false }
@@ -1086,6 +1101,12 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
       await Promise.all(Object.entries(selections)
         .filter(([, catId]) => Boolean(catId))
         .map(([dimId, catId]) => api.assign(newNote.id, dimId, catId)))
+      setAllAssignments(prev => [
+        ...prev.filter(a => !(a.noteId === newNote.id && selections[a.dimensionId])),
+        ...Object.entries(selections)
+          .filter(([, catId]) => Boolean(catId))
+          .map(([dimensionId, categoryId]) => ({ noteId: newNote.id, dimensionId, categoryId })),
+      ])
       const out = saved || newNote
       openOnCanvas(out.id)
       onNoteCreated?.(out)
@@ -1393,6 +1414,14 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
                   />
                 ))}
               </div>
+            )}
+            {!headlineMode && (
+              <CategoryHashtagSuggestions
+                editorRef={editorRef}
+                dimensions={dimensions}
+                categories={categories}
+                onPick={cat => setCategorySelections(prev => ({ ...prev, [cat.dimensionId]: cat.id }))}
+              />
             )}
           </div>
 

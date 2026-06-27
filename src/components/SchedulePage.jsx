@@ -26,7 +26,7 @@ const NONE_PERSPECTIVE_ID = '__none__'
 const SCHEDULE_DEFAULT_PERSPECTIVE_KEY = 'schedule.defaultPerspectiveId'
 
 const TIME_ZOOM_LEVELS = [
-  { value: 'minutes', label: '15 min', short: '15m', unit: 15 },
+  { value: 'minutes', label: '10 min', short: '10m', unit: 10 },
   { value: 'days', label: 'Days', short: 'd', unit: 60 * 24 },
   { value: 'months', label: 'Months', short: 'mo', unit: 60 * 24 * 30 },
 ]
@@ -37,10 +37,14 @@ const SCALE_VISIBILITY_MODES = {
   HIERARCHY: 'hierarchy',
   ALL: 'all',
 }
+const SCHEDULE_PERSPECTIVE_VERSION = 2
 
 function normalizeTimeZoom(value) {
   if (value === 'hours') return 'minutes'
   if (value === 'weeks') return 'days'
+  if (value === 'minute') return 'minutes'
+  if (value === 'day') return 'days'
+  if (value === 'month') return 'months'
   return TIME_ZOOM_BY_VALUE[value] ? value : DEFAULT_TIME_ZOOM
 }
 
@@ -53,7 +57,67 @@ function getTimeSlotLevel(duration, startCol = null) {
 }
 
 function normalizeScaleVisibilityMode(value) {
-  return value === SCALE_VISIBILITY_MODES.ALL ? SCALE_VISIBILITY_MODES.ALL : SCALE_VISIBILITY_MODES.HIERARCHY
+  if (value === undefined || value === null || value === '') return SCALE_VISIBILITY_MODES.ALL
+  if (value === SCALE_VISIBILITY_MODES.ALL || value === 'everything' || value === 'showAll' || value === 'show-all' || value === 'show_all') {
+    return SCALE_VISIBILITY_MODES.ALL
+  }
+  return SCALE_VISIBILITY_MODES.HIERARCHY
+}
+
+function persistedPlanningScaleForZoom(timeZoom) {
+  const zoom = normalizeTimeZoom(timeZoom)
+  if (zoom === 'minutes') return 'minute'
+  if (zoom === 'months') return 'month'
+  return 'day'
+}
+
+function normalizePerspectiveTimeZoom(state = {}) {
+  return normalizeTimeZoom(
+    state.timeZoom
+    ?? state.planningScale
+    ?? state.metric
+    ?? state.timeScale
+    ?? state.scale
+  )
+}
+
+function normalizeToolbarMode(value) {
+  return value === 'dependency' ? 'dependency' : 'timeSlot'
+}
+
+function normalizeAxisMode(value) {
+  return value === 'numbers' || value === 'none' ? value : 'full'
+}
+
+function normalizeSchedulePerspectiveState(rawState = {}) {
+  const state = rawState && typeof rawState === 'object' ? rawState : {}
+  const timeZoom = normalizePerspectiveTimeZoom(state)
+  const visibilityMode = normalizeScaleVisibilityMode(
+    state.timeSlotScaleFilter
+    ?? state.scaleVisibilityMode
+    ?? state.scaleMode
+    ?? state.visibilityMode
+  )
+
+  return {
+    ...state,
+    version: state.version ?? SCHEDULE_PERSPECTIVE_VERSION,
+    timeZoom,
+    planningScale: persistedPlanningScaleForZoom(timeZoom),
+    axisMode: normalizeAxisMode(state.axisMode),
+    mode: normalizeToolbarMode(state.mode),
+    showDepLabels: typeof state.showDepLabels === 'boolean' ? state.showDepLabels : true,
+    showDeps: typeof state.showDeps === 'boolean' ? state.showDeps : true,
+    hideCrossCatDeps: typeof state.hideCrossCatDeps === 'boolean' ? state.hideCrossCatDeps : false,
+    showCrucialDepsOnly: typeof state.showCrucialDepsOnly === 'boolean' ? state.showCrucialDepsOnly : false,
+    colorDependencyDirection: typeof state.colorDependencyDirection === 'boolean' ? state.colorDependencyDirection : false,
+    timeSlotScaleFilter: visibilityMode,
+    scaleVisibilityMode: visibilityMode,
+    spacing: { ...DEFAULT_SPACING, ...(state.spacing ?? {}) },
+    leftPanelWidth: typeof state.leftPanelWidth === 'number'
+      ? Math.max(120, Math.min(600, state.leftPanelWidth))
+      : 220,
+  }
 }
 
 function isTimeSlotVisibleAtZoom(duration, timeZoom, scaleMode = SCALE_VISIBILITY_MODES.HIERARCHY, startCol = null) {
@@ -815,8 +879,6 @@ function SpacingPanel({
 function WarningSettingsPanel({
   settings,
   onSettingsChange,
-  autoResolveDependencyView,
-  onAutoResolveDependencyViewChange,
   onClose,
   anchorRef,
 }) {
@@ -869,14 +931,6 @@ function WarningSettingsPanel({
           <span>Warning settings</span>
           <button className={styles.spacingClose} onClick={onClose}>×</button>
         </div>
-        <label className={styles.warningSettingsToggle}>
-          <input
-            type="checkbox"
-            checked={autoResolveDependencyView}
-            onChange={e => onAutoResolveDependencyViewChange(e.target.checked)}
-          />
-          <span>Auto-select dependency conflicts</span>
-        </label>
         <div className={styles.warningSettingsText}>
           Resize protection compares the new duration with the original duration using log10 of the ratio.
         </div>
@@ -1038,7 +1092,7 @@ function ContextMenu({
         {menu.type === 'timeSlot' && (<>
           <button className={styles.ctxItem}
             onClick={() => { onStartInheritancePick(menu.noteId, 'child'); onClose() }}>
-            Inherit note from...
+            Make child of...
           </button>
           <button className={styles.ctxItem}
             onClick={() => { onStartInheritancePick(menu.noteId, 'parent'); onClose() }}>
@@ -1218,7 +1272,6 @@ function GanttToolbar({
   showCrucialDepsOnly, onShowCrucialDepsOnlyChange,
   colorDependencyDirection, onColorDependencyDirectionChange,
   timeSlotScaleFilter, onTimeSlotScaleFilterChange,
-  autoResolveDependencyView, onAutoResolveDependencyViewChange,
   warningSettings, onWarningSettingsChange,
   canDeleteSelection, onDeleteSelection,
   canFilterToSelection, onFilterToSelectedNotes, onExpandEverything,
@@ -1306,7 +1359,7 @@ function GanttToolbar({
       <div style={{ flex: 1 }} />
       <div className={styles.spacingWrap}>
         <button ref={warningSettingsBtnRef}
-          className={`${styles.toolbarToggleBtn} ${warningSettingsOpen || autoResolveDependencyView ? styles.toolbarToggleBtnActive : ''}`}
+          className={`${styles.toolbarToggleBtn} ${warningSettingsOpen ? styles.toolbarToggleBtnActive : ''}`}
           onClick={() => setWarningSettingsOpen(v => !v)}
           title="Configure resize and dependency warning behavior">
           Warning settings
@@ -1315,8 +1368,6 @@ function GanttToolbar({
           <WarningSettingsPanel
             settings={warningSettings}
             onSettingsChange={onWarningSettingsChange}
-            autoResolveDependencyView={autoResolveDependencyView}
-            onAutoResolveDependencyViewChange={onAutoResolveDependencyViewChange}
             onClose={closeWarningSettings}
             anchorRef={warningSettingsBtnRef}
           />
@@ -1526,7 +1577,7 @@ function normalizePerspective(perspective) {
   return {
     ...perspective,
     name: (perspective?.name || 'Untitled perspective').trim(),
-    state: perspective?.state ?? {},
+    state: normalizeSchedulePerspectiveState(perspective?.state ?? {}),
   }
 }
 
@@ -1946,7 +1997,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [hideCrossCatDeps, setHideCrossCatDeps] = useState(false)
   const [showCrucialDepsOnly, setShowCrucialDepsOnly] = useState(false)
   const [colorDependencyDirection, setColorDependencyDirection] = useState(false)
-  const [timeSlotScaleFilter, setTimeSlotScaleFilter] = useState(SCALE_VISIBILITY_MODES.HIERARCHY)
+  const [timeSlotScaleFilter, setTimeSlotScaleFilter] = useState(SCALE_VISIBILITY_MODES.ALL)
   const [reasonModal, setReasonModal] = useState(null)   // null | { depId }
   const [reasonDraft, setReasonDraft] = useState('')
   const reasonInputRef = useRef()
@@ -1966,7 +2017,6 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [blinkingTimeSlotIds, setBlinkingTimeSlotIds] = useState(new Set())
   const [pendingDependencyResolveIds, setPendingDependencyResolveIds] = useState(new Set())
   const [dependencyResolveSnapshot, setDependencyResolveSnapshot] = useState(null)
-  const [autoResolveDependencyView, setAutoResolveDependencyView] = useState(false)
   const [deleteDraft, setDeleteDraft] = useState(null)
   const [resizeConfirmDraft, setResizeConfirmDraft] = useState(null)
   const [metricResizeDraft,  setMetricResizeDraft]  = useState(null)
@@ -1975,7 +2025,6 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const restorePerspectiveSnapshotRef = useRef(null)
   const resolveDependencySelectionRef = useRef(null)
   const reportDependencyViolationsRef = useRef(null)
-  const autoResolveDependencyViewRef = useRef(false)
   const [dragOverNoteId, setDragOverNoteId] = useState(null)
   const [dragOverLaneCatId, setDragOverLaneCatId] = useState(null)
   const [draggingCatId, setDraggingCatId] = useState(null)
@@ -2024,7 +2073,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const showWarningPrompt = useCallback(prompt => {
     if (warningPromptTimerRef.current) window.clearTimeout(warningPromptTimerRef.current)
     setWarningPrompt(prompt)
-    if (prompt?.actions === 'confirm' || prompt?.actions === 'dependency') {
+    if (prompt?.actions === 'confirm') {
       warningPromptTimerRef.current = null
       return
     }
@@ -2033,10 +2082,6 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       warningPromptTimerRef.current = null
     }, 4500)
   }, [])
-
-  useEffect(() => {
-    autoResolveDependencyViewRef.current = autoResolveDependencyView
-  }, [autoResolveDependencyView])
 
   const activeCategories = useMemo(
     () => categories.filter(c => c.dimensionId === activeDimId),
@@ -2055,15 +2100,19 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       name: 'None',
       readOnly: true,
       state: {
+        version: SCHEDULE_PERSPECTIVE_VERSION,
         spacing: DEFAULT_SPACING,
         timeZoom: DEFAULT_TIME_ZOOM,
+        planningScale: persistedPlanningScaleForZoom(DEFAULT_TIME_ZOOM),
+        mode: 'timeSlot',
         axisMode: 'full',
         showDepLabels: true,
         showDeps: true,
         hideCrossCatDeps: false,
         showCrucialDepsOnly: false,
         colorDependencyDirection: false,
-        timeSlotScaleFilter: SCALE_VISIBILITY_MODES.HIERARCHY,
+        timeSlotScaleFilter: SCALE_VISIBILITY_MODES.ALL,
+        scaleVisibilityMode: SCALE_VISIBILITY_MODES.ALL,
         leftPanelWidth: 220,
         group: { activeDimId: '', activeLaneFilterId: '' },
         collapsedCategories: [],
@@ -2283,7 +2332,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const deadlinesRef    = useRef([])
   const earliestStartsRef = useRef([])
   const modeRef         = useRef('timeSlot')
-  const timeSlotScaleFilterRef = useRef(SCALE_VISIBILITY_MODES.HIERARCHY)
+  const timeSlotScaleFilterRef = useRef(SCALE_VISIBILITY_MODES.ALL)
 
   // Keep imperative refs in sync with state (assigned synchronously in render)
   spacingRef.current       = spacing
@@ -2369,11 +2418,20 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       applyTransactionState(before, after)
       const detail = err?.detail
       if (detail?.type === 'overlap' && Array.isArray(detail.timeSlotIds)) {
-        presentConflictTimeSlots(detail.timeSlotIds)
-        showWarningPrompt({ title: 'Time slot overlap', message: detail.message, actions: 'close' })
-      } else if (detail?.type === 'deadline') {
-        showWarningPrompt({ title: 'Hard deadline', message: detail.message, actions: 'close' })
-      } else if (detail?.type === 'dependency') {
+        showWarningPrompt({ title: 'Transaction rejected', message: detail.message, actions: 'close' })
+      } else if (['deadline', 'inheritance_deadline', 'earliest_start', 'inheritance_earliest_start'].includes(detail?.type)) {
+        const timeSlotIds = new Set([detail.id].filter(Boolean))
+        setPendingConflictTimeSlotIds(timeSlotIds)
+        setPendingDependencyResolveIds(timeSlotIds)
+        setBlinkingTimeSlotIds(timeSlotIds)
+        window.setTimeout(() => setBlinkingTimeSlotIds(new Set()), 3000)
+        showWarningPrompt({
+          title: detail.type.includes('earliest') ? 'Earliest start date' : 'Hard deadline',
+          message: detail.message,
+          actions: timeSlotIds.size ? 'resolve' : 'close',
+          timeSlotIds,
+        })
+      } else if (detail?.type === 'dependency' || detail?.type === 'scale_mismatch') {
         const depIds = detail.dependencyIds ?? []
         const attemptedTimeSlots = [
           ...timeSlotsRef.current.filter(m => !after.timeSlots.some(next => next.id === m.id)),
@@ -2400,7 +2458,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       }
       return false
     }
-  }, [applyTransactionState, presentConflictTimeSlots, refreshGanttTransactions, showTransactionFailure, showWarningPrompt])
+  }, [applyTransactionState, refreshGanttTransactions, showTransactionFailure, showWarningPrompt])
 
   const undoGanttTransaction = useCallback(async () => {
     try {
@@ -2689,7 +2747,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setHiddenNotesByLane({})
   }, [])
 
-  const resolveDependencySelection = useCallback((timeSlotIds = null) => {
+  const resolveDependencySelection = useCallback((timeSlotIds = null, resolveZoom = null) => {
     const explicitIds = timeSlotIds ? new Set(timeSlotIds) : null
     const idsToResolve = explicitIds?.size > 0
       ? explicitIds
@@ -2704,6 +2762,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     })
     const snapshot = capturePerspectiveStateRef.current?.()
     if (snapshot) setDependencyResolveSnapshot(prev => prev ?? snapshot)
+    if (resolveZoom) setTimeZoom(normalizeTimeZoom(resolveZoom))
     setSelectedDepIds(new Set())
     setSelectedIds(accumulatedIds)
     setActiveFilterIds([])
@@ -2881,64 +2940,48 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const violationIds = useMemo(() => computeViolations(timeSlots, dependencies), [timeSlots, dependencies])
   const crucialDependencyIds = useMemo(() => getCrucialDependencyIds(dependencies), [dependencies])
 
-  const reportOverlapViolation = useCallback(ids => {
-    presentConflictTimeSlots(ids)
+  const reportBoundaryViolation = useCallback((title, message, timeSlotIds = []) => {
+    const ids = new Set(timeSlotIds.filter(Boolean))
+    if (ids.size) {
+      setPendingConflictTimeSlotIds(ids)
+      setPendingDependencyResolveIds(ids)
+      setBlinkingTimeSlotIds(ids)
+      window.setTimeout(() => setBlinkingTimeSlotIds(new Set()), 3000)
+    }
     showWarningPrompt({
-      title: 'Time slot overlap',
-      message: 'Time slots in the same note row cannot overlap or pass each other.',
-      actions: 'close',
-    })
-  }, [presentConflictTimeSlots, showWarningPrompt])
-
-  const reportDeadlineViolation = useCallback(() => {
-    showWarningPrompt({
-      title: 'Hard deadline',
-      message: "Time slots cannot move before today or past their note's hard deadline.",
-      actions: 'close',
-    })
-  }, [showWarningPrompt])
-
-  const reportEarliestStartViolation = useCallback(() => {
-    showWarningPrompt({
-      title: 'Earliest start date',
-      message: "Time slots cannot start before the row's earliest start date.",
-      actions: 'close',
+      title,
+      message,
+      actions: ids.size ? 'resolve' : 'close',
+      timeSlotIds: ids,
     })
   }, [showWarningPrompt])
+
+  const reportDeadlineViolation = useCallback((timeSlotIds = []) => {
+    reportBoundaryViolation(
+      'Hard deadline',
+      "Time slots cannot move before today or past their note's hard deadline.",
+      timeSlotIds,
+    )
+  }, [reportBoundaryViolation])
+
+  const reportEarliestStartViolation = useCallback((timeSlotIds = []) => {
+    reportBoundaryViolation(
+      'Earliest start date',
+      "Time slots cannot start before the row's earliest start date.",
+      timeSlotIds,
+    )
+  }, [reportBoundaryViolation])
 
   const reportDependencyViolations = useCallback((violations, allTimeSlots = timeSlotsRef.current, allDependencies = dependenciesRef.current) => {
     const conflict = getCascadingDependencyConflict(allTimeSlots, allDependencies, violations)
     const depIds = conflict.depIds
     const timeSlotIds = conflict.timeSlotIds
     const conflictTimeSlots = allTimeSlots.filter(m => timeSlotIds.has(m.id))
-    const noteIds = new Set(conflictTimeSlots.map(m => m.noteId))
     const smallestDuration = conflictTimeSlots.length ? Math.min(...conflictTimeSlots.map(m => m.duration)) : 0
-    const previousSnapshot = capturePerspectiveStateRef.current?.()
-    const shouldAutoSelect = autoResolveDependencyViewRef.current
 
-    if (shouldAutoSelect) {
-      resolveDependencySelectionRef.current?.(timeSlotIds)
-    } else {
-      // Build the note set for the filter: new conflict notes + notes of already-selected
-      // timeSlots. Without this union, applyNoteVisibilityFilter would hide the notes of
-      // timeSlots that were selected from a previous conflict step, and the deselection
-      // effect would then strip them from selectedIds before the user can click Resolve.
-      const resolveNoteIds = new Set(noteIds)
-      timeSlotsRef.current.forEach(m => {
-        if (selectedIdsRef.current.has(m.id)) resolveNoteIds.add(m.noteId)
-      })
-      setSelectedDepIds(new Set())
-      setRevealedConflictNoteIds(resolveNoteIds)
-      setPendingConflictTimeSlotIds(timeSlotIds)
-      setPendingDependencyResolveIds(timeSlotIds)
-      setActiveFilterIds([])
-      setQuickFilters([])
-      setPaintCat(null)
-      applyNoteVisibilityFilter(resolveNoteIds)
-      setDependencyResolveSnapshot(prev => prev ?? previousSnapshot)
-    }
-
-    setTimeZoom(zoomForConflictGap(smallestDuration))
+    setSelectedDepIds(new Set(depIds))
+    setPendingConflictTimeSlotIds(timeSlotIds)
+    setPendingDependencyResolveIds(timeSlotIds)
     setBlinkingDepIds(new Set(depIds))
     setBlinkingTimeSlotIds(new Set(timeSlotIds))
     window.setTimeout(() => setBlinkingDepIds(new Set()), 3000)
@@ -2955,8 +2998,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       actions: 'dependency',
       dependencyIds: depIds,
       timeSlotIds,
+      resolveZoom: zoomForConflictGap(smallestDuration),
     })
-  }, [applyNoteVisibilityFilter, showWarningPrompt])
+  }, [showWarningPrompt])
   reportDependencyViolationsRef.current = reportDependencyViolations
 
   const maybeBlockDependencyWarning = useCallback((nextTimeSlots, nextDependencies) => {
@@ -3216,6 +3260,15 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     clearWarningPrompt()
     const duration = defaultDurationForZoom(timeZoomRef.current, startCol)
     const ms = { id: newClientId('ms'), noteId, startCol, duration, title: '', color: color || '#1a73e8' }
+    const existingTimeSlot = timeSlotsRef.current.find(m => m.noteId === noteId)
+    if (existingTimeSlot) {
+      showWarningPrompt({
+        title: 'Time slot exists',
+        message: 'A note can only contain one time slot.',
+        actions: 'close',
+      })
+      return
+    }
     const scaleConflict = noteTimeSlotScaleConflict(timeSlotsRef.current, noteId, duration, startCol)
     if (scaleConflict) {
       showWarningPrompt({
@@ -3228,16 +3281,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const dl = findApplicableDeadline(deadlinesRef.current, ms)
     const es = findApplicableEarliestStart(earliestStartsRef.current, ms)
     if (es && startCol < es.col) {
-      reportEarliestStartViolation()
+      reportEarliestStartViolation([ms.id])
       return
     }
     if (startCol < 0 || (dl && startCol + duration > dl.col)) {
-      reportDeadlineViolation()
-      return
-    }
-    const overlap = getOverlapViolation([...timeSlotsRef.current, ms], new Set([ms.id]))
-    if (overlap) {
-      reportOverlapViolation(overlap)
+      reportDeadlineViolation([ms.id])
       return
     }
     await commitTransaction({
@@ -3247,7 +3295,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       before: { timeSlots: [], dependencies: [] },
       after: { timeSlots: [ms], dependencies: [] },
     })
-  }, [clearWarningPrompt, commitTransaction, reportDeadlineViolation, reportOverlapViolation, showWarningPrompt])
+  }, [clearWarningPrompt, commitTransaction, reportDeadlineViolation, reportEarliestStartViolation, showWarningPrompt])
 
   const handleGridDoubleClick = useCallback(e => {
     if (modeRef.current !== 'timeSlot') return
@@ -3277,14 +3325,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         after: { timeSlots: after, dependencies: [] },
       }
       const nextTimeSlots = timeSlotsRef.current.map(m => after.find(candidate => candidate.id === m.id) ?? m)
-      const overlap = getOverlapViolation(nextTimeSlots, new Set(before.map(m => m.id)))
-      if (overlap) { reportOverlapViolation(overlap); return }
-      const order = getTimeSlotOrderViolation(timeSlotsRef.current, nextTimeSlots, new Set(before.map(m => m.id)))
-      if (order) { reportOverlapViolation(order); return }
       if (maybeBlockDependencyWarning(nextTimeSlots, dependenciesRef.current)) return
       await commitTransaction(tx)
     }
-  }, [commitTransaction, maybeBlockDependencyWarning, reportOverlapViolation])
+  }, [commitTransaction, maybeBlockDependencyWarning])
 
   const handleDeleteTimeUnit = useCallback(async col => {
     const unit = getZoomUnit(timeZoomRef.current)
@@ -3314,14 +3358,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         before: { timeSlots: before, dependencies: [] },
         after: { timeSlots: after, dependencies: [] },
       }
-      const overlap = getOverlapViolation(updated, new Set(before.map(m => m.id)))
-      if (overlap) { reportOverlapViolation(overlap); return }
-      const order = getTimeSlotOrderViolation(timeSlotsRef.current, updated, new Set(before.map(m => m.id)))
-      if (order) { reportOverlapViolation(order); return }
       if (maybeBlockDependencyWarning(updated, dependenciesRef.current)) return
       await commitTransaction(tx)
     }
-  }, [commitTransaction, maybeBlockDependencyWarning, reportOverlapViolation])
+  }, [commitTransaction, maybeBlockDependencyWarning])
 
   // ── Drag helpers ───────────────────────────────────────────────────────────
   const showScaleEditBlocked = useCallback((timeSlot) => {
@@ -3555,11 +3595,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       const finalOverlap = getOverlapViolation(buildMovedTimeSlots(colDelta), new Set(Object.keys(originals)))
       if (finalOverlap) {
         resetToOriginal()
-        reportOverlapViolation(finalOverlap)
         return
       }
-      if (hitBoundary) reportDeadlineViolation()
-      if (hitEarliestBoundary) reportEarliestStartViolation()
+      const movedTimeSlotIds = Object.keys(originals)
+      if (hitBoundary) reportDeadlineViolation(movedTimeSlotIds)
+      if (hitEarliestBoundary) reportEarliestStartViolation(movedTimeSlotIds)
       const updates = []
       const next = timeSlotsRef.current.map(m => {
         if (!originals[m.id]) return m
@@ -3572,7 +3612,6 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       const finalOrder = getTimeSlotOrderViolation(timeSlotsRef.current, next, new Set(Object.keys(originals)))
       if (finalOrder) {
         resetToOriginal()
-        reportOverlapViolation(finalOrder)
         return
       }
       if (updates.length) {
@@ -3714,14 +3753,18 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       )
       if (finalOverlap) {
         resetToOriginal()
-        reportOverlapViolation(finalOverlap)
         return
       }
-      if (dragState.hitBoundary) reportDeadlineViolation()
-      if (dragState.hitEarliestBoundary) reportEarliestStartViolation()
+      if (dragState.hitBoundary) reportDeadlineViolation([timeSlotId])
+      if (dragState.hitEarliestBoundary) reportEarliestStartViolation([timeSlotId])
       const changed = newStart !== origStart || newDur !== origDur
       const nextAll = timeSlotsRef.current.map(m => m.id === timeSlotId ? { ...m, startCol: newStart, duration: newDur } : m)
       if (changed) {
+        const dependencyBlocked = maybeBlockDependencyWarning(nextAll, dependenciesRef.current)
+        if (dependencyBlocked) {
+          resetToOriginal()
+          return
+        }
         const applyResize = async () => {
           const current = timeSlotsRef.current.find(m => m.id === timeSlotId)
           const next = nextAll.find(m => m.id === timeSlotId)
@@ -3735,7 +3778,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         }
         const applyResizeIfValid = async () => {
           const blocked = maybeBlockDependencyWarning(nextAll, dependenciesRef.current)
-          if (blocked) return
+          if (blocked) {
+            resetToOriginal()
+            return
+          }
           try { await applyResize() } catch (err) { console.error(err) }
         }
         if (durationScaleBucket(origDur, origStart) !== durationScaleBucket(newDur, newStart)) {
@@ -4176,7 +4222,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }, [commitTransaction, deleteDraft])
 
   const handleWarningResolve = useCallback(() => {
-    resolveDependencySelection(warningPrompt?.timeSlotIds ?? null)
+    resolveDependencySelection(warningPrompt?.timeSlotIds ?? null, warningPrompt?.resolveZoom ?? null)
   }, [resolveDependencySelection, warningPrompt])
 
   useEffect(() => {
@@ -4256,9 +4302,12 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   leftPanelWidthRef.current = leftPanelWidth
 
   const capturePerspectiveState = useCallback(() => ({
+    version: SCHEDULE_PERSPECTIVE_VERSION,
     activePerspectiveId,
     spacing,
     timeZoom,
+    planningScale: persistedPlanningScaleForZoom(timeZoom),
+    mode,
     axisMode,
     showDepLabels,
     showDeps,
@@ -4266,6 +4315,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     showCrucialDepsOnly,
     colorDependencyDirection,
     timeSlotScaleFilter,
+    scaleVisibilityMode: normalizeScaleVisibilityMode(timeSlotScaleFilter),
     leftPanelWidth,
     group: {
       activeDimId,
@@ -4290,28 +4340,29 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }), [
     activeDimId, activeFilterIds, activeLaneFilterId, activePerspectiveId, axisMode, colorDimId,
     colorDependencyDirection, hiddenCatIds, hiddenNotesByLane, hideCrossCatDeps,
-    leftPanelWidth, timeSlotScaleFilter, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps, spacing, timeZoom, visibleNoteFilterIds,
+    leftPanelWidth, mode, timeSlotScaleFilter, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps, spacing, timeZoom, visibleNoteFilterIds,
   ])
   capturePerspectiveStateRef.current = capturePerspectiveState
 
   const applyPerspective = useCallback(perspective => {
-    const state = perspective?.state ?? {}
+    const state = normalizeSchedulePerspectiveState(perspective?.state ?? {})
     const nextActiveDimId = state.group?.activeDimId || ''
     const nextActiveLaneFilterId = state.group?.activeLaneFilterId || ''
     const nextColorDimId = state.color?.colorDimId || ''
     restoringPerspectiveRef.current = nextActiveDimId !== activeDimId || nextActiveLaneFilterId !== activeLaneFilterId
     restoringColorRef.current = nextColorDimId !== colorDimId
 
-    if (state.spacing) setSpacing({ ...DEFAULT_SPACING, ...state.spacing })
-    if (state.timeZoom) setTimeZoom(normalizeTimeZoom(state.timeZoom))
-    if (state.axisMode) setAxisMode(state.axisMode)
-    if (typeof state.showDepLabels === 'boolean') setShowDepLabels(state.showDepLabels)
-    if (typeof state.showDeps === 'boolean') setShowDeps(state.showDeps)
-    if (typeof state.hideCrossCatDeps === 'boolean') setHideCrossCatDeps(state.hideCrossCatDeps)
-    if (typeof state.showCrucialDepsOnly === 'boolean') setShowCrucialDepsOnly(state.showCrucialDepsOnly)
-    if (typeof state.colorDependencyDirection === 'boolean') setColorDependencyDirection(state.colorDependencyDirection)
-    if (typeof state.leftPanelWidth === 'number') setLeftPanelWidth(Math.max(120, Math.min(600, state.leftPanelWidth)))
-    if (state.timeSlotScaleFilter) setTimeSlotScaleFilter(normalizeScaleVisibilityMode(state.timeSlotScaleFilter))
+    setSpacing(state.spacing)
+    setTimeZoom(state.timeZoom)
+    setMode(state.mode)
+    setAxisMode(state.axisMode)
+    setShowDepLabels(state.showDepLabels)
+    setShowDeps(state.showDeps)
+    setHideCrossCatDeps(state.hideCrossCatDeps)
+    setShowCrucialDepsOnly(state.showCrucialDepsOnly)
+    setColorDependencyDirection(state.colorDependencyDirection)
+    setLeftPanelWidth(state.leftPanelWidth)
+    setTimeSlotScaleFilter(state.timeSlotScaleFilter)
 
     setActiveDimId(nextActiveDimId)
     setActiveLaneFilterId(nextActiveLaneFilterId)
@@ -4343,23 +4394,24 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
   const returnToDependencyResolveSnapshot = useCallback(() => {
     if (!dependencyResolveSnapshot) return
-    const state = dependencyResolveSnapshot
+    const state = normalizeSchedulePerspectiveState(dependencyResolveSnapshot)
     const nextActiveDimId = state.group?.activeDimId || ''
     const nextActiveLaneFilterId = state.group?.activeLaneFilterId || ''
     const nextColorDimId = state.color?.colorDimId || ''
     restoringPerspectiveRef.current = nextActiveDimId !== activeDimId || nextActiveLaneFilterId !== activeLaneFilterId
     restoringColorRef.current = nextColorDimId !== colorDimId
 
-    if (state.spacing) setSpacing({ ...DEFAULT_SPACING, ...state.spacing })
-    if (state.timeZoom) setTimeZoom(normalizeTimeZoom(state.timeZoom))
-    if (state.axisMode) setAxisMode(state.axisMode)
-    if (typeof state.showDepLabels === 'boolean') setShowDepLabels(state.showDepLabels)
-    if (typeof state.showDeps === 'boolean') setShowDeps(state.showDeps)
-    if (typeof state.hideCrossCatDeps === 'boolean') setHideCrossCatDeps(state.hideCrossCatDeps)
-    if (typeof state.showCrucialDepsOnly === 'boolean') setShowCrucialDepsOnly(state.showCrucialDepsOnly)
-    if (typeof state.colorDependencyDirection === 'boolean') setColorDependencyDirection(state.colorDependencyDirection)
-    if (typeof state.leftPanelWidth === 'number') setLeftPanelWidth(Math.max(120, Math.min(600, state.leftPanelWidth)))
-    if (state.timeSlotScaleFilter) setTimeSlotScaleFilter(normalizeScaleVisibilityMode(state.timeSlotScaleFilter))
+    setSpacing(state.spacing)
+    setTimeZoom(state.timeZoom)
+    setMode(state.mode)
+    setAxisMode(state.axisMode)
+    setShowDepLabels(state.showDepLabels)
+    setShowDeps(state.showDeps)
+    setHideCrossCatDeps(state.hideCrossCatDeps)
+    setShowCrucialDepsOnly(state.showCrucialDepsOnly)
+    setColorDependencyDirection(state.colorDependencyDirection)
+    setLeftPanelWidth(state.leftPanelWidth)
+    setTimeSlotScaleFilter(state.timeSlotScaleFilter)
 
     setActiveDimId(nextActiveDimId)
     setActiveLaneFilterId(nextActiveLaneFilterId)
@@ -4668,8 +4720,6 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         showCrucialDepsOnly={showCrucialDepsOnly} onShowCrucialDepsOnlyChange={setShowCrucialDepsOnly}
         colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={setColorDependencyDirection}
         timeSlotScaleFilter={timeSlotScaleFilter} onTimeSlotScaleFilterChange={setTimeSlotScaleFilter}
-        autoResolveDependencyView={autoResolveDependencyView}
-        onAutoResolveDependencyViewChange={setAutoResolveDependencyView}
         warningSettings={warningSettings}
         onWarningSettingsChange={updateWarningSettings}
       />
@@ -5335,16 +5385,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
               `This change would make ${warningPrompt.count} time slot${warningPrompt.count === 1 ? '' : 's'} violate dependency timing.`}
           </div>
           <div className={styles.warningPromptActions}>
-            {warningPrompt.actions === 'dependency' ? (
+            {warningPrompt.actions === 'dependency' || warningPrompt.actions === 'resolve' ? (
               <>
-                <label className={styles.warningAutoResolveToggle}>
-                  <input
-                    type="checkbox"
-                    checked={autoResolveDependencyView}
-                    onChange={e => setAutoResolveDependencyView(e.target.checked)}
-                  />
-                  Auto-select
-                </label>
                 <button className={styles.warningSafeBtn} autoFocus onClick={handleWarningResolve}>
                   Resolve
                 </button>
