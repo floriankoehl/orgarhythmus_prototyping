@@ -6,6 +6,15 @@ import { api } from '../api'
 const PRESET_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#94a3b8']
 const FILTER_DIMENSION_ID = '__filters__'
 const FILTER_CATEGORY_PREFIX = 'filter:'
+const ALL_NOTES_CATEGORY_PREFIX = '__all_notes__:'
+const TIME_DIMENSION_ID = '__time__'
+const TIME_CATEGORY_PREFIX = 'time:'
+const TIME_DYNAMIC_CATEGORIES = [
+  { id: `${TIME_CATEGORY_PREFIX}hour`, name: 'Last hour', color: '#22c55e', maxAgeMs: 60 * 60 * 1000 },
+  { id: `${TIME_CATEGORY_PREFIX}day`, name: 'Last day', color: '#3b82f6', maxAgeMs: 24 * 60 * 60 * 1000 },
+  { id: `${TIME_CATEGORY_PREFIX}week`, name: 'Last week', color: '#8b5cf6', maxAgeMs: 7 * 24 * 60 * 60 * 1000 },
+  { id: `${TIME_CATEGORY_PREFIX}older`, name: 'Older than a week', color: '#94a3b8', maxAgeMs: Infinity },
+]
 const NONE_PERSPECTIVE_ID = '__none__'
 const CLASSIFICATION_DEFAULT_PERSPECTIVE_KEY = 'classification.defaultPerspectiveId'
 
@@ -48,6 +57,50 @@ function filterCategoryId(filterId) {
 
 function filterIdFromCategoryId(catId) {
   return catId?.startsWith(FILTER_CATEGORY_PREFIX) ? catId.slice(FILTER_CATEGORY_PREFIX.length) : null
+}
+
+function allNotesCategoryId(dimId) {
+  return `${ALL_NOTES_CATEGORY_PREFIX}${dimId}`
+}
+
+function dimensionIdFromAllNotesCategoryId(catId) {
+  return catId?.startsWith(ALL_NOTES_CATEGORY_PREFIX) ? catId.slice(ALL_NOTES_CATEGORY_PREFIX.length) : null
+}
+
+function noteCreatedAtMs(note) {
+  const raw = note?.createdAt ?? note?.created_at
+  const value = raw ? Date.parse(raw) : NaN
+  return Number.isFinite(value) ? value : 0
+}
+
+function timeCategoryIdForNote(note, nowMs = Date.now()) {
+  const createdAt = noteCreatedAtMs(note)
+  const age = createdAt > 0 ? Math.max(0, nowMs - createdAt) : Infinity
+  return TIME_DYNAMIC_CATEGORIES.find(cat => age <= cat.maxAgeMs)?.id ?? `${TIME_CATEGORY_PREFIX}older`
+}
+
+function isDynamicDimensionId(dimId) {
+  return dimId === FILTER_DIMENSION_ID || dimId === TIME_DIMENSION_ID
+}
+
+function isSystemDimension(dim) {
+  return Boolean(dim?.system)
+}
+
+function isLockedDimension(dim) {
+  return Boolean(dim?.dynamic || dim?.system)
+}
+
+function isKanbanDimension(dim) {
+  return dim?.systemType === 'kanban'
+}
+
+function dynamicDimensionLabel(cat) {
+  if (cat?.dynamicType === 'all_notes') return 'All'
+  if (cat?.systemType === 'kanban') return 'Status'
+  if (cat?.dynamicType === 'filter') return 'Filter'
+  if (cat?.dynamicType === 'time') return 'Time'
+  return 'Dynamic'
 }
 
 function normalizePerspective(perspective) {
@@ -307,7 +360,7 @@ function ClassificationToolbar({
   const cancel = () => { setAdding(false); setNewDimName('') }
 
   const startEditDim = dim => {
-    if (dim.dynamic) return
+    if (isLockedDimension(dim)) return
     setEditingDimId(dim.id)
     setEditingDimName(dim.name)
   }
@@ -326,16 +379,18 @@ function ClassificationToolbar({
     </svg>
   )
 
+  const normalDimensions = dimensions.filter(d => !d.dynamic && !d.system)
+  const specialDimensions = dimensions.filter(d => d.dynamic || d.system)
+
   return (
     <div className={styles.classToolbar}>
-      {/* Left: inline group-by pills — no label */}
-      <div className={styles.tbGroupBy}>
+      <div className={styles.tbGroupBy} aria-label="Normal dimensions">
         <button
           className={`${styles.tbGroupByPill} ${!containerDimId ? styles.tbGroupByPillActive : ''}`}
           onClick={() => onContainerDimChange('')}>
           None
         </button>
-        {dimensions.map(d => (
+        {normalDimensions.map(d => (
           <button key={d.id}
             className={`${styles.tbGroupByPill} ${d.id === containerDimId ? styles.tbGroupByPillActive : ''}`}
             onClick={() => onContainerDimChange(d.id)}>
@@ -345,6 +400,17 @@ function ClassificationToolbar({
       </div>
 
       <div style={{ flex: 1 }} />
+
+      <div className={styles.tbDynamicGroup} aria-label="Dynamic dimensions">
+        {specialDimensions.map(d => (
+          <button key={d.id}
+            className={`${styles.tbGroupByPill} ${styles.tbDynamicPill} ${d.id === containerDimId ? styles.tbGroupByPillActive : ''}`}
+            title={d.system ? 'System dimension' : 'Dynamic dimension'}
+            onClick={() => onContainerDimChange(d.id)}>
+            {d.name}
+          </button>
+        ))}
+      </div>
 
       <div className={styles.tbSettingsWrap}>
         <button
@@ -373,27 +439,28 @@ function ClassificationToolbar({
           Dimensions<Chevron open={dimMenuOpen} />
         </button>
         {dimMenuOpen && (() => {
-          const realDims = dimensions.filter(d => !d.dynamic)
-          const virtualDims = dimensions.filter(d => d.dynamic)
+          const realDims = normalDimensions
+          const virtualDims = specialDimensions
           const previewDims = dragIdx !== null && overIdx !== null && dragIdx !== overIdx
             ? (() => { const a = [...realDims]; const [x] = a.splice(dragIdx, 1); a.splice(overIdx, 0, x); return a })()
             : realDims
-          const allDims = [...previewDims, ...virtualDims]
           return (
             <div className={`${styles.tbDropdown} ${styles.tbDropdownRight}`}>
-              {allDims.length === 0
+              {[...previewDims, ...virtualDims].length === 0
                 ? <div className={styles.tbDropdownEmpty}>No dimensions yet</div>
-                : allDims.map((dim, i) => {
+                : <>
+                  {previewDims.length > 0 && <div className={styles.tbDropdownSectionTitle}>Normal dimensions</div>}
+                  {previewDims.map((dim) => {
                     const realIdx = previewDims.indexOf(dim)
                     return (
                       <div
                         key={dim.id}
-                        className={`${styles.tbDimRow} ${overIdx === realIdx && !dim.dynamic ? styles.tbDimRowOver : ''}`}
-                        draggable={!dim.dynamic}
-                        onDragStart={dim.dynamic ? undefined : e => { e.dataTransfer.effectAllowed = 'move'; setDragIdx(realIdx) }}
-                        onDragOver={dim.dynamic ? undefined : e => { e.preventDefault(); if (dragIdx !== null) setOverIdx(realIdx) }}
+                        className={`${styles.tbDimRow} ${overIdx === realIdx && !isLockedDimension(dim) ? styles.tbDimRowOver : ''}`}
+                        draggable={!isLockedDimension(dim)}
+                        onDragStart={isLockedDimension(dim) ? undefined : e => { e.dataTransfer.effectAllowed = 'move'; setDragIdx(realIdx) }}
+                        onDragOver={isLockedDimension(dim) ? undefined : e => { e.preventDefault(); if (dragIdx !== null) setOverIdx(realIdx) }}
                         onDragEnd={() => { setDragIdx(null); setOverIdx(null) }}
-                        onDrop={dim.dynamic ? undefined : e => {
+                        onDrop={isLockedDimension(dim) ? undefined : e => {
                           e.preventDefault()
                           if (dragIdx === null || dragIdx === realIdx) { setDragIdx(null); setOverIdx(null); return }
                           const arr = [...realDims]
@@ -403,7 +470,7 @@ function ClassificationToolbar({
                           setDragIdx(null); setOverIdx(null)
                         }}
                       >
-                        {!dim.dynamic && (
+                        {!isLockedDimension(dim) && (
                           <span className={styles.tbDimDragHandle} title="Drag to reorder">
                             <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
                               <circle cx="3" cy="2.5" r="1.2"/><circle cx="7" cy="2.5" r="1.2"/>
@@ -429,7 +496,7 @@ function ClassificationToolbar({
                             {dim.name}
                           </span>
                         )}
-                        {!dim.dynamic && (
+                        {!isLockedDimension(dim) && (
                           <>
                             <button className={styles.tbDimRowEdit}
                               title="Rename dimension"
@@ -445,7 +512,15 @@ function ClassificationToolbar({
                         )}
                       </div>
                     )
-                  })
+                  })}
+                  {virtualDims.length > 0 && <div className={styles.tbDropdownSectionTitle}>System and dynamic dimensions</div>}
+                  {virtualDims.map(dim => (
+                    <div key={dim.id} className={`${styles.tbDimRow} ${styles.tbDimRowDynamic}`}>
+                      <span className={styles.tbDimRowName}>{dim.name}</span>
+                      <span className={styles.dynamicBadge}>{dim.systemType === 'kanban' ? 'Status' : dim.dynamicLabel ?? 'Dynamic'}</span>
+                    </div>
+                  ))}
+                </>
               }
             </div>
           )
@@ -607,7 +682,8 @@ function NoteRow({ note, paintCat, onPaint, legendColor, onNoteDrop, onOpen, can
 
 // ── Category container box ────────────────────────────────────────────────────
 function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onEdit, onCollapse,
-  onCatDragStart, onCatDragEnd, onCatDragOver, onCatDrop, onReorderNote, insertSide, isDraggingCat, onNoteOpen, dynamic = false }) {
+  onCatDragStart, onCatDragEnd, onCatDragOver, onCatDrop, onReorderNote, insertSide, isDraggingCat, onNoteOpen,
+  dynamic = false, readOnlyCategory = false, unassignedLabel = 'Unassigned' }) {
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounter = useRef(0)
   const boxRef = useRef()
@@ -672,6 +748,7 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onE
   const cls = [
     styles.catBox,
     dynamic         ? styles.dynamicCatBox : '',
+    readOnlyCategory ? styles.systemCatBox : '',
     isDragOver      ? styles.dragOver    : '',
     insertSide === 'before' ? styles.insertBefore : '',
     insertSide === 'after'  ? styles.insertAfter  : '',
@@ -686,7 +763,7 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onE
       onDrop={handleDrop}
     >
       <div className={styles.catBoxHeader} style={{ borderTopColor: cat?.color ?? '#e0e0e0' }}>
-        {cat && !dynamic && (
+        {cat && !dynamic && !readOnlyCategory && (
           <div className={styles.dragHandle}
             draggable
             onDragStart={e => {
@@ -716,11 +793,11 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onE
           </div>
         )}
         <span className={styles.catBoxName}>
-          {cat?.name ?? 'Unassigned'}
-          {dynamic && <span className={styles.dynamicBadge}>Filter</span>}
+          {cat?.name ?? unassignedLabel}
+          {(dynamic || readOnlyCategory) && <span className={styles.dynamicBadge}>{dynamicDimensionLabel(cat)}</span>}
           <span className={styles.catBoxCount}> {notes.length}</span>
         </span>
-        {cat && onEdit && (
+        {cat && onEdit && !readOnlyCategory && (
           <button className={styles.catEditBtn} onClick={onEdit} title="Edit category">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
               <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
@@ -979,10 +1056,13 @@ function LegendWidget({
   const [catColor, setCatColor] = useState(PRESET_COLORS[0])
 
   const legendCats = categories.filter(c => c.dimensionId === legendDimId)
+  const legendDim = dimensions.find(d => d.id === legendDimId)
+  const isDynamicLegend = isDynamicDimensionId(legendDimId)
+  const isSystemLegend = isSystemDimension(legendDim)
 
   const handleAddCat = e => {
     e.preventDefault()
-    if (!catName.trim() || !legendDimId || legendDimId === FILTER_DIMENSION_ID) return
+    if (!catName.trim() || !legendDimId || isDynamicLegend || isSystemLegend) return
     onCreateCat(legendDimId, catName.trim(), catColor)
     setCatName('')
     setAddingCat(false)
@@ -999,7 +1079,7 @@ function LegendWidget({
               + Create filter
             </button>
           )}
-          {legendDimId && legendDimId !== FILTER_DIMENSION_ID && (
+          {legendDimId && !isDynamicLegend && !isSystemLegend && (
             addingCat ? (
               <form className={styles.legendCatForm} onSubmit={handleAddCat}>
                 <div className={styles.colorPicker}>
@@ -1030,19 +1110,20 @@ function LegendWidget({
             <div key={cat.id}
               className={[
                 styles.legendItem,
-                cat.dynamic && styles.dynamicLegendItem,
-                (cat.dynamic ? activeFilterIds.includes(cat.filterId) : paintCat?.id === cat.id) && styles.legendItemActive,
+                (cat.dynamic || cat.system) && styles.dynamicLegendItem,
+                (cat.dynamicType === 'filter' ? activeFilterIds.includes(cat.filterId) : paintCat?.id === cat.id) && styles.legendItemActive,
               ].filter(Boolean).join(' ')}
               onClick={e => {
                 e.stopPropagation()
-                if (cat.dynamic) onToggleFilter(cat.filterId)
+                if (cat.dynamicType === 'filter') onToggleFilter(cat.filterId)
+                else if (cat.dynamic) return
                 else onPaintActivate(cat.id, cat.color)
               }}
-              onDoubleClick={() => cat.dynamic ? onEditFilter(namedFilters.find(f => f.id === cat.filterId)) : onEditCat(cat)}>
+              onDoubleClick={() => cat.dynamicType === 'filter' ? onEditFilter(namedFilters.find(f => f.id === cat.filterId)) : cat.dynamic || cat.system ? undefined : onEditCat(cat)}>
               <span className={styles.legendDot} style={{ background: cat.color }} />
               <span className={styles.legendName}>{cat.name}</span>
-              {cat.dynamic && <span className={styles.dynamicBadge}>Filter</span>}
-              {cat.dynamic ? (
+              {(cat.dynamic || cat.system) && <span className={styles.dynamicBadge}>{dynamicDimensionLabel(cat)}</span>}
+              {cat.dynamicType === 'filter' ? (
                 <button
                   className={`${styles.legendPaintBtn} ${activeFilterIds.includes(cat.filterId) ? styles.legendPaintBtnActive : ''}`}
                   title="Edit filter"
@@ -1055,7 +1136,7 @@ function LegendWidget({
                     <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
                   </svg>
                 </button>
-              ) : (
+              ) : !cat.dynamic ? (
                 <button
                   className={`${styles.legendPaintBtn} ${quickFilters.some(f => f.dimId === legendDimId && f.catId === cat.id) ? styles.legendPaintBtnActive : ''}`}
                   title="Quick filter notes by this category"
@@ -1068,6 +1149,8 @@ function LegendWidget({
                     <path d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/>
                   </svg>
                 </button>
+              ) : (
+                <span className={styles.legendPaintBtn} title="Computed category" />
               )}
             </div>
           ))}
@@ -1099,6 +1182,7 @@ function LegendWidget({
 export default function ClassificationPage({ notes = [], isActive = false, onNoteOpen, refreshKey = 0 }) {
   const [dimensions, setDimensions]         = useState([])
   const [categories, setCategories]         = useState([])
+  const [timeSlots, setTimeSlots]           = useState([])
   const [assignments, setAssignments]       = useState({})
   const [assignmentOrders, setAssignmentOrders] = useState({})
   const [perspectives, setPerspectives] = useState([])
@@ -1125,6 +1209,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const [collapsedCatIds, setCollapsedCatIds]     = useState(new Set())
   const [unassignedCollapsed, setUnassignedCollapsed] = useState(false)
   const [floatingPanel, setFloatingPanel] = useState(null)
+  const [statusNotice, setStatusNotice] = useState('')
 
   const applyAssignments = assigns => {
     const map = {}
@@ -1140,10 +1225,11 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   }
 
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getFilters(), api.getClassificationPerspectives()])
-      .then(([dims, cats, assigns, filters, loadedPerspectives]) => {
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getFilters(), api.getClassificationPerspectives(), api.getTimeSlots()])
+      .then(([dims, cats, assigns, filters, loadedPerspectives, loadedTimeSlots]) => {
         setDimensions(dims)
         setCategories(cats)
+        setTimeSlots(loadedTimeSlots)
         setNamedFilters(filters.map(normalizeFilter))
         setPerspectives(loadedPerspectives.map(normalizePerspective))
         applyAssignments(assigns)
@@ -1157,8 +1243,19 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
 
   useEffect(() => {
     if (!refreshKey) return
-    api.getAssignments().then(applyAssignments).catch(console.error)
+    Promise.all([api.getAssignments(), api.getTimeSlots()])
+      .then(([assigns, loadedTimeSlots]) => {
+        applyAssignments(assigns)
+        setTimeSlots(loadedTimeSlots)
+      })
+      .catch(console.error)
   }, [refreshKey])
+
+  useEffect(() => {
+    if (!statusNotice) return
+    const timer = window.setTimeout(() => setStatusNotice(''), 4500)
+    return () => window.clearTimeout(timer)
+  }, [statusNotice])
 
   useEffect(() => {
     setPaintCat(null)
@@ -1378,7 +1475,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   }
 
   const toggleQuickFilter = (dimId, catId) => {
-    if (!dimId || !catId || dimId === FILTER_DIMENSION_ID) return
+    if (!dimId || !catId || isDynamicDimensionId(dimId)) return
     setQuickFilters(prev => {
       const exists = prev.some(f => f.dimId === dimId && f.catId === catId)
       return exists
@@ -1388,7 +1485,11 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   }
 
   const assignNote = async (noteId, catId) => {
-    if (!containerDimId) return
+    if (!containerDimId || isDynamicDimensionId(containerDimId)) return
+    if (catId && isKanbanContainerDimension && catId === scheduledCategory?.id && !timeSlotNoteIds.has(noteId)) {
+      setStatusNotice('A note needs a time slot before it can be moved to Scheduled.')
+      return
+    }
     try {
       if (catId) {
         await api.assign(noteId, containerDimId, catId)
@@ -1407,15 +1508,27 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
           return { ...prev, [noteId]: g }
         })
       }
-    } catch (e) { console.error(e) }
+    } catch (e) {
+      setStatusNotice(e.message || 'The note could not be assigned.')
+      console.error(e)
+    }
   }
 
   const paintNote = async noteId => {
-    if (!paintCat || !legendDimId || legendDimId === FILTER_DIMENSION_ID) return
+    if (!paintCat || !legendDimId || isDynamicDimensionId(legendDimId)) return
+    const legendDim = dynamicDimensions.find(d => d.id === legendDimId)
+    const targetCat = dynamicCategories.find(c => c.id === paintCat.id)
+    if (isKanbanDimension(legendDim) && targetCat?.kanbanState === 'scheduled' && !timeSlotNoteIds.has(noteId)) {
+      setStatusNotice('A note needs a time slot before it can be moved to Scheduled.')
+      return
+    }
     try {
       await api.assign(noteId, legendDimId, paintCat.id)
       setAssignments(prev => ({ ...prev, [noteId]: { ...(prev[noteId] ?? {}), [legendDimId]: paintCat.id } }))
-    } catch (e) { console.error(e) }
+    } catch (e) {
+      setStatusNotice(e.message || 'The note could not be assigned.')
+      console.error(e)
+    }
   }
 
   // ── Derived (needed by reorder handlers below) ───────────────────────────────
@@ -1425,27 +1538,63 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     name: filter.name,
     color: filter.color || PRESET_COLORS[idx % PRESET_COLORS.length],
     dynamic: true,
+    dynamicType: 'filter',
+    dynamicLabel: 'Filter',
     filterId: filter.id,
   }))
-  const dynamicDimensions = [...dimensions, { id: FILTER_DIMENSION_ID, name: 'Filters', dynamic: true }]
-  const dynamicCategories = [...categories, ...filterCategories]
-  const isFilterDimension = containerDimId === FILTER_DIMENSION_ID
-  const containerCats = dynamicCategories.filter(c => c.dimensionId === containerDimId)
+  const timeCategories = TIME_DYNAMIC_CATEGORIES.map(cat => ({
+    ...cat,
+    dimensionId: TIME_DIMENSION_ID,
+    dynamic: true,
+    dynamicType: 'time',
+    dynamicLabel: 'Time',
+  }))
+  const systemDynamicDimensions = [
+    { id: FILTER_DIMENSION_ID, name: 'Filters', dynamic: true, dynamicType: 'filter', dynamicLabel: 'Filter' },
+    { id: TIME_DIMENSION_ID, name: 'Time', dynamic: true, dynamicType: 'time', dynamicLabel: 'Time' },
+  ]
+  const dynamicDimensions = [...dimensions, ...systemDynamicDimensions]
+  const dynamicCategories = [...categories, ...filterCategories, ...timeCategories]
+  const containerDim = dynamicDimensions.find(d => d.id === containerDimId)
+  const isDynamicContainerDimension = isDynamicDimensionId(containerDimId)
+  const isSystemContainerDimension = isSystemDimension(containerDim)
+  const isKanbanContainerDimension = isKanbanDimension(containerDim)
+  const isLockedContainerStructure = isDynamicContainerDimension || isSystemContainerDimension
+  const scheduledCategory = isKanbanContainerDimension
+    ? categories.find(c => c.dimensionId === containerDimId && c.kanbanState === 'scheduled')
+    : null
+  const timeSlotNoteIds = new Set(timeSlots.map(ms => ms.noteId))
+  const allNotesCategory = containerDimId
+    ? {
+        id: allNotesCategoryId(containerDimId),
+        dimensionId: containerDimId,
+        name: 'All notes',
+        color: '#64748b',
+        dynamic: true,
+        dynamicType: 'all_notes',
+        dynamicLabel: 'All',
+      }
+    : null
+  const baseContainerCats = dynamicCategories.filter(c => c.dimensionId === containerDimId)
+  const containerCats = allNotesCategory ? [allNotesCategory, ...baseContainerCats] : baseContainerCats
+  const reorderableContainerCats = baseContainerCats.filter(c => !c.dynamic && !c.system)
 
   // ── Category reorder ────────────────────────────────────────────────────────
   const handleCatDragOver = (overCatId, side) => {
-    if (isFilterDimension) return
-    const overIdx = containerCats.findIndex(c => c.id === overCatId)
+    if (isLockedContainerStructure) return
+    const overCat = reorderableContainerCats.find(c => c.id === overCatId)
+    if (!overCat) return
+    const overIdx = reorderableContainerCats.findIndex(c => c.id === overCat.id)
     if (overIdx === -1) return
     setCatInsertIdx(side === 'before' ? overIdx : overIdx + 1)
   }
 
   const reorderCatsDrop = async () => {
-    if (isFilterDimension) return
+    if (isLockedContainerStructure) return
     if (!catDragId || catInsertIdx === null) return
-    const oldIdx = containerCats.findIndex(c => c.id === catDragId)
+    const oldIdx = reorderableContainerCats.findIndex(c => c.id === catDragId)
     if (oldIdx === -1) return
-    const reordered = [...containerCats]
+    const reordered = [...reorderableContainerCats]
     const [moved] = reordered.splice(oldIdx, 1)
     const target = catInsertIdx > oldIdx ? catInsertIdx - 1 : catInsertIdx
     reordered.splice(target, 0, moved)
@@ -1458,7 +1607,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
 
   const getCatInsertSide = catId => {
     if (!catDragId || catInsertIdx === null) return null
-    const idx = containerCats.findIndex(c => c.id === catId)
+    const idx = reorderableContainerCats.findIndex(c => c.id === catId)
     if (idx === catInsertIdx) return 'before'
     if (idx + 1 === catInsertIdx) return 'after'
     return null
@@ -1470,6 +1619,11 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     if (legendDimId === FILTER_DIMENSION_ID) {
       const match = filterCategories.find(cat => filterMatchesNote(namedFilters.find(f => f.id === cat.filterId), noteId, assignments))
       return match?.color ?? null
+    }
+    if (legendDimId === TIME_DIMENSION_ID) {
+      const note = notes.find(g => g.id === noteId)
+      const catId = timeCategoryIdForNote(note)
+      return timeCategories.find(cat => cat.id === catId)?.color ?? null
     }
     const catId = assignments[noteId]?.[legendDimId]
     if (!catId) return null
@@ -1488,10 +1642,32 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     : notes
 
   const notesForCat = catId => {
+    const allNotesDimId = dimensionIdFromAllNotesCategoryId(catId)
+    if (allNotesDimId) {
+      if (allNotesDimId === FILTER_DIMENSION_ID) {
+        return visibleNotes.filter(g => namedFilters.some(filter => filterMatchesNote(filter, g.id, assignments)))
+      }
+      if (allNotesDimId === TIME_DIMENSION_ID) {
+        return [...visibleNotes].sort((a, b) => noteCreatedAtMs(b) - noteCreatedAtMs(a))
+      }
+      return visibleNotes.filter(g => assignments[g.id]?.[allNotesDimId])
+        .sort((a, b) => {
+          const aCatId = assignments[a.id]?.[allNotesDimId]
+          const bCatId = assignments[b.id]?.[allNotesDimId]
+          const aOrder = assignmentOrders[a.id]?.[allNotesDimId] ?? Number.MAX_SAFE_INTEGER
+          const bOrder = assignmentOrders[b.id]?.[allNotesDimId] ?? Number.MAX_SAFE_INTEGER
+          return aCatId === bCatId ? aOrder - bOrder : String(aCatId).localeCompare(String(bCatId))
+        })
+    }
     if (containerDimId === FILTER_DIMENSION_ID) {
       const filterId = filterIdFromCategoryId(catId)
       const filter = namedFilters.find(f => f.id === filterId)
       return filter ? visibleNotes.filter(g => filterMatchesNote(filter, g.id, assignments)) : []
+    }
+    if (containerDimId === TIME_DIMENSION_ID) {
+      return visibleNotes
+        .filter(g => timeCategoryIdForNote(g) === catId)
+        .sort((a, b) => noteCreatedAtMs(b) - noteCreatedAtMs(a))
     }
     return visibleNotes.filter(g => assignments[g.id]?.[containerDimId] === catId)
       .sort((a, b) => (assignmentOrders[a.id]?.[containerDimId] ?? Number.MAX_SAFE_INTEGER) - (assignmentOrders[b.id]?.[containerDimId] ?? Number.MAX_SAFE_INTEGER))
@@ -1499,11 +1675,15 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const unassignedNotes = containerDimId
     ? (containerDimId === FILTER_DIMENSION_ID
       ? visibleNotes.filter(g => !namedFilters.some(filter => filterMatchesNote(filter, g.id, assignments)))
+      : containerDimId === TIME_DIMENSION_ID
+      ? []
       : visibleNotes.filter(g => !assignments[g.id]?.[containerDimId]))
     : visibleNotes
+  const showUnassignedBox = containerDimId !== TIME_DIMENSION_ID
+  const unassignedLabel = isKanbanContainerDimension ? 'Not scheduled yet' : 'Unassigned'
 
   const reorderNoteInCategory = async (catId, dragNoteId, targetNoteId) => {
-    if (!containerDimId || !catId || dragNoteId === targetNoteId) return
+    if (!containerDimId || isDynamicDimensionId(containerDimId) || !catId || dragNoteId === targetNoteId) return
     if (assignments[dragNoteId]?.[containerDimId] !== catId || assignments[targetNoteId]?.[containerDimId] !== catId) return
     const laneNotes = notesForCat(catId)
     const fromIdx = laneNotes.findIndex(g => g.id === dragNoteId)
@@ -1525,7 +1705,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   }
 
   const visibleContainerCats = containerCats.filter(c => !collapsedCatIds.has(c.id))
-  const numBoxes = visibleContainerCats.length + 1
+  const numBoxes = visibleContainerCats.length + (showUnassignedBox ? 1 : 0)
   const gridCols = Math.min(numBoxes, maxGridCols)
   const colTemplate = gridCols === 1 ? `min(100%, ${singleColumnWidth}px)` : '1fr'
   const gridStyle = {
@@ -1557,7 +1737,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
 
       <div className={styles.body}>
         {/* Collapsed categories strip */}
-        {(collapsedCatIds.size > 0 || unassignedCollapsed) && (
+        {(collapsedCatIds.size > 0 || (showUnassignedBox && unassignedCollapsed)) && (
           <div className={styles.collapsedStrip}>
             {containerCats.filter(c => collapsedCatIds.has(c.id)).map(cat => (
               <button key={cat.id} className={styles.collapsedChip}
@@ -1565,16 +1745,16 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
                 onClick={() => setCollapsedCatIds(prev => { const n = new Set(prev); n.delete(cat.id); return n })}>
                 <span className={styles.collapsedDot} style={{ background: cat.color }} />
                 <span style={{ color: '#444' }}>{cat.name}</span>
-                {cat.dynamic && <span style={{ color: '#888', fontWeight: 700 }}> Filter</span>}
+                {(cat.dynamic || cat.system) && <span style={{ color: '#888', fontWeight: 700 }}> {dynamicDimensionLabel(cat)}</span>}
                 <span style={{ color: '#aaa', fontWeight: 400 }}> {notesForCat(cat.id).length}</span>
               </button>
             ))}
-            {unassignedCollapsed && (
+            {showUnassignedBox && unassignedCollapsed && (
               <button className={styles.collapsedChip}
                 style={{ borderColor: '#ccc' }}
                 onClick={() => setUnassignedCollapsed(false)}>
                 <span className={styles.collapsedDot} style={{ background: '#ccc' }} />
-                <span style={{ color: '#444' }}>Unassigned</span>
+                <span style={{ color: '#444' }}>{unassignedLabel}</span>
                 <span style={{ color: '#aaa', fontWeight: 400 }}> {unassignedNotes.length}</span>
               </button>
             )}
@@ -1588,7 +1768,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
           {containerCats.filter(c => !collapsedCatIds.has(c.id)).map(cat => (
             <ContainerBox key={cat.id} cat={cat} notes={notesForCat(cat.id)}
               onDrop={cat.dynamic ? undefined : noteId => assignNote(noteId, cat.id)}
-              onEdit={() => cat.dynamic ? setEditingFilter(namedFilters.find(f => f.id === cat.filterId)) : setEditCat(cat)}
+              onEdit={cat.dynamicType === 'filter' ? () => setEditingFilter(namedFilters.find(f => f.id === cat.filterId)) : cat.dynamic || cat.system ? undefined : () => setEditCat(cat)}
               onCollapse={() => setCollapsedCatIds(prev => new Set([...prev, cat.id]))}
               paintCat={paintCat} onPaint={paintNote} getNoteColor={getNoteLegendColor}
               onCatDragStart={setCatDragId}
@@ -1599,19 +1779,28 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
               insertSide={getCatInsertSide(cat.id)}
               isDraggingCat={catDragId === cat.id}
               dynamic={cat.dynamic}
+              readOnlyCategory={cat.system}
               onNoteOpen={onNoteOpen}
             />
           ))}
-          {!unassignedCollapsed && (
+          {showUnassignedBox && !unassignedCollapsed && (
             <ContainerBox cat={null} notes={unassignedNotes}
               onDrop={noteId => assignNote(noteId, null)}
               onCollapse={() => setUnassignedCollapsed(true)}
+              unassignedLabel={unassignedLabel}
               onReorderNote={reorderNoteInCategory}
               paintCat={paintCat} onPaint={paintNote} getNoteColor={getNoteLegendColor}
               onNoteOpen={onNoteOpen} />
           )}
-          {containerDimId && containerDimId !== FILTER_DIMENSION_ID && <AddCatBox onAdd={name => createCategory(containerDimId, name, PRESET_COLORS[containerCats.length % PRESET_COLORS.length])} />}
+          {containerDimId && !isLockedContainerStructure && <AddCatBox onAdd={name => createCategory(containerDimId, name, PRESET_COLORS[containerCats.length % PRESET_COLORS.length])} />}
         </div>
+
+        {statusNotice && (
+          <div className={styles.statusNotice}>
+            <span>{statusNotice}</span>
+            <button onClick={() => setStatusNotice('')} aria-label="Close notice">×</button>
+          </div>
+        )}
 
         <div className={styles.floatingViewTools}>
           <PerspectiveMenu

@@ -1003,7 +1003,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     }
   }
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (e) => {
     const dragging = draggingRef.current
     draggingRef.current = null
 

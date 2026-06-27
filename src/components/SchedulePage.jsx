@@ -2594,14 +2594,16 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }, [])
 
   const refreshGanttTransactions = useCallback(async () => {
-    const [mss, deps, history] = await Promise.all([
+    const [mss, deps, history, assigns] = await Promise.all([
       api.getTimeSlots(),
       api.getDependencies(),
       api.getTransactionHistory(),
+      api.getAssignments(),
     ])
     setTimeSlots(mss)
     setDependencies(deps)
     setTransactionHistory(history)
+    applyAssignments(assigns)
   }, [])
 
   const showTransactionFailure = useCallback(err => {

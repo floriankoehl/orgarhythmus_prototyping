@@ -21,6 +21,13 @@ MIN_TIME_SLOT_DURATION = 10
 MINUTE_SCALE_UNIT = 10
 DAY_MINUTES = 60 * 24
 MONTH_MINUTES = DAY_MINUTES * 30
+KANBAN_DIMENSION_PREFIX = "system:kanban:"
+KANBAN_STATES = [
+    ("scheduled", "Scheduled", "#3b82f6"),
+    ("in_progress", "In progress", "#f97316"),
+    ("review", "Review", "#8b5cf6"),
+    ("done", "Done", "#22c55e"),
+]
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_MINUTES = 30
 REFRESH_TOKEN_DAYS = 30
@@ -430,6 +437,11 @@ def _migrate():
             if 'project_id' not in cols:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default'")
 
+        note_cols = [r[1] for r in con.execute("PRAGMA table_info(notes)").fetchall()]
+        if 'created_at' not in note_cols:
+            con.execute("ALTER TABLE notes ADD COLUMN created_at TEXT NOT NULL DEFAULT ''")
+            con.execute("UPDATE notes SET created_at = CURRENT_TIMESTAMP WHERE created_at = ''")
+
         dim_cols = [r[1] for r in con.execute("PRAGMA table_info(dimensions)").fetchall()]
         if 'order_idx' not in dim_cols:
             con.execute("ALTER TABLE dimensions ADD COLUMN order_idx INTEGER NOT NULL DEFAULT 0")
@@ -826,11 +838,46 @@ def _project(row) -> dict:
 def _note(row) -> dict:
     d = dict(row)
     d["collapsed"] = bool(d["collapsed"])
+    if "created_at" in d:
+        d["createdAt"] = d["created_at"]
     return d
+
+def _kanban_dimension_id(project_id: str) -> str:
+    return f"{KANBAN_DIMENSION_PREFIX}{project_id}"
+
+def _kanban_category_id(project_id: str, state: str) -> str:
+    return f"{_kanban_dimension_id(project_id)}:{state}"
+
+def _kanban_state_from_category_id(cat_id: str) -> str | None:
+    prefix = KANBAN_DIMENSION_PREFIX
+    if not cat_id.startswith(prefix):
+        return None
+    suffix = cat_id.removeprefix(prefix)
+    if ":" not in suffix:
+        return None
+    state = suffix.rsplit(":", 1)[1]
+    return state if any(key == state for key, _, _ in KANBAN_STATES) else None
+
+def _is_kanban_dimension_id(dim_id: str) -> bool:
+    return dim_id.startswith(KANBAN_DIMENSION_PREFIX)
+
+def _is_kanban_category_id(cat_id: str) -> bool:
+    return _kanban_state_from_category_id(cat_id) is not None
+
+def _dimension(row) -> dict:
+    d = dict(row)
+    out = {"id": d["id"], "name": d["name"], "project_id": d["project_id"], "order_idx": d["order_idx"]}
+    if _is_kanban_dimension_id(d["id"]):
+        out.update({"system": True, "systemType": "kanban", "readOnly": True})
+    return out
 
 def _cat(row) -> dict:
     d = dict(row)
-    return {"id": d["id"], "dimensionId": d["dimension_id"], "name": d["name"], "color": d["color"]}
+    out = {"id": d["id"], "dimensionId": d["dimension_id"], "name": d["name"], "color": d["color"]}
+    state = _kanban_state_from_category_id(d["id"])
+    if state:
+        out.update({"system": True, "systemType": "kanban", "kanbanState": state})
+    return out
 
 def _persona(row) -> dict:
     d = dict(row)
@@ -960,6 +1007,39 @@ def _project_id_for_time_slot(con, ms_id: str) -> str:
     if not row:
         raise HTTPException(404, "Time slot not found")
     return row["project_id"]
+
+def _ensure_kanban_dimension(con, project_id: str):
+    dim_id = _kanban_dimension_id(project_id)
+    next_order = con.execute(
+        "SELECT COALESCE(MAX(order_idx), -1) + 1 FROM dimensions WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()[0]
+    con.execute(
+        "INSERT OR IGNORE INTO dimensions (id, name, project_id, order_idx) VALUES (?, ?, ?, ?)",
+        (dim_id, "Kanban", project_id, next_order),
+    )
+    con.execute("UPDATE dimensions SET name = ?, project_id = ? WHERE id = ?", ("Kanban", project_id, dim_id))
+
+    for idx, (state, name, color) in enumerate(KANBAN_STATES):
+        cat_id = _kanban_category_id(project_id, state)
+        con.execute(
+            "INSERT OR IGNORE INTO categories (id, dimension_id, name, color, order_idx) VALUES (?, ?, ?, ?, ?)",
+            (cat_id, dim_id, name, color, idx),
+        )
+        con.execute(
+            "UPDATE categories SET dimension_id = ?, name = ?, color = ?, order_idx = ? WHERE id = ?",
+            (dim_id, name, color, idx, cat_id),
+        )
+
+def _unassign_scheduled_if_unslotted(con, note_id: str, project_id: str | None = None):
+    if project_id is None:
+        project_id = _project_id_for_note(con, note_id)
+    if con.execute("SELECT 1 FROM time_slots WHERE note_id = ? LIMIT 1", (note_id,)).fetchone():
+        return
+    con.execute(
+        "DELETE FROM assignments WHERE note_id = ? AND dimension_id = ? AND category_id = ?",
+        (note_id, _kanban_dimension_id(project_id), _kanban_category_id(project_id, "scheduled")),
+    )
 
 def _project_id_for_dependency(con, dep_id: str) -> str:
     row = con.execute(
@@ -1508,12 +1588,17 @@ def _apply_transaction_rows(con, before: dict, after: dict):
     after_ms = {m["id"]: m for m in after["time_slots"]}
     before_deps = {d["id"]: d for d in before["dependencies"]}
     after_deps = {d["id"]: d for d in after["dependencies"]}
+    deleted_slot_notes: list[tuple[str, str]] = []
 
     for dep_id in before_deps.keys() - after_deps.keys():
         con.execute("DELETE FROM dependencies WHERE id = ?", (dep_id,))
     for ms_id in before_ms.keys() - after_ms.keys():
+        deleted_time_slot = before_ms[ms_id]
+        row = con.execute("SELECT project_id FROM notes WHERE id = ?", (deleted_time_slot["noteId"],)).fetchone()
         con.execute("DELETE FROM dependencies WHERE from_id = ? OR to_id = ?", (ms_id, ms_id))
         con.execute("DELETE FROM time_slots WHERE id = ?", (ms_id,))
+        if row:
+            deleted_slot_notes.append((deleted_time_slot["noteId"], row["project_id"]))
     for m in after_ms.values():
         if m["id"] in before_ms:
             con.execute(
@@ -1536,6 +1621,8 @@ def _apply_transaction_rows(con, before: dict, after: dict):
                 "INSERT INTO dependencies (id, from_id, to_id, reason) VALUES (?, ?, ?, ?)",
                 (d["id"], d["fromId"], d["toId"], d["reason"]),
             )
+    for note_id, project_id in deleted_slot_notes:
+        _unassign_scheduled_if_unslotted(con, note_id, project_id)
 
 def _assert_transaction_project_scope(con, project_id: str, before: dict, after: dict):
     for time_slot in before["time_slots"] + after["time_slots"]:
@@ -2018,7 +2105,8 @@ def create_note(data: NoteIn, project_id: str = Query(default='default'), user: 
             "INSERT INTO notes (id, project_id, html, title, collapsed, order_idx) VALUES (?, ?, ?, ?, ?, ?)",
             (pid, project_id, data.html, data.title, int(data.collapsed), max_ord + 1),
         )
-    return {"id": pid, "html": data.html, "title": data.title, "collapsed": data.collapsed}
+        row = con.execute("SELECT * FROM notes WHERE id = ?", (pid,)).fetchone()
+    return _note(row)
 
 @app.patch("/notes/{note_id}")
 def update_note(note_id: str, data: NotePatch, user: dict = Depends(current_user)):
@@ -2271,10 +2359,11 @@ def remove_note_inheritance(child_note_id: str, parent_note_id: Optional[str] = 
 def list_dimensions(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     with _db() as con:
+        _ensure_kanban_dimension(con, project_id)
         rows = con.execute(
             "SELECT * FROM dimensions WHERE project_id = ? ORDER BY order_idx, rowid", (project_id,)
         ).fetchall()
-    return [dict(r) for r in rows]
+    return [_dimension(r) for r in rows]
 
 @app.post("/dimensions", status_code=201)
 def create_dimension(data: DimensionIn, project_id: str = Query(default='default'), user: dict = Depends(current_user)):
@@ -2295,6 +2384,8 @@ def reorder_dimensions(data: dict, project_id: str = Query(default='default'), u
     ids = data.get("ids", [])
     with _db() as con:
         for i, dim_id in enumerate(ids):
+            if _is_kanban_dimension_id(dim_id):
+                continue
             con.execute(
                 "UPDATE dimensions SET order_idx = ? WHERE id = ? AND project_id = ?",
                 (i, dim_id, project_id)
@@ -2305,6 +2396,8 @@ def reorder_dimensions(data: dict, project_id: str = Query(default='default'), u
 def update_dimension(dim_id: str, data: DimensionPatch, user: dict = Depends(current_user)):
     with _db() as con:
         assert_project_access(_project_id_for_dimension(con, dim_id), user)
+        if _is_kanban_dimension_id(dim_id):
+            raise HTTPException(400, "Kanban is a system dimension and cannot be renamed")
         fields, values = [], []
         if data.name is not None:
             fields.append("name = ?")
@@ -2312,12 +2405,14 @@ def update_dimension(dim_id: str, data: DimensionPatch, user: dict = Depends(cur
         if fields:
             con.execute(f"UPDATE dimensions SET {', '.join(fields)} WHERE id = ?", (*values, dim_id))
         row = con.execute("SELECT * FROM dimensions WHERE id = ?", (dim_id,)).fetchone()
-    return dict(row)
+    return _dimension(row)
 
 @app.delete("/dimensions/{dim_id}", status_code=204)
 def delete_dimension(dim_id: str, user: dict = Depends(current_user)):
     with _db() as con:
         assert_project_access(_project_id_for_dimension(con, dim_id), user)
+        if _is_kanban_dimension_id(dim_id):
+            raise HTTPException(400, "Kanban is a system dimension and cannot be deleted")
         con.execute("DELETE FROM assignments WHERE dimension_id = ?", (dim_id,))
         con.execute("DELETE FROM persona_assignments WHERE dimension_id = ?", (dim_id,))
         con.execute("DELETE FROM categories WHERE dimension_id = ?", (dim_id,))
@@ -2329,6 +2424,7 @@ def delete_dimension(dim_id: str, user: dict = Depends(current_user)):
 def list_all_categories(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     with _db() as con:
+        _ensure_kanban_dimension(con, project_id)
         rows = con.execute(
             """SELECT * FROM categories
             WHERE dimension_id IN (SELECT id FROM dimensions WHERE project_id = ?)
@@ -2344,6 +2440,8 @@ def create_category(dim_id: str, data: CategoryIn, user: dict = Depends(current_
     cid = data.id or str(uuid.uuid4())
     with _db() as con:
         assert_project_access(_project_id_for_dimension(con, dim_id), user)
+        if _is_kanban_dimension_id(dim_id):
+            raise HTTPException(400, "Kanban categories are system-owned")
         max_ord = con.execute(
             "SELECT COALESCE(MAX(order_idx), -1) FROM categories WHERE dimension_id = ?", (dim_id,)
         ).fetchone()[0]
@@ -2360,6 +2458,8 @@ def reorder_categories(data: dict, user: dict = Depends(current_user)):
     with _db() as con:
         project_ids = set()
         for i, cid in enumerate(ids):
+            if _is_kanban_category_id(cid):
+                continue
             project_id = _project_id_for_category(con, cid)
             project_ids.add(project_id)
             assert_project_access(project_id, user)
@@ -2372,6 +2472,8 @@ def reorder_categories(data: dict, user: dict = Depends(current_user)):
 def update_category(cat_id: str, data: CategoryPatch, user: dict = Depends(current_user)):
     with _db() as con:
         assert_project_access(_project_id_for_category(con, cat_id), user)
+        if _is_kanban_category_id(cat_id):
+            raise HTTPException(400, "Kanban categories are system-owned")
         fields, values = [], []
         if data.name is not None:  fields.append("name = ?");  values.append(data.name.strip())
         if data.color is not None: fields.append("color = ?"); values.append(data.color)
@@ -2384,6 +2486,8 @@ def update_category(cat_id: str, data: CategoryPatch, user: dict = Depends(curre
 def delete_category(cat_id: str, user: dict = Depends(current_user)):
     with _db() as con:
         assert_project_access(_project_id_for_category(con, cat_id), user)
+        if _is_kanban_category_id(cat_id):
+            raise HTTPException(400, "Kanban categories are system-owned")
         con.execute("DELETE FROM assignments WHERE category_id = ?", (cat_id,))
         con.execute("DELETE FROM persona_assignments WHERE category_id = ?", (cat_id,))
         con.execute("DELETE FROM category_leaders WHERE category_id = ?", (cat_id,))
@@ -2722,6 +2826,19 @@ def assign_category(note_id: str, dim_id: str, data: AssignIn, user: dict = Depe
         if len({note_project_id, dim_project_id, cat_project_id}) != 1:
             raise HTTPException(400, "Assignment resources must belong to the same project")
         assert_project_access(note_project_id, user)
+        cat_row = con.execute("SELECT dimension_id FROM categories WHERE id = ?", (data.categoryId,)).fetchone()
+        if not cat_row or cat_row["dimension_id"] != dim_id:
+            raise HTTPException(400, "Category does not belong to dimension")
+        if dim_id == _kanban_dimension_id(note_project_id) and data.categoryId == _kanban_category_id(note_project_id, "scheduled"):
+            if not con.execute("SELECT 1 FROM time_slots WHERE note_id = ? LIMIT 1", (note_id,)).fetchone():
+                raise HTTPException(
+                    422,
+                    {
+                        "message": "A note needs a time slot before it can be moved to Scheduled",
+                        "type": "kanban_scheduled_requires_time_slot",
+                        "noteId": note_id,
+                    },
+                )
         existing = con.execute(
             "SELECT category_id, order_idx FROM assignments WHERE note_id = ? AND dimension_id = ?",
             (note_id, dim_id),
@@ -3102,9 +3219,16 @@ def update_time_slot(time_slot_id: str, data: TimeSlotPatch, user: dict = Depend
 @app.delete("/time-slots/{time_slot_id}", status_code=204)
 def delete_time_slot(time_slot_id: str, user: dict = Depends(current_user)):
     with _db() as con:
-        assert_project_access(_project_id_for_time_slot(con, time_slot_id), user)
+        row = con.execute(
+            "SELECT m.note_id, n.project_id FROM time_slots m JOIN notes n ON n.id = m.note_id WHERE m.id = ?",
+            (time_slot_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Time slot not found")
+        assert_project_access(row["project_id"], user)
         con.execute("DELETE FROM persona_time_slot_assignments WHERE time_slot_id = ?", (time_slot_id,))
         con.execute("DELETE FROM time_slots WHERE id = ?", (time_slot_id,))
+        _unassign_scheduled_if_unslotted(con, row["note_id"], row["project_id"])
 
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
