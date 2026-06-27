@@ -624,9 +624,10 @@ function CategoryEditModal({ cat, onClose, onSave, onDelete }) {
 }
 
 // ── Note row inside a container ───────────────────────────────────────────────
-function NoteRow({ note, paintCat, onPaint, legendColor, onNoteDrop, onOpen, canDrag = true }) {
+function NoteRow({ note, paintCat, onPaint, legendColor, onNoteDrop, onOpen, canDrag = true, forceExpanded = false }) {
   const [expanded, setExpanded] = useState(false)
   const [dragging, setDragging] = useState(false)
+  const showContent = Boolean(note.html && (expanded || forceExpanded))
 
   return (
     <div
@@ -673,8 +674,11 @@ function NoteRow({ note, paintCat, onPaint, legendColor, onNoteDrop, onOpen, can
         </button>
         <span className={styles.rowTitle}>{note.title}</span>
       </div>
-      {expanded && !paintCat && note.html && (
+      {showContent && (
         <div className={styles.noteContent} dangerouslySetInnerHTML={{ __html: note.html }} />
+      )}
+      {!showContent && note.html && (
+        <div className={styles.noteHoverContent} dangerouslySetInnerHTML={{ __html: note.html }} />
       )}
     </div>
   )
@@ -683,8 +687,9 @@ function NoteRow({ note, paintCat, onPaint, legendColor, onNoteDrop, onOpen, can
 // ── Category container box ────────────────────────────────────────────────────
 function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onEdit, onCollapse,
   onCatDragStart, onCatDragEnd, onCatDragOver, onCatDrop, onReorderNote, insertSide, isDraggingCat, onNoteOpen,
-  dynamic = false, readOnlyCategory = false, unassignedLabel = 'Unassigned' }) {
+  onBulkPaint, dynamic = false, readOnlyCategory = false, unassignedLabel = 'Unassigned' }) {
   const [isDragOver, setIsDragOver] = useState(false)
+  const [allExpanded, setAllExpanded] = useState(false)
   const dragCounter = useRef(0)
   const boxRef = useRef()
 
@@ -762,7 +767,15 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onE
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
-      <div className={styles.catBoxHeader} style={{ borderTopColor: cat?.color ?? '#e0e0e0' }}>
+      <div
+        className={`${styles.catBoxHeader} ${paintCat && notes.length ? styles.catBoxHeaderPaintable : ''}`}
+        style={{ borderTopColor: cat?.color ?? '#e0e0e0' }}
+        onClick={paintCat && notes.length ? e => {
+          e.stopPropagation()
+          onBulkPaint?.(cat, notes)
+        } : undefined}
+        title={paintCat && notes.length ? 'Assign all notes in this category' : undefined}
+      >
         {cat && !dynamic && !readOnlyCategory && (
           <div className={styles.dragHandle}
             draggable
@@ -798,14 +811,24 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onE
           <span className={styles.catBoxCount}> {notes.length}</span>
         </span>
         {cat && onEdit && !readOnlyCategory && (
-          <button className={styles.catEditBtn} onClick={onEdit} title="Edit category">
+          <button className={styles.catEditBtn} onClick={e => { e.stopPropagation(); onEdit() }} title="Edit category">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
               <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
             </svg>
           </button>
         )}
+        {notes.some(note => note.html) && (
+          <button
+            className={styles.catExpandBtn}
+            onClick={e => { e.stopPropagation(); setAllExpanded(v => !v) }}
+            title={allExpanded ? 'Fold note descriptions' : 'Unfold all note descriptions'}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+              <path d={allExpanded ? 'M7 14l5-5 5 5H7z' : 'M7 10l5 5 5-5H7z'} />
+            </svg>
+          </button>
+        )}
         {onCollapse && (
-          <button className={styles.catCollapseBtn} onClick={onCollapse} title="Collapse">
+          <button className={styles.catCollapseBtn} onClick={e => { e.stopPropagation(); onCollapse() }} title="Collapse">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
               <path d="M19 13H5v-2h14v2z"/>
             </svg>
@@ -818,6 +841,7 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onE
           : notes.map(g => <NoteRow key={g.id} note={g} paintCat={paintCat} onPaint={onPaint} legendColor={getNoteColor?.(g.id)}
               onNoteDrop={handleNoteDrop}
               canDrag={!dynamic}
+              forceExpanded={allExpanded}
               onOpen={onNoteOpen} />)
         }
       </div>
@@ -1202,6 +1226,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const [maxGridCols, setMaxGridCols] = useState(6)
   const [singleColumnWidth, setSingleColumnWidth] = useState(480)
   const [paintCat, setPaintCat]             = useState(null)
+  const [bulkPaintConfirm, setBulkPaintConfirm] = useState(null)
   const [editCat, setEditCat]               = useState(null)
   const [confirmDeleteDimId, setConfirmDeleteDimId] = useState(null)
   const [catDragId, setCatDragId]         = useState(null)
@@ -1443,6 +1468,44 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
 
   const activatePaint = (catId, color) => {
     setPaintCat(prev => prev?.id === catId ? null : { id: catId, color })
+  }
+
+  const requestBulkPaint = (sourceCat, sourceNotes) => {
+    if (!paintCat || !legendDimId || isDynamicDimensionId(legendDimId) || !sourceNotes.length) return
+    const sourceName = sourceCat?.name ?? unassignedLabel
+    setBulkPaintConfirm({
+      sourceName,
+      noteIds: sourceNotes.map(note => note.id),
+    })
+  }
+
+  const confirmBulkPaint = async () => {
+    if (!bulkPaintConfirm || !paintCat || !legendDimId || isDynamicDimensionId(legendDimId)) return
+    const legendDim = dynamicDimensions.find(d => d.id === legendDimId)
+    const targetCat = dynamicCategories.find(c => c.id === paintCat.id)
+    const noteIds = bulkPaintConfirm.noteIds
+    if (isKanbanDimension(legendDim) && targetCat?.kanbanState === 'scheduled') {
+      const blocked = noteIds.filter(noteId => !timeSlotNoteIds.has(noteId))
+      if (blocked.length) {
+        setStatusNotice(`${blocked.length} note${blocked.length === 1 ? '' : 's'} need a time slot before they can be moved to Scheduled.`)
+        setBulkPaintConfirm(null)
+        return
+      }
+    }
+    try {
+      await Promise.all(noteIds.map(noteId => api.assign(noteId, legendDimId, paintCat.id)))
+      setAssignments(prev => {
+        const next = { ...prev }
+        noteIds.forEach(noteId => {
+          next[noteId] = { ...(next[noteId] ?? {}), [legendDimId]: paintCat.id }
+        })
+        return next
+      })
+      setBulkPaintConfirm(null)
+    } catch (e) {
+      setStatusNotice(e.message || 'The notes could not be assigned.')
+      console.error(e)
+    }
   }
 
   const saveNamedFilter = async filter => {
@@ -1778,6 +1841,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
               onReorderNote={reorderNoteInCategory}
               insertSide={getCatInsertSide(cat.id)}
               isDraggingCat={catDragId === cat.id}
+              onBulkPaint={requestBulkPaint}
               dynamic={cat.dynamic}
               readOnlyCategory={cat.system}
               onNoteOpen={onNoteOpen}
@@ -1790,6 +1854,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
               unassignedLabel={unassignedLabel}
               onReorderNote={reorderNoteInCategory}
               paintCat={paintCat} onPaint={paintNote} getNoteColor={getNoteLegendColor}
+              onBulkPaint={requestBulkPaint}
               onNoteOpen={onNoteOpen} />
           )}
           {containerDimId && !isLockedContainerStructure && <AddCatBox onAdd={name => createCategory(containerDimId, name, PRESET_COLORS[containerCats.length % PRESET_COLORS.length])} />}
@@ -1880,6 +1945,24 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
           onDelete={deleteNamedFilter}
           onClose={() => setEditingFilter(null)}
         />
+      )}
+
+      {bulkPaintConfirm && createPortal(
+        <div className={styles.modalBackdrop} onClick={() => setBulkPaintConfirm(null)}>
+          <div className={styles.modal} onClick={e => e.stopPropagation()}>
+            <p className={styles.confirmText}>
+              Assign <strong>{bulkPaintConfirm.noteIds.length}</strong> note{bulkPaintConfirm.noteIds.length === 1 ? '' : 's'} from
+              {' '}<strong>"{bulkPaintConfirm.sourceName}"</strong> to this category?
+            </p>
+            <div className={styles.modalActions}>
+              <button className={styles.submitBtn} onClick={confirmBulkPaint}>
+                Assign notes
+              </button>
+              <button className={styles.cancelBtn} onClick={() => setBulkPaintConfirm(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   )

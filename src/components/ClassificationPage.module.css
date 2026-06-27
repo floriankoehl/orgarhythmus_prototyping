@@ -657,6 +657,10 @@
   border-bottom: 1px solid #f0f0f0;
 }
 
+.catBoxHeaderPaintable:hover {
+  background: rgba(26,115,232,0.06);
+}
+
 .catBoxName {
   font-size: 12px; font-weight: 700; color: #444;
   font-family: Arial, sans-serif; flex: 1;
@@ -688,7 +692,8 @@
 }
 
 .catEditBtn,
-.catCollapseBtn {
+.catCollapseBtn,
+.catExpandBtn {
   flex-shrink: 0; background: none; border: none;
   color: #ccc; cursor: pointer;
   padding: 3px; border-radius: 3px; line-height: 0;
@@ -696,8 +701,10 @@
   display: flex; align-items: center;
 }
 .catBoxHeader:hover .catEditBtn,
-.catBoxHeader:hover .catCollapseBtn { opacity: 1; }
+.catBoxHeader:hover .catCollapseBtn,
+.catBoxHeader:hover .catExpandBtn { opacity: 1; }
 .catEditBtn:hover { color: #1a73e8; background: #e8f0fe; }
+.catExpandBtn:hover { color: #1a73e8; background: #e8f0fe; }
 .catCollapseBtn:hover { color: #555; background: #f0f0f0; }
 
 .catBoxBody { flex: 1; overflow-y: auto; min-height: 0; }
@@ -984,6 +991,20 @@
   border-top: 1px solid #f4f4f4; word-wrap: break-word;
 }
 .noteContent > * { margin: 4px 0 0; }
+
+.noteHoverContent {
+  display: none;
+  padding: 4px 12px 12px 26px;
+  font-size: 11pt;
+  font-family: Arial, sans-serif;
+  line-height: 1.5;
+  color: #555;
+  background: #fffdf7;
+  border-top: 1px solid #f4ead0;
+  word-wrap: break-word;
+}
+.noteHoverContent > * { margin: 4px 0 0; }
+.noteRow:hover .noteHoverContent { display: block; }
 
 /* ── Add category box (grid item) ────────────────────────── */
 .addCatBox {
