@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 DB_PATH = "notes.db"
 LEGACY_DB_PATH = "goals.db"
 MIN_MILESTONE_DURATION = 10
+MINUTE_SCALE_UNIT = 15
 DAY_MINUTES = 60 * 24
 MONTH_MINUTES = DAY_MINUTES * 30
 JWT_ALGORITHM = "HS256"
@@ -180,7 +181,8 @@ def _init_db():
             CREATE TABLE IF NOT EXISTS deadlines (
                 id      TEXT PRIMARY KEY,
                 note_id TEXT NOT NULL UNIQUE,
-                col     INTEGER NOT NULL
+                col     INTEGER NOT NULL,
+                scale   TEXT NOT NULL DEFAULT 'day'
             )
         """)
         con.execute("""
@@ -283,6 +285,21 @@ def _migrate():
             cols = [r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()]
             if "goal_id" in cols and "note_id" not in cols:
                 con.execute(f"ALTER TABLE {table} RENAME COLUMN goal_id TO note_id")
+
+        deadline_cols = [r[1] for r in con.execute("PRAGMA table_info(deadlines)").fetchall()]
+        if "scale" not in deadline_cols:
+            con.execute("ALTER TABLE deadlines ADD COLUMN scale TEXT NOT NULL DEFAULT 'day'")
+            con.execute(
+                """
+                UPDATE deadlines
+                SET scale = CASE
+                    WHEN col % ? = 0 THEN 'month'
+                    WHEN col % ? = 0 THEN 'day'
+                    ELSE 'minute'
+                END
+                """,
+                (MONTH_MINUTES, DAY_MINUTES),
+            )
 
         for table, cols in {
             "schedule_perspectives": ("state_json",),
@@ -639,6 +656,7 @@ class DependencyPatchIn(BaseModel):
 
 class DeadlineColIn(BaseModel):
     col: int
+    scale: Optional[str] = None
 
 class SavedFilterIn(BaseModel):
     id: Optional[str] = None
@@ -751,7 +769,7 @@ def _dep(row) -> dict:
 
 def _dl(row) -> dict:
     d = dict(row)
-    return {"id": d["id"], "noteId": d["note_id"], "col": d["col"]}
+    return {"id": d["id"], "noteId": d["note_id"], "col": d["col"], "scale": _normalize_planning_scale(d.get("scale"), d["col"])}
 
 def _filter(row) -> dict:
     d = dict(row)
@@ -896,13 +914,155 @@ def _planning_scale_for_duration(duration) -> str:
         return "day"
     return "minute"
 
+def _timeline_start_date() -> datetime:
+    return datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+def _add_calendar_months(date: datetime, months: int) -> datetime:
+    year = date.year + (date.month - 1 + months) // 12
+    month = (date.month - 1 + months) % 12 + 1
+    if month == 12:
+        next_month = datetime(year + 1, 1, 1)
+    else:
+        next_month = datetime(year, month + 1, 1)
+    last_day = (next_month - timedelta(days=1)).day
+    return date.replace(year=year, month=month, day=min(date.day, last_day))
+
+def _calendar_month_boundary_minute(col: int) -> int:
+    today = _timeline_start_date()
+    year = today.year + (today.month - 1 + col) // 12
+    month = (today.month - 1 + col) % 12 + 1
+    target = datetime(year, month, 1)
+    return round((target - today).total_seconds() / 60)
+
+def _calendar_month_col_for_minute(minute: int, mode: str = "floor") -> int:
+    value = max(0, int(minute or 0))
+    col = max(0, value // MONTH_MINUTES)
+    while _calendar_month_boundary_minute(col + 1) <= value:
+        col += 1
+    while col > 0 and _calendar_month_boundary_minute(col) > value:
+        col -= 1
+    if mode == "ceil" and _calendar_month_boundary_minute(col) < value:
+        col += 1
+    return col
+
+def _is_calendar_month_boundary(minute: int) -> bool:
+    value = max(0, int(minute or 0))
+    return _calendar_month_boundary_minute(_calendar_month_col_for_minute(value)) == value
+
+def _is_calendar_month_range(start_col: int, duration: int) -> bool:
+    start = max(0, int(start_col or 0))
+    end = start + max(0, int(duration or 0))
+    return end > start and _is_calendar_month_boundary(start) and _is_calendar_month_boundary(end)
+
+def _planning_scale_for_milestone(milestone: dict) -> str:
+    if _is_calendar_month_range(milestone.get("startCol", 0), milestone.get("duration", 0)):
+        return "month"
+    return _planning_scale_for_duration(milestone.get("duration", MIN_MILESTONE_DURATION))
+
+def _normalize_planning_scale(scale: str | None, col: int | None = None) -> str:
+    if scale in ("minutes", "minute"):
+        return "minute"
+    if scale in ("days", "day"):
+        return "day"
+    if scale in ("months", "month"):
+        return "month"
+    value = int(col or 0)
+    if _is_calendar_month_boundary(value):
+        return "month"
+    if value % DAY_MINUTES == 0:
+        return "day"
+    return "minute"
+
+def _planning_scale_unit_minutes(scale: str) -> int:
+    if scale == "month":
+        return 1
+    if scale == "day":
+        return DAY_MINUTES
+    return 1
+
+def _deadline_scale_unit_minutes(scale: str) -> int:
+    if scale == "month":
+        return 1
+    if scale == "day":
+        return DAY_MINUTES
+    return MINUTE_SCALE_UNIT
+
+def _assert_scale_aligned_col(col: int, scale: str, kind: str = "Milestone"):
+    if scale == "month":
+        if not _is_calendar_month_boundary(col):
+            raise HTTPException(422, {
+                "message": f"{kind} can only be placed on calendar month boundaries",
+                "type": f"{kind.lower()}_scale_alignment",
+                "scale": scale,
+                "unitMinutes": MONTH_MINUTES,
+            })
+        return
+    unit = _deadline_scale_unit_minutes(scale) if kind.lower() == "deadline" else _planning_scale_unit_minutes(scale)
+    if int(col) % unit != 0:
+        raise HTTPException(422, {
+            "message": f"{kind} can only be placed on its own planning scale",
+            "type": f"{kind.lower()}_scale_alignment",
+            "scale": scale,
+            "unitMinutes": unit,
+        })
+
+def _schedule_fields_changed(before: dict, after: dict) -> bool:
+    return (
+        int(before.get("startCol", 0)) != int(after.get("startCol", 0))
+        or int(before.get("duration", MIN_MILESTONE_DURATION)) != int(after.get("duration", MIN_MILESTONE_DURATION))
+    )
+
+def _assert_milestone_scale_edit_allowed(before: dict | None, after: dict):
+    after_scale = _planning_scale_for_milestone(after)
+    if before is not None:
+        before_scale = _planning_scale_for_milestone(before)
+        if before_scale != after_scale:
+            raise HTTPException(422, {
+                "message": "Milestone planning scale cannot be changed by moving or resizing",
+                "type": "milestone_scale_mismatch",
+                "milestoneIds": [after["id"]],
+                "fromScale": before_scale,
+                "toScale": after_scale,
+            })
+
+    if after_scale == "month":
+        return
+
+    unit = _planning_scale_unit_minutes(after_scale)
+    if int(after["startCol"]) % unit != 0 or int(after["duration"]) % unit != 0:
+        raise HTTPException(422, {
+            "message": "Milestone can only be moved or resized on its own planning scale",
+            "type": "milestone_scale_alignment",
+            "milestoneIds": [after["id"]],
+            "scale": after_scale,
+            "unitMinutes": unit,
+        })
+
+def _assert_note_milestone_scales_match(milestones: list[dict], note_ids: set[str] | None = None):
+    scales_by_note: dict[str, dict[str, str]] = {}
+    for milestone in milestones:
+        note_id = milestone["noteId"]
+        if note_ids is not None and note_id not in note_ids:
+            continue
+        scale = _planning_scale_for_milestone(milestone)
+        scales_by_note.setdefault(note_id, {})[scale] = milestone["id"]
+    for note_id, scale_ids in scales_by_note.items():
+        if len(scale_ids) > 1:
+            raise HTTPException(422, {
+                "message": "A note row can only contain milestones on one planning scale",
+                "type": "note_scale_mismatch",
+                "noteId": note_id,
+                "scales": sorted(scale_ids.keys()),
+                "milestoneIds": list(scale_ids.values()),
+            })
+
 def _dependency_scale_mismatch(dep: dict, milestones: dict[str, dict]) -> dict | None:
     from_ms = milestones.get(dep["fromId"])
     to_ms = milestones.get(dep["toId"])
     if not from_ms or not to_ms:
         return None
-    from_scale = _planning_scale_for_duration(from_ms["duration"])
-    to_scale = _planning_scale_for_duration(to_ms["duration"])
+    from_scale = _planning_scale_for_milestone(from_ms)
+    to_scale = _planning_scale_for_milestone(to_ms)
     if from_scale == to_scale:
         return None
     return {
@@ -1027,6 +1187,18 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
         if milestone["duration"] < MIN_MILESTONE_DURATION:
             raise HTTPException(422, {"message": f"Milestones must be at least {MIN_MILESTONE_DURATION} minutes long", "id": milestone["id"]})
 
+    for milestone in after["milestones"]:
+        before_milestone = current_ms.get(milestone["id"])
+        if before_milestone is None or _schedule_fields_changed(before_milestone, milestone):
+            _assert_milestone_scale_edit_allowed(before_milestone, milestone)
+
+    touched_note_ids = {
+        milestone["noteId"]
+        for milestone in before["milestones"] + after["milestones"]
+        if milestone.get("noteId")
+    }
+    _assert_note_milestone_scales_match(list(final_ms.values()), touched_note_ids)
+
     by_note = {}
     for milestone in final_ms.values():
         by_note.setdefault(milestone["noteId"], []).append(milestone)
@@ -1069,10 +1241,10 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
                 })
 
     deadlines = {
-        row["note_id"]: row["col"]
+        row["note_id"]: {"col": row["col"], "scale": _normalize_planning_scale(row["scale"], row["col"])}
         for row in con.execute(
             """
-            SELECT d.note_id, d.col FROM deadlines d
+            SELECT d.note_id, d.col, d.scale FROM deadlines d
             JOIN notes n ON n.id = d.note_id
             WHERE n.project_id = ?
             """,
@@ -1081,7 +1253,11 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
     }
     for milestone in final_ms.values():
         deadline = deadlines.get(milestone["noteId"])
-        if deadline is not None and milestone["startCol"] + milestone["duration"] > deadline:
+        if (
+            deadline is not None
+            and _planning_scale_for_milestone(milestone) == deadline["scale"]
+            and milestone["startCol"] + milestone["duration"] > deadline["col"]
+        ):
             raise HTTPException(422, {"message": "Milestone exceeds hard deadline", "type": "deadline", "id": milestone["id"]})
 
     pairs = set()
@@ -1306,8 +1482,8 @@ def _dependency_violations_for_project(con, project_id: str) -> list[dict]:
         from_end = int(row["from_start"]) + int(row["from_duration"])
         to_start = int(row["to_start"])
         to_end = int(row["to_start"]) + int(row["to_duration"])
-        from_scale = _planning_scale_for_duration(row["from_duration"])
-        to_scale = _planning_scale_for_duration(row["to_duration"])
+        from_scale = _planning_scale_for_milestone({"startCol": row["from_start"], "duration": row["from_duration"]})
+        to_scale = _planning_scale_for_milestone({"startCol": row["to_start"], "duration": row["to_duration"]})
         base = {
             "dependencyId": row["dep_id"],
             "reason": row["reason"] or "",
@@ -2453,14 +2629,24 @@ def list_milestones(project_id: str = Query(default='default'), user: dict = Dep
 def create_milestone(data: MilestoneIn, user: dict = Depends(current_user)):
     mid = data.id or str(uuid.uuid4())
     duration = _milestone_duration_value(data.duration)
+    milestone = {
+        "id": mid,
+        "noteId": data.noteId,
+        "startCol": data.startCol,
+        "duration": duration,
+        "title": data.title,
+        "color": data.color,
+    }
+    _assert_milestone_scale_edit_allowed(None, milestone)
     with _db() as con:
         assert_project_access(_project_id_for_note(con, data.noteId), user)
+        existing = [_ms(row) for row in con.execute("SELECT * FROM milestones WHERE note_id = ?", (data.noteId,)).fetchall()]
+        _assert_note_milestone_scales_match(existing + [milestone], {data.noteId})
         con.execute(
             "INSERT INTO milestones (id, note_id, start_col, duration, title, color) VALUES (?,?,?,?,?,?)",
             (mid, data.noteId, data.startCol, duration, data.title, data.color),
         )
-    return _ms({"id": mid, "note_id": data.noteId, "start_col": data.startCol,
-                "duration": duration, "title": data.title, "color": data.color})
+    return milestone
 
 # Registered before /{ms_id} so "batch" is not captured as a path param
 @app.put("/milestones/batch")
@@ -2471,11 +2657,29 @@ def batch_update_milestones(data: MilestoneBatch, user: dict = Depends(current_u
             if not mid:
                 continue
             assert_project_access(_project_id_for_milestone(con, mid), user)
+            row = con.execute("SELECT * FROM milestones WHERE id = ?", (mid,)).fetchone()
+            before = _ms(row)
+            after = {**before}
             fields, values = [], []
-            if "startCol" in u: fields.append("start_col = ?"); values.append(u["startCol"])
-            if "duration" in u: fields.append("duration = ?");  values.append(_milestone_duration_value(u["duration"]))
+            if "startCol" in u:
+                after["startCol"] = int(u["startCol"])
+                fields.append("start_col = ?"); values.append(after["startCol"])
+            if "duration" in u:
+                after["duration"] = _milestone_duration_value(u["duration"])
+                fields.append("duration = ?");  values.append(after["duration"])
             if "color"    in u: fields.append("color = ?");     values.append(u["color"])
             if "title"    in u: fields.append("title = ?");     values.append(u["title"])
+            if _schedule_fields_changed(before, after):
+                _assert_milestone_scale_edit_allowed(before, after)
+            if before["noteId"] != after["noteId"] or _schedule_fields_changed(before, after):
+                existing = [
+                    _ms(row)
+                    for row in con.execute(
+                        "SELECT * FROM milestones WHERE note_id IN (?, ?) AND id != ?",
+                        (before["noteId"], after["noteId"], mid),
+                    ).fetchall()
+                ]
+                _assert_note_milestone_scales_match(existing + [after], {after["noteId"]})
             if fields:
                 con.execute(f"UPDATE milestones SET {', '.join(fields)} WHERE id = ?", (*values, mid))
     return {"ok": True}
@@ -2484,11 +2688,29 @@ def batch_update_milestones(data: MilestoneBatch, user: dict = Depends(current_u
 def update_milestone(ms_id: str, data: MilestonePatch, user: dict = Depends(current_user)):
     with _db() as con:
         assert_project_access(_project_id_for_milestone(con, ms_id), user)
+        row = con.execute("SELECT * FROM milestones WHERE id = ?", (ms_id,)).fetchone()
+        before = _ms(row)
+        after = {**before}
         fields, values = [], []
-        if data.startCol is not None: fields.append("start_col = ?"); values.append(data.startCol)
-        if data.duration  is not None: fields.append("duration = ?");  values.append(_milestone_duration_value(data.duration))
+        if data.startCol is not None:
+            after["startCol"] = data.startCol
+            fields.append("start_col = ?"); values.append(data.startCol)
+        if data.duration  is not None:
+            after["duration"] = _milestone_duration_value(data.duration)
+            fields.append("duration = ?");  values.append(after["duration"])
         if data.title     is not None: fields.append("title = ?");     values.append(data.title)
         if data.color     is not None: fields.append("color = ?");     values.append(data.color)
+        if _schedule_fields_changed(before, after):
+            _assert_milestone_scale_edit_allowed(before, after)
+        if before["noteId"] != after["noteId"] or _schedule_fields_changed(before, after):
+            existing = [
+                _ms(row)
+                for row in con.execute(
+                    "SELECT * FROM milestones WHERE note_id IN (?, ?) AND id != ?",
+                    (before["noteId"], after["noteId"], ms_id),
+                ).fetchall()
+            ]
+            _assert_note_milestone_scales_match(existing + [after], {after["noteId"]})
         if fields:
             con.execute(f"UPDATE milestones SET {', '.join(fields)} WHERE id = ?", (*values, ms_id))
         row = con.execute("SELECT * FROM milestones WHERE id = ?", (ms_id,)).fetchone()
@@ -2575,14 +2797,31 @@ def list_deadlines(project_id: str = Query(default='default'), user: dict = Depe
 
 @app.put("/deadlines/{note_id}")
 def set_deadline(note_id: str, data: DeadlineColIn, user: dict = Depends(current_user)):
+    scale = _normalize_planning_scale(data.scale, data.col)
+    _assert_scale_aligned_col(data.col, scale, "Deadline")
     with _db() as con:
         assert_project_access(_project_id_for_note(con, note_id), user)
+        blocking = con.execute(
+            "SELECT * FROM milestones WHERE note_id = ?",
+            (note_id,),
+        ).fetchall()
+        for row in blocking:
+            milestone = _ms(row)
+            if (
+                _planning_scale_for_milestone(milestone) == scale
+                and milestone["startCol"] + milestone["duration"] > data.col
+            ):
+                raise HTTPException(422, {
+                    "message": "Hard deadline would conflict with an existing milestone on the same planning scale",
+                    "type": "deadline",
+                    "id": milestone["id"],
+                })
         existing = con.execute("SELECT id FROM deadlines WHERE note_id = ?", (note_id,)).fetchone()
         if existing:
-            con.execute("UPDATE deadlines SET col = ? WHERE note_id = ?", (data.col, note_id))
+            con.execute("UPDATE deadlines SET col = ?, scale = ? WHERE note_id = ?", (data.col, scale, note_id))
         else:
             did = str(uuid.uuid4())
-            con.execute("INSERT INTO deadlines (id, note_id, col) VALUES (?, ?, ?)", (did, note_id, data.col))
+            con.execute("INSERT INTO deadlines (id, note_id, col, scale) VALUES (?, ?, ?, ?)", (did, note_id, data.col, scale))
         row = con.execute("SELECT * FROM deadlines WHERE note_id = ?", (note_id,)).fetchone()
     return _dl(row)
 

@@ -207,6 +207,6 @@ export const api = {
 
   // Deadlines
   getDeadlines:   ()               => req('GET',    '/deadlines'),
-  setDeadline:    (noteId, col)    => req('PUT',    `/deadlines/${noteId}`, { col }),
+  setDeadline:    (noteId, col, scale) => req('PUT', `/deadlines/${noteId}`, { col, scale }),
   removeDeadline: (noteId)         => req('DELETE', `/deadlines/${noteId}`),
 }

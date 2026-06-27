@@ -40,8 +40,9 @@ function normalizeTimeZoom(value) {
   return TIME_ZOOM_BY_VALUE[value] ? value : DEFAULT_TIME_ZOOM
 }
 
-function getMilestoneLevel(duration) {
+function getMilestoneLevel(duration, startCol = null) {
   const d = Math.max(0, Number(duration) || 0)
+  if (startCol !== null && isCalendarMonthRange(startCol, d)) return 'months'
   if (d >= 60 * 24 * 30) return 'months'
   if (d >= 60 * 24)      return 'days'
   return 'minutes'
@@ -51,12 +52,56 @@ function normalizeScaleVisibilityMode(value) {
   return value === SCALE_VISIBILITY_MODES.ALL ? SCALE_VISIBILITY_MODES.ALL : SCALE_VISIBILITY_MODES.HIERARCHY
 }
 
-function isMilestoneVisibleAtZoom(duration, timeZoom, scaleMode = SCALE_VISIBILITY_MODES.HIERARCHY) {
+function isMilestoneVisibleAtZoom(duration, timeZoom, scaleMode = SCALE_VISIBILITY_MODES.HIERARCHY, startCol = null) {
   if (normalizeScaleVisibilityMode(scaleMode) === SCALE_VISIBILITY_MODES.ALL) return true
-  const msIdx      = ZOOM_ORDER.indexOf(getMilestoneLevel(duration))
+  const msIdx      = ZOOM_ORDER.indexOf(getMilestoneLevel(duration, startCol))
   const currentIdx = ZOOM_ORDER.indexOf(timeZoom)
   return msIdx >= currentIdx
 }
+
+function isMilestoneEditableAtZoom(duration, timeZoom, startCol = null) {
+  return getMilestoneLevel(duration, startCol) === normalizeTimeZoom(timeZoom)
+}
+
+function scaleLabelForZoom(timeZoom) {
+  return TIME_ZOOM_BY_VALUE[normalizeTimeZoom(timeZoom)]?.label ?? 'this scale'
+}
+
+function planningScaleForZoom(timeZoom) {
+  return durationScaleBucket(getZoomUnit(timeZoom))
+}
+
+function getDeadlineLevel(deadline) {
+  const scale = deadline?.scale
+  if (scale === 'minute' || scale === 'minutes') return 'minutes'
+  if (scale === 'day' || scale === 'days') return 'days'
+  if (scale === 'month' || scale === 'months') return 'months'
+  const col = Number(deadline?.col) || 0
+  if (col % (60 * 24 * 30) === 0) return 'months'
+  if (col % (60 * 24) === 0) return 'days'
+  return 'minutes'
+}
+
+function deadlineScaleBucket(deadline) {
+  return durationScaleBucket(getZoomUnit(getDeadlineLevel(deadline)))
+}
+
+function isDeadlineVisibleAtZoom(deadline, timeZoom, scaleMode = SCALE_VISIBILITY_MODES.HIERARCHY) {
+  if (normalizeScaleVisibilityMode(scaleMode) === SCALE_VISIBILITY_MODES.ALL) return true
+  const deadlineIdx = ZOOM_ORDER.indexOf(getDeadlineLevel(deadline))
+  const currentIdx = ZOOM_ORDER.indexOf(normalizeTimeZoom(timeZoom))
+  return deadlineIdx >= currentIdx
+}
+
+function deadlineAppliesToMilestone(deadline, milestone) {
+  return deadline && milestone && deadlineScaleBucket(deadline) === milestoneScaleBucket(milestone)
+}
+
+function noteMilestoneScaleConflict(milestones, noteId, duration, startCol = null) {
+  const newScale = durationScaleBucket(duration, startCol)
+  return milestones.find(m => m.noteId === noteId && milestoneScaleBucket(m) !== newScale) ?? null
+}
+
 const MIN_MILESTONE_DURATION = 10
 const DEFAULT_WARNING_SETTINGS = {
   resizeWarnOrderThreshold: 2,
@@ -90,6 +135,81 @@ function minuteToDate(minute) {
   return d
 }
 
+function timelineStartDate() {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+function addCalendarMonths(date, months) {
+  const source = new Date(date)
+  const day = source.getDate()
+  const target = new Date(source)
+  target.setDate(1)
+  target.setMonth(target.getMonth() + months)
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate()
+  target.setDate(Math.min(day, lastDay))
+  return target
+}
+
+function minutesBetweenDates(start, end) {
+  return Math.round((end.getTime() - start.getTime()) / 60000)
+}
+
+function calendarMonthBoundaryMinute(col) {
+  const today = timelineStartDate()
+  const target = new Date(today.getFullYear(), today.getMonth() + col, 1)
+  return minutesBetweenDates(today, target)
+}
+
+function calendarMonthColForMinute(minute, mode = 'floor') {
+  const value = Math.max(0, Number(minute) || 0)
+  let col = Math.max(0, Math.floor(value / (60 * 24 * 30)))
+  while (calendarMonthBoundaryMinute(col + 1) <= value) col += 1
+  while (col > 0 && calendarMonthBoundaryMinute(col) > value) col -= 1
+  if (mode === 'ceil' && calendarMonthBoundaryMinute(col) < value) col += 1
+  return col
+}
+
+function calendarMonthColForMinuteExact(minute) {
+  const value = Math.max(0, Number(minute) || 0)
+  const col = calendarMonthColForMinute(value, 'floor')
+  const start = calendarMonthBoundaryMinute(col)
+  const end = calendarMonthBoundaryMinute(col + 1)
+  if (end <= start) return col
+  return col + ((value - start) / (end - start))
+}
+
+function isCalendarMonthBoundary(minute) {
+  const value = Math.max(0, Number(minute) || 0)
+  return calendarMonthBoundaryMinute(calendarMonthColForMinute(value, 'floor')) === value
+}
+
+function isCalendarMonthRange(startCol, duration) {
+  const start = Math.max(0, Number(startCol) || 0)
+  const end = start + Math.max(0, Number(duration) || 0)
+  return end > start && isCalendarMonthBoundary(start) && isCalendarMonthBoundary(end)
+}
+
+function calendarMonthSpanForRange(startCol, duration) {
+  if (!isCalendarMonthRange(startCol, duration)) return 1
+  return Math.max(1, calendarMonthColForMinute(startCol, 'floor') === calendarMonthColForMinute(startCol + duration, 'floor')
+    ? 1
+    : calendarMonthColForMinute(startCol + duration, 'floor') - calendarMonthColForMinute(startCol, 'floor'))
+}
+
+function calendarMonthDurationFromStart(startCol, span = 1) {
+  const startMonthCol = calendarMonthColForMinute(startCol, 'floor')
+  return calendarMonthBoundaryMinute(startMonthCol + Math.max(1, span)) - calendarMonthBoundaryMinute(startMonthCol)
+}
+
+function defaultDurationForZoom(timeZoom, startCol = 0) {
+  const zoom = normalizeTimeZoom(timeZoom)
+  if (zoom === 'minutes') return MIN_MILESTONE_DURATION
+  if (zoom === 'months') return calendarMonthDurationFromStart(startCol, 1)
+  return Math.max(MIN_MILESTONE_DURATION, getZoomUnit(zoom))
+}
+
 function isoWeekInfo(date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
   const day = d.getUTCDay() || 7
@@ -104,24 +224,37 @@ function getZoomUnit(timeZoom) {
 }
 
 function zoomColToMinute(col, timeZoom) {
+  if (normalizeTimeZoom(timeZoom) === 'months') {
+    const baseCol = Math.floor(Math.max(0, Number(col) || 0))
+    const fraction = Math.max(0, Number(col) || 0) - baseCol
+    const start = calendarMonthBoundaryMinute(baseCol)
+    const end = calendarMonthBoundaryMinute(baseCol + 1)
+    return start + (end - start) * fraction
+  }
   return col * getZoomUnit(timeZoom)
 }
 
 function minuteToZoomCol(minute, timeZoom) {
+  if (normalizeTimeZoom(timeZoom) === 'months') return calendarMonthColForMinute(minute, 'floor')
   return Math.floor(Math.max(0, Number(minute) || 0) / getZoomUnit(timeZoom))
 }
 
 function minuteEndToZoomCol(minute, timeZoom) {
+  if (normalizeTimeZoom(timeZoom) === 'months') return calendarMonthColForMinute(minute, 'ceil')
   return Math.ceil(Math.max(0, Number(minute) || 0) / getZoomUnit(timeZoom))
+}
+
+function minuteToZoomColExact(minute, timeZoom) {
+  if (normalizeTimeZoom(timeZoom) === 'months') return calendarMonthColForMinuteExact(minute)
+  return Math.max(0, Number(minute) || 0) / getZoomUnit(timeZoom)
 }
 
 function getVisualRange(item, timeZoom, proportional = false) {
   const start = Math.max(0, Number(item.startCol) || 0)
   const end = start + Math.max(MIN_MILESTONE_DURATION, Number(item.duration) || MIN_MILESTONE_DURATION)
   if (proportional) {
-    const unit = getZoomUnit(timeZoom)
-    const startCol = start / unit
-    const endCol = end / unit
+    const startCol = minuteToZoomColExact(start, timeZoom)
+    const endCol = minuteToZoomColExact(end, timeZoom)
     return { startCol, endCol, duration: Math.max(0, endCol - startCol), proportional: true }
   }
   const startCol = minuteToZoomCol(start, timeZoom)
@@ -172,19 +305,24 @@ function durationOrderMagnitudeChange(originalDuration, nextDuration) {
   return Math.log10(ratio)
 }
 
-function durationScaleBucket(duration) {
+function durationScaleBucket(duration, startCol = null) {
   const value = Math.max(MIN_MILESTONE_DURATION, Number(duration) || MIN_MILESTONE_DURATION)
+  if (startCol !== null && isCalendarMonthRange(startCol, value)) return 'month'
   if (value < 1440) return 'minute'
   if (value < 43200) return 'day'
   return 'month'
+}
+
+function milestoneScaleBucket(milestone) {
+  return durationScaleBucket(milestone?.duration, milestone?.startCol)
 }
 
 function durationScaleBucketIndex(bucket) {
   return ['minute', 'day', 'month'].indexOf(bucket)
 }
 
-function areDurationLevelsCompatible(durationA, durationB) {
-  return durationScaleBucket(durationA) === durationScaleBucket(durationB)
+function areMilestoneScalesCompatible(milestoneA, milestoneB) {
+  return milestoneScaleBucket(milestoneA) === milestoneScaleBucket(milestoneB)
 }
 
 function zoomForConflictGap(minutes) {
@@ -218,20 +356,6 @@ function buildAxisSegments(cols, getDate, getKey, getLabel) {
 }
 
 // Build axis band segments by grouping consecutive visible zoom columns.
-function buildColSegments(cols, getGroup, getLabel) {
-  const segments = []
-  cols.forEach(col => {
-    const key = String(getGroup(col))
-    const last = segments[segments.length - 1]
-    if (last?.key === key) {
-      last.endCol = col + 1
-    } else {
-      segments.push({ key, label: getLabel(col), startCol: col, endCol: col + 1 })
-    }
-  })
-  return segments
-}
-
 function snapPxToCol(px, colW) {
   const raw = px / colW
   const lower = Math.floor(raw)
@@ -259,7 +383,7 @@ function computeViolations(msList, deps) {
   deps.forEach(dep => {
     const from = msMap[dep.fromId]; const to = msMap[dep.toId]
     if (!from || !to) return
-    if (!areDurationLevelsCompatible(from.duration, to.duration)) {
+    if (!areMilestoneScalesCompatible(from, to)) {
       violations.add(from.id)
       violations.add(to.id)
       return
@@ -287,7 +411,7 @@ function getDependencyViolations(msList, deps) {
       const from = msMap[dep.fromId]
       const to = msMap[dep.toId]
       if (!from || !to) return null
-      if (!areDurationLevelsCompatible(from.duration, to.duration)) return { dep, from, to, type: 'scale_mismatch' }
+      if (!areMilestoneScalesCompatible(from, to)) return { dep, from, to, type: 'scale_mismatch' }
       if (from.startCol + from.duration <= to.startCol) return null
       return { dep, from, to, type: 'dependency' }
     })
@@ -2665,8 +2789,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const anchor = pinned ?? selectedAnchor
     const currentMinute = anchor
       ? anchor.startCol + anchor.duration / 2
-      : (scrollLeftRef.current / sp.colW) * getZoomUnit(prevZoom)
-    const anchorLeft = (currentMinute / getZoomUnit(nextZoom)) * sp.colW
+      : zoomColToMinute(scrollLeftRef.current / sp.colW, prevZoom)
+    const anchorLeft = minuteToZoomColExact(currentMinute, nextZoom) * sp.colW
     const nextScrollLeft = Math.max(0, Math.round(anchor ? anchorLeft - vpRef.current.w / 2 : anchorLeft))
     const needed = Math.ceil((nextScrollLeft + vpRef.current.w) / sp.colW) + COL_BUF + EDGE_COLS + 1
     if (needed > totalColsRef.current) {
@@ -2724,12 +2848,19 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   // ── Milestone CRUD ─────────────────────────────────────────────────────────
   const handleCreateMilestone = useCallback(async (noteId, startCol, color) => {
     clearWarningPrompt()
-    const duration = timeZoomRef.current === 'minutes'
-      ? MIN_MILESTONE_DURATION
-      : Math.max(MIN_MILESTONE_DURATION, getZoomUnit(timeZoomRef.current))
+    const duration = defaultDurationForZoom(timeZoomRef.current, startCol)
     const ms = { id: newClientId('ms'), noteId, startCol, duration, title: '', color: color || '#1a73e8' }
+    const scaleConflict = noteMilestoneScaleConflict(milestonesRef.current, noteId, duration, startCol)
+    if (scaleConflict) {
+      showWarningPrompt({
+        title: 'Planning scale locked',
+        message: `This note already contains ${milestoneScaleBucket(scaleConflict)}-scale milestones. New milestones in the same note must use that same planning scale.`,
+        actions: 'close',
+      })
+      return
+    }
     const dl = deadlinesRef.current.find(d => d.noteId === noteId)
-    if (startCol < 0 || (dl && startCol + duration > dl.col)) {
+    if (startCol < 0 || (deadlineAppliesToMilestone(dl, ms) && startCol + duration > dl.col)) {
       reportDeadlineViolation()
       return
     }
@@ -2745,7 +2876,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       before: { milestones: [], dependencies: [] },
       after: { milestones: [ms], dependencies: [] },
     })
-  }, [clearWarningPrompt, commitTransaction, reportDeadlineViolation, reportOverlapViolation])
+  }, [clearWarningPrompt, commitTransaction, reportDeadlineViolation, reportOverlapViolation, showWarningPrompt])
 
   const handleGridDoubleClick = useCallback(e => {
     if (modeRef.current !== 'milestone') return
@@ -2821,10 +2952,37 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }, [commitTransaction, maybeBlockDependencyWarning, reportOverlapViolation])
 
   // ── Drag helpers ───────────────────────────────────────────────────────────
+  const showScaleEditBlocked = useCallback((milestone) => {
+    const level = getMilestoneLevel(milestone.duration, milestone.startCol)
+    showWarningPrompt({
+      title: 'Different planning scale',
+      message: `This is a ${milestoneScaleBucket(milestone)}-scale milestone. Switch to ${scaleLabelForZoom(level)} view to move, resize, or link it.`,
+      actions: 'close',
+    })
+  }, [showWarningPrompt])
+
+  const canEditMilestoneNow = useCallback((milestone) => (
+    milestone && isMilestoneEditableAtZoom(milestone.duration, timeZoomRef.current, milestone.startCol)
+  ), [])
+
+  const findScaleLockedMilestone = useCallback((milestoneIds) => {
+    for (const id of milestoneIds) {
+      const milestone = milestonesRef.current.find(m => m.id === id)
+      if (milestone && !canEditMilestoneNow(milestone)) return milestone
+    }
+    return null
+  }, [canEditMilestoneNow])
+
   function startMoveDrag(startMouseX, originals) {
     if (Object.keys(originals).length === 0) return
+    const blockedMilestone = findScaleLockedMilestone(Object.keys(originals))
+    if (blockedMilestone) {
+      showScaleEditBlocked(blockedMilestone)
+      return
+    }
     clearWarningPrompt()
     const sp = spacingRef.current
+    const isMonthMove = normalizeTimeZoom(timeZoomRef.current) === 'months'
     dragRef.current = { type: 'move', hasMoved: false, originals, lastValidColDelta: 0, blockedOverlap: null, blockedBarrier: null, hitBoundary: false }
     document.body.style.cursor = 'grabbing'
     document.body.style.userSelect = 'none'
@@ -2833,10 +2991,21 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       let minDelta = -Infinity
       let maxDelta = Infinity
       Object.entries(originals).forEach(([id, orig]) => {
+        if (isMonthMove) {
+          const startVisual = minuteToZoomCol(orig.startCol, 'months')
+          const span = calendarMonthSpanForRange(orig.startCol, orig.duration)
+          minDelta = Math.max(minDelta, -startVisual)
+          const ms = milestonesRef.current.find(m => m.id === id)
+          const dl = deadlinesRef.current.find(d => d.noteId === ms?.noteId)
+          if (deadlineAppliesToMilestone(dl, ms)) {
+            maxDelta = Math.min(maxDelta, minuteToZoomCol(dl.col, 'months') - span - startVisual)
+          }
+          return
+        }
         minDelta = Math.max(minDelta, -orig.startCol)
         const ms = milestonesRef.current.find(m => m.id === id)
         const dl = deadlinesRef.current.find(d => d.noteId === ms?.noteId)
-        if (dl) maxDelta = Math.min(maxDelta, dl.col - orig.duration - orig.startCol)
+        if (deadlineAppliesToMilestone(dl, ms)) maxDelta = Math.min(maxDelta, dl.col - orig.duration - orig.startCol)
       })
       return { minDelta, maxDelta }
     }
@@ -2845,10 +3014,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       const rawDx = clientX - startMouseX
       const firstOrig = Object.values(originals)[0]
       if (!firstOrig) return 0
-      const unit = getZoomUnit(timeZoomRef.current)
       const firstVisualStart = minuteToZoomCol(firstOrig.startCol, timeZoomRef.current)
       const requestedVisual = snapPxToCol(firstVisualStart * sp.colW + rawDx, sp.colW)
-      let colDelta = (requestedVisual - firstVisualStart) * unit
+      let colDelta = isMonthMove
+        ? requestedVisual - firstVisualStart
+        : (requestedVisual - firstVisualStart) * getZoomUnit(timeZoomRef.current)
       const { minDelta, maxDelta } = getBounds()
       const clamped = Math.max(minDelta, Math.min(maxDelta, colDelta))
       if (dragRef.current && clamped !== colDelta) dragRef.current.hitBoundary = true
@@ -2857,6 +3027,12 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
     const buildMovedMilestones = colDelta => milestonesRef.current.map(m => {
       if (!originals[m.id]) return m
+      if (isMonthMove) {
+        const origVisualStart = minuteToZoomCol(originals[m.id].startCol, 'months')
+        const startCol = zoomColToMinute(origVisualStart + colDelta, 'months')
+        const duration = calendarMonthDurationFromStart(startCol, calendarMonthSpanForRange(originals[m.id].startCol, originals[m.id].duration))
+        return { ...m, startCol, duration }
+      }
       return { ...m, startCol: originals[m.id].startCol + colDelta }
     })
 
@@ -2868,9 +3044,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         dx = Math.max(dx, -origVisual.startCol * sp.colW)
         const ms = milestonesRef.current.find(m => m.id === id)
         const dl = deadlinesRef.current.find(d => d.noteId === ms?.noteId)
-        if (dl) {
-          const maxStart = Math.max(0, dl.col - orig.duration)
-          const maxVisual = minuteToZoomCol(maxStart, timeZoomRef.current)
+        if (deadlineAppliesToMilestone(dl, ms)) {
+          const maxVisual = isMonthMove
+            ? minuteToZoomCol(dl.col, 'months') - calendarMonthSpanForRange(orig.startCol, orig.duration)
+            : minuteToZoomCol(Math.max(0, dl.col - orig.duration), timeZoomRef.current)
           dx = Math.min(dx, (maxVisual - origVisual.startCol) * sp.colW)
         }
       })
@@ -2921,11 +3098,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       const updates = []
       const next = milestonesRef.current.map(m => {
         if (!originals[m.id]) return m
-        const newStartCol = Math.max(0, originals[m.id].startCol + colDelta)
-        if (newStartCol !== originals[m.id].startCol) {
-          updates.push({ id: m.id, startCol: newStartCol })
+        const moved = buildMovedMilestones(colDelta).find(candidate => candidate.id === m.id)
+        if (moved && (moved.startCol !== originals[m.id].startCol || moved.duration !== originals[m.id].duration)) {
+          updates.push({ id: m.id, startCol: moved.startCol, duration: moved.duration })
         }
-        return { ...m, startCol: newStartCol }
+        return moved ?? m
       })
       const finalOrder = getMilestoneOrderViolation(milestonesRef.current, next, new Set(Object.keys(originals)))
       if (finalOrder) {
@@ -2963,10 +3140,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }
 
   function startResizeDrag(startMouseX, milestoneId, side) {
-    clearWarningPrompt()
     const sp  = spacingRef.current
     const ms  = milestonesRef.current.find(m => m.id === milestoneId)
     if (!ms) return
+    if (!canEditMilestoneNow(ms)) {
+      showScaleEditBlocked(ms)
+      return
+    }
+    clearWarningPrompt()
     const origStart = ms.startCol; const origDur = ms.duration
     const origRight = origStart + origDur
     dragRef.current = { type: `resize-${side}`, blockedOverlap: null, hitBoundary: false, lastValid: { startCol: origStart, duration: origDur } }
@@ -2985,20 +3166,25 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const getSnappedResize = clientX => {
       const dx = clientX - startMouseX
       const dl = deadlinesRef.current.find(d => d.noteId === ms.noteId)
-      const maxRight = dl?.col ?? Infinity
-      const unit = getZoomUnit(timeZoomRef.current)
+      const maxRight = deadlineAppliesToMilestone(dl, ms) ? dl.col : Infinity
+      const isMonthResize = normalizeTimeZoom(timeZoomRef.current) === 'months'
       if (side === 'left') {
         const origVisualStart = minuteToZoomCol(origStart, timeZoomRef.current)
         const requestedVisual = snapPxToCol(origVisualStart * sp.colW + dx, sp.colW)
-        const requested = requestedVisual * unit
-        const leftCol = Math.min(origRight - MIN_MILESTONE_DURATION, Math.max(0, requested))
+        const requested = isMonthResize ? zoomColToMinute(requestedVisual, 'months') : requestedVisual * getZoomUnit(timeZoomRef.current)
+        const minRightVisual = minuteEndToZoomCol(origRight, timeZoomRef.current) - 1
+        const maxLeft = isMonthResize ? zoomColToMinute(minRightVisual, 'months') : origRight - MIN_MILESTONE_DURATION
+        const leftCol = Math.min(maxLeft, Math.max(0, requested))
         if (dragRef.current && leftCol !== requested) dragRef.current.hitBoundary = true
         return { startCol: leftCol, duration: origRight - leftCol }
       }
       const origVisualRight = minuteEndToZoomCol(origRight, timeZoomRef.current)
       const requestedVisual = snapPxToCol(origVisualRight * sp.colW + dx, sp.colW)
-      const requested = requestedVisual * unit
-      const rightCol = Math.min(maxRight, Math.max(origStart + MIN_MILESTONE_DURATION, requested))
+      const requested = isMonthResize ? zoomColToMinute(requestedVisual, 'months') : requestedVisual * getZoomUnit(timeZoomRef.current)
+      const minRight = isMonthResize
+        ? zoomColToMinute(minuteToZoomCol(origStart, 'months') + 1, 'months')
+        : origStart + MIN_MILESTONE_DURATION
+      const rightCol = Math.min(maxRight, Math.max(minRight, requested))
       if (dragRef.current && rightCol !== requested) dragRef.current.hitBoundary = true
       return { startCol: origStart, duration: rightCol - origStart }
     }
@@ -3077,22 +3263,22 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           if (blocked) return
           try { await applyResize() } catch (err) { console.error(err) }
         }
-        if (!areDurationLevelsCompatible(origDur, newDur)) {
+        if (durationScaleBucket(origDur, origStart) !== durationScaleBucket(newDur, newStart)) {
           const crossMetricDeps = dependenciesRef.current.filter(dep => {
             if (dep.fromId === milestoneId) {
               const to = milestonesRef.current.find(m => m.id === dep.toId)
-              return to && !areDurationLevelsCompatible(newDur, to.duration)
+              return to && durationScaleBucket(newDur, newStart) !== milestoneScaleBucket(to)
             }
             if (dep.toId === milestoneId) {
               const from = milestonesRef.current.find(m => m.id === dep.fromId)
-              return from && !areDurationLevelsCompatible(from.duration, newDur)
+              return from && milestoneScaleBucket(from) !== durationScaleBucket(newDur, newStart)
             }
             return false
           })
           if (crossMetricDeps.length > 0) {
             resetToOriginal()
-            const origBucket = durationScaleBucket(origDur)
-            const newBucket  = durationScaleBucket(newDur)
+            const origBucket = durationScaleBucket(origDur, origStart)
+            const newBucket  = durationScaleBucket(newDur, newStart)
             const direction  = durationScaleBucketIndex(newBucket) > durationScaleBucketIndex(origBucket) ? 'UP' : 'DOWN'
             setMetricResizeDraft({ milestoneId, newStart, newDur, origDur, origBucket, newBucket, direction, crossMetricDeps, applyResizeIfValid })
             return
@@ -3101,8 +3287,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         const magnitude = durationOrderMagnitudeChange(origDur, newDur)
         const warnThreshold = warningSettings.resizeWarnOrderThreshold
         const extraConfirmThreshold = warningSettings.resizeBlockOrderThreshold
-        const originalScale = durationScaleBucket(origDur)
-        const nextScale = durationScaleBucket(newDur)
+        const originalScale = durationScaleBucket(origDur, origStart)
+        const nextScale = durationScaleBucket(newDur, newStart)
         const scaleJump = Math.abs(durationScaleBucketIndex(nextScale) - durationScaleBucketIndex(originalScale))
         const crossedScale = warningSettings.resizeScaleCrossingWarningEnabled && originalScale !== nextScale
         const crossedMagnitude = magnitude >= warnThreshold
@@ -3206,10 +3392,15 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (dependenciesRef.current.some(d => d.fromId === fromId && d.toId === toId)) return
     const fromMs = milestonesRef.current.find(m => m.id === fromId)
     const toMs   = milestonesRef.current.find(m => m.id === toId)
-    if (fromMs && toMs && !areDurationLevelsCompatible(fromMs.duration, toMs.duration)) {
+    const scaleLocked = [fromMs, toMs].find(m => m && !canEditMilestoneNow(m))
+    if (scaleLocked) {
+      showScaleEditBlocked(scaleLocked)
+      return
+    }
+    if (fromMs && toMs && milestoneScaleBucket(fromMs) !== milestoneScaleBucket(toMs)) {
       showWarningPrompt({
         title: 'Scale mismatch',
-        message: `Dependencies can only link milestones on the same planning scale. ${durationScaleBucket(fromMs.duration)}-scale and ${durationScaleBucket(toMs.duration)}-scale milestones cannot be linked.`,
+        message: `Dependencies can only link milestones on the same planning scale. ${milestoneScaleBucket(fromMs)}-scale and ${milestoneScaleBucket(toMs)}-scale milestones cannot be linked.`,
         actions: 'close',
       })
       return
@@ -3228,7 +3419,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const blocked = maybeBlockDependencyWarning(milestonesRef.current, nextDependencies)
     if (blocked) return
     try { await applyDependency() } catch (err) { console.error(err) }
-  }, [clearWarningPrompt, commitTransaction, maybeBlockDependencyWarning])
+  }, [canEditMilestoneNow, clearWarningPrompt, commitTransaction, maybeBlockDependencyWarning, showScaleEditBlocked, showWarningPrompt])
 
   const handleMetricResizeAccept = useCallback(async () => {
     const draft = metricResizeDraft
@@ -3309,11 +3500,15 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (e.button !== 0) return
     e.preventDefault()
     e.stopPropagation()
+    const source = milestonesRef.current.find(m => m.id === sourceId)
+    if (!source || !canEditMilestoneNow(source)) {
+      if (source) showScaleEditBlocked(source)
+      return
+    }
 
     const getSide = (clientX) => {
       const rect = gridBodyRef.current?.getBoundingClientRect()
-      const source = milestonesRef.current.find(m => m.id === sourceId)
-      if (!rect || !source) return 'right'
+      if (!rect) return 'right'
       const sp = spacingRef.current
       const x = clientX - rect.left + scrollLeftRef.current
       const sourceVisual = getVisualRange(source, timeZoomRef.current)
@@ -3357,15 +3552,20 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
-  }, [createDependencyFromDrag, updatePreviewArrow])
+  }, [canEditMilestoneNow, createDependencyFromDrag, showScaleEditBlocked, updatePreviewArrow])
 
   // ── Deadlines ──────────────────────────────────────────────────────────────
   const handleSetDeadline = useCallback(async (noteId, col) => {
     try {
-      const dl = await api.setDeadline(noteId, col)
+      const scale = planningScaleForZoom(timeZoomRef.current)
+      const alignedCol = zoomColToMinute(minuteToZoomCol(col, timeZoomRef.current), timeZoomRef.current)
+      const dl = await api.setDeadline(noteId, alignedCol, scale)
       setDeadlines(prev => { const next = prev.filter(d => d.noteId !== noteId); return [...next, dl] })
-    } catch (err) { console.error(err) }
-  }, [])
+    } catch (err) {
+      console.error(err)
+      showWarningPrompt({ title: 'Hard deadline', message: err.message || 'Hard deadline could not be set for this planning scale.', actions: 'close' })
+    }
+  }, [showWarningPrompt])
 
   const handleRemoveDeadline = useCallback(async noteId => {
     try {
@@ -3885,7 +4085,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
   const visMilestones = milestones.filter(m => {
     if (draggedIds.has(m.id)) return true
-    if (!isMilestoneVisibleAtZoom(m.duration, timeZoom, scaleVisibilityMode)) return false
+    if (!isMilestoneVisibleAtZoom(m.duration, timeZoom, scaleVisibilityMode, m.startCol)) return false
     const visual = getRenderedVisualRange(m, timeZoom, scaleVisibilityMode)
     if (visual.endCol < startCol || visual.startCol > endCol) return false
     const row = noteRowMap[m.noteId]; if (!row) return false
@@ -4250,7 +4450,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
             {/* Hard deadline markers */}
             {deadlines.map(dl => {
               const row = noteRowMap[dl.noteId]; if (!row) return null
-              const visualCol = minuteToZoomCol(dl.col, timeZoom)
+              if (!isDeadlineVisibleAtZoom(dl, timeZoom, scaleVisibilityMode)) return null
+              const visualCol = proportionalMilestones
+                ? minuteToZoomColExact(dl.col, timeZoom)
+                : minuteToZoomCol(dl.col, timeZoom)
               const hatchLeft  = visualCol * colW
               const hatchWidth = Math.max(0, totalCols - visualCol) * colW
               return hatchWidth > 0 ? (
@@ -4272,6 +4475,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 	              const msColor       = getMilestoneColor(m)
 	              const isUnassigned  = msColor === null
 	              const isMinimumDuration = m.duration <= MIN_MILESTONE_DURATION
+	              const isScaleEditable = isMilestoneEditableAtZoom(m.duration, timeZoom, m.startCol)
 	              const widthPx = visual.duration * colW
 	              const isTinyProportional = proportionalMilestones && widthPx < 12
 	              return (
@@ -4289,15 +4493,17 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 	                    isMinimumDuration && styles.milestoneMinimum,
 	                    proportionalMilestones && styles.milestoneProportional,
 	                    isTinyProportional && styles.milestoneTiny,
+	                    !isScaleEditable && styles.milestoneScaleLocked,
 	                  ].filter(Boolean).join(' ')}
 	                  style={{
 	                    left:       visual.startCol * colW,
 	                    top:        HEADER_H + row.top + msY,
 	                    width:      widthPx,
 	                    minWidth:   proportionalMilestones ? 0 : undefined,
-	                    height:     msH,
-	                    background: msColor ?? '#fff',
+                    height:     msH,
+                    background: msColor ?? '#fff',
                   }}
+                  title={!isScaleEditable ? `Switch to ${scaleLabelForZoom(getMilestoneLevel(m.duration, m.startCol))} view to edit this milestone.` : undefined}
                   onMouseDown={e => {
                     if (paintCat) {
                       e.preventDefault()
@@ -4325,7 +4531,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 	                  <div
                     className={[styles.msHandle, isDepMode && styles.depHandle, isDepMode && isSource && styles.depHandleSource].filter(Boolean).join(' ')}
                     data-ms-id={m.id}
-                    data-dep-port={isDepMode ? 'true' : undefined}
+                    data-dep-port={isDepMode && isScaleEditable ? 'true' : undefined}
                     data-dep-side={isDepMode ? 'left' : undefined}
                     onMouseDown={e => {
                       e.stopPropagation()
@@ -4338,7 +4544,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 	                  <div
                     className={[styles.msHandle, styles.msHandleRight, isDepMode && styles.depHandle, isDepMode && isSource && styles.depHandleSource].filter(Boolean).join(' ')}
                     data-ms-id={m.id}
-                    data-dep-port={isDepMode ? 'true' : undefined}
+                    data-dep-port={isDepMode && isScaleEditable ? 'true' : undefined}
                     data-dep-side={isDepMode ? 'right' : undefined}
                     onMouseDown={e => {
                       e.stopPropagation()
@@ -4358,8 +4564,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 	                const from = milestones.find(m => m.id === dep.fromId)
 	                const to   = milestones.find(m => m.id === dep.toId)
 	                if (!from || !to) return null
-	                if (!isMilestoneVisibleAtZoom(from.duration, timeZoom, scaleVisibilityMode)) return null
-	                if (!isMilestoneVisibleAtZoom(to.duration, timeZoom, scaleVisibilityMode)) return null
+	                if (!isMilestoneVisibleAtZoom(from.duration, timeZoom, scaleVisibilityMode, from.startCol)) return null
+	                if (!isMilestoneVisibleAtZoom(to.duration, timeZoom, scaleVisibilityMode, to.startCol)) return null
                 const fromRow = noteRowMap[from.noteId]; const toRow = noteRowMap[to.noteId]
                 if (!fromRow || !toRow) return null
                 if (hideCrossCatDeps && activeDimId) {

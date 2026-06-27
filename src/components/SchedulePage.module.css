@@ -1888,6 +1888,20 @@
   display: none;
 }
 
+.milestoneScaleLocked {
+  cursor: default;
+  opacity: 0.68;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.16), 0 1px 3px rgba(0,0,0,0.12);
+}
+
+.milestoneScaleLocked .msHandle {
+  display: none;
+}
+
+.milestoneScaleLocked.milestoneDepMode {
+  cursor: not-allowed;
+}
+
 .milestoneUnassigned {
   border: 1.5px solid rgba(0, 0, 0, 0.28);
   box-shadow: 0 1px 4px rgba(0,0,0,0.14);
