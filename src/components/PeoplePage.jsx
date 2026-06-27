@@ -35,7 +35,7 @@ function peopleColToDate(col) {
   return d
 }
 
-function formatMilestoneDate(ms) {
+function formatTimeSlotDate(ms) {
   const start = Math.max(0, Number(ms.startCol) || 0)
   const duration = Math.max(1, Number(ms.duration) || 1)
   const startLabel = peopleColToDate(start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
@@ -423,13 +423,13 @@ function computeIslandLayout(cats, locked = false) {
 const NOTE_W = 4.05
 const NOTE_D = 2.62
 const NOTE_H = 0.10
-const NOTE_MILESTONE_SIZE = 0.68
-const NOTE_MILESTONE_H = 0.026
-const NOTE_MILESTONE_GAP = 0.16
-const NOTE_MILESTONE_HIT_PAD = 0.12
-const NOTE_MILESTONE_SURFACE_Y = NOTE_H + 0.024
-const NOTE_MILESTONE_CENTER_Y = NOTE_MILESTONE_SURFACE_Y + NOTE_MILESTONE_H / 2
-const NOTE_MILESTONE_TOP_Y = NOTE_MILESTONE_SURFACE_Y + NOTE_MILESTONE_H
+const NOTE_TIME_SLOT_SIZE = 0.68
+const NOTE_TIME_SLOT_H = 0.026
+const NOTE_TIME_SLOT_GAP = 0.16
+const NOTE_TIME_SLOT_HIT_PAD = 0.12
+const NOTE_TIME_SLOT_SURFACE_Y = NOTE_H + 0.024
+const NOTE_TIME_SLOT_CENTER_Y = NOTE_TIME_SLOT_SURFACE_Y + NOTE_TIME_SLOT_H / 2
+const NOTE_TIME_SLOT_TOP_Y = NOTE_TIME_SLOT_SURFACE_Y + NOTE_TIME_SLOT_H
 const NOTE_SLOT_W = NOTE_W + 0.48
 const NOTE_SLOT_D = NOTE_D + 0.62
 const MINI_TARGET_HEIGHT = 1.04
@@ -438,22 +438,22 @@ const PLATEAU_W = 13.6
 const PLATEAU_D = 3.8
 const PLATEAU_H = 0.72
 
-function layoutMilestonesOnNote(milestones) {
-  const sorted = [...milestones].sort((a, b) => (a.startCol ?? 0) - (b.startCol ?? 0))
+function layoutTimeSlotsOnNote(timeSlots) {
+  const sorted = [...timeSlots].sort((a, b) => (a.startCol ?? 0) - (b.startCol ?? 0))
   if (sorted.length === 0) return []
-  const cols = Math.max(1, Math.floor((NOTE_W - 0.32 + NOTE_MILESTONE_GAP) / (NOTE_MILESTONE_SIZE + NOTE_MILESTONE_GAP)))
-  const usedW = (Math.min(cols, sorted.length) - 1) * (NOTE_MILESTONE_SIZE + NOTE_MILESTONE_GAP)
+  const cols = Math.max(1, Math.floor((NOTE_W - 0.32 + NOTE_TIME_SLOT_GAP) / (NOTE_TIME_SLOT_SIZE + NOTE_TIME_SLOT_GAP)))
+  const usedW = (Math.min(cols, sorted.length) - 1) * (NOTE_TIME_SLOT_SIZE + NOTE_TIME_SLOT_GAP)
   const rowCount = Math.ceil(sorted.length / cols)
-  const usedD = (rowCount - 1) * (NOTE_MILESTONE_SIZE + NOTE_MILESTONE_GAP)
+  const usedD = (rowCount - 1) * (NOTE_TIME_SLOT_SIZE + NOTE_TIME_SLOT_GAP)
   return sorted.map((ms, i) => {
     const col = i % cols
     const row = Math.floor(i / cols)
     return {
-      milestone: ms,
-      x: -usedW / 2 + col * (NOTE_MILESTONE_SIZE + NOTE_MILESTONE_GAP),
-      z: -usedD / 2 + row * (NOTE_MILESTONE_SIZE + NOTE_MILESTONE_GAP) + 0.22,
-      w: NOTE_MILESTONE_SIZE,
-      d: NOTE_MILESTONE_SIZE,
+      timeSlot: ms,
+      x: -usedW / 2 + col * (NOTE_TIME_SLOT_SIZE + NOTE_TIME_SLOT_GAP),
+      z: -usedD / 2 + row * (NOTE_TIME_SLOT_SIZE + NOTE_TIME_SLOT_GAP) + 0.22,
+      w: NOTE_TIME_SLOT_SIZE,
+      d: NOTE_TIME_SLOT_SIZE,
     }
   })
 }
@@ -501,11 +501,11 @@ function computeLeaderPositions(islandPos, leaders) {
   }))
 }
 
-function NoteCard({ position, title, color = '#888', highlighted = false, focused = false, dimmed = false, milestones = [], highlightedMilestoneId = null, onDoubleClick }) {
+function NoteCard({ position, title, color = '#888', highlighted = false, focused = false, dimmed = false, timeSlots = [], highlightedTimeSlotId = null, onDoubleClick }) {
   const [hovered, setHovered] = useState(false)
   const active = highlighted || hovered || focused
   const opacity = dimmed ? 0.38 : 1
-  const milestoneLayout = layoutMilestonesOnNote(milestones)
+  const timeSlotLayout = layoutTimeSlotsOnNote(timeSlots)
   const handleDoubleClick = e => {
     e.stopPropagation()
     onDoubleClick?.()
@@ -551,12 +551,12 @@ function NoteCard({ position, title, color = '#888', highlighted = false, focuse
         {title}
       </Text>
       {focused && (
-        <group position={[0, NOTE_MILESTONE_SURFACE_Y, 0]}>
+        <group position={[0, NOTE_TIME_SLOT_SURFACE_Y, 0]}>
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
             <planeGeometry args={[NOTE_W - 0.14, NOTE_D - 0.14]} />
             <meshBasicMaterial color={color} transparent opacity={0.08} depthWrite={false} />
           </mesh>
-          {milestoneLayout.length === 0 ? (
+          {timeSlotLayout.length === 0 ? (
             <Text
               position={[0, 0.012, NOTE_D * 0.18]}
               rotation={[-Math.PI / 2, 0, 0]}
@@ -566,31 +566,31 @@ function NoteCard({ position, title, color = '#888', highlighted = false, focuse
               anchorY="middle"
               maxWidth={NOTE_W - 0.22}
             >
-              No milestones yet
+              No time slots yet
             </Text>
-          ) : milestoneLayout.map(({ milestone: ms, x, z, w, d }) => {
-            const milestoneHighlighted = highlightedMilestoneId === ms.id
+          ) : timeSlotLayout.map(({ timeSlot: ms, x, z, w, d }) => {
+            const timeSlotHighlighted = highlightedTimeSlotId === ms.id
             return (
               <group key={ms.id} position={[x, 0, z]}>
-                <RoundedBox args={[w, NOTE_MILESTONE_H, d]} radius={0.035} smoothness={4} position={[0, NOTE_MILESTONE_H / 2, 0]}>
+                <RoundedBox args={[w, NOTE_TIME_SLOT_H, d]} radius={0.035} smoothness={4} position={[0, NOTE_TIME_SLOT_H / 2, 0]}>
                   <meshStandardMaterial
-                    color={milestoneHighlighted ? '#ffffff' : ms.color || color}
+                    color={timeSlotHighlighted ? '#ffffff' : ms.color || color}
                     roughness={0.56}
                     metalness={0}
                     emissive={ms.color || color}
-                    emissiveIntensity={milestoneHighlighted ? 0.34 : 0.08}
+                    emissiveIntensity={timeSlotHighlighted ? 0.34 : 0.08}
                   />
                 </RoundedBox>
                 <Text
-                  position={[0, NOTE_MILESTONE_H + 0.012, 0]}
+                  position={[0, NOTE_TIME_SLOT_H + 0.012, 0]}
                   rotation={[-Math.PI / 2, 0, 0]}
                   fontSize={0.095}
-                  color={milestoneHighlighted ? (ms.color || color) : '#fff'}
+                  color={timeSlotHighlighted ? (ms.color || color) : '#fff'}
                   anchorX="center"
                   anchorY="middle"
                   maxWidth={w - 0.06}
                 >
-                  {formatMilestoneDate(ms)}
+                  {formatTimeSlotDate(ms)}
                 </Text>
               </group>
             )
@@ -735,9 +735,9 @@ function Scene({
   assignmentRevision = 0,
   notes = [],
   noteAssignments = [],
-  milestones = [],
+  timeSlots = [],
   personaNoteAssignments = [],
-  personaMilestoneAssignments = [],
+  personaTimeSlotAssignments = [],
   categoryLeaders = [],
   focusedCategoryId = null,
   focusedNoteId = null,
@@ -753,14 +753,14 @@ function Scene({
   onFocusNote,
   onSelect,
   onAssignPersonaToNote,
-  onAssignPersonaToMilestone,
+  onAssignPersonaToTimeSlot,
   onAssignLeader,
   selected,
 }) {
   const [dragId, setDragId]       = useState(null)
   const [posOverrides, setPosOverrides] = useState({})
   const [hoveredNoteId, setHoveredNoteId] = useState(null)
-  const [hoveredMilestoneId, setHoveredMilestoneId] = useState(null)
+  const [hoveredTimeSlotId, setHoveredTimeSlotId] = useState(null)
   const [hoveringPlateau, setHoveringPlateau] = useState(false)
   const [notePageIndex, setNotePageIndex] = useState(0)
   const dragIdRef      = useRef(null)
@@ -768,7 +768,7 @@ function Scene({
   const posOverridesRef = useRef({})
   const dragMovedRef   = useRef(false)
   const focusedNotesRef = useRef([])
-  const milestoneTargetsRef = useRef([])
+  const timeSlotTargetsRef = useRef([])
   const focusedIslandRef = useRef(null)
   const focusedCategoryIdRef = useRef(focusedCategoryId)
   const focusedNoteIdRef = useRef(focusedNoteId)
@@ -793,11 +793,11 @@ function Scene({
           const fi = focusedIslandRef.current
           if (fi) {
             if (focusedNoteIdRef.current) {
-              const targetMilestone = milestoneTargetsRef.current.find(target =>
+              const targetTimeSlot = timeSlotTargetsRef.current.find(target =>
                 Math.abs(pos[0] - target.x) <= target.w / 2 &&
                 Math.abs(pos[2] - target.z) <= target.d / 2
               )
-              if (targetMilestone) onAssignPersonaToMilestone?.(id, targetMilestone.id)
+              if (targetTimeSlot) onAssignPersonaToTimeSlot?.(id, targetTimeSlot.id)
             } else {
               const plateauCZ = fi.islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D / 2
               const onPlateau =
@@ -848,11 +848,11 @@ function Scene({
     dragIdRef.current = null
     dragAssignmentRef.current = null
     setHoveredNoteId(null)
-    setHoveredMilestoneId(null)
+    setHoveredTimeSlotId(null)
     setHoveringPlateau(false)
     setDragId(null)
     onSourceDragEnd?.()
-  }, [activeDimensionId, islands, layoutLocked, onAssign, onAssignLeader, onAssignPersonaToMilestone, onAssignPersonaToNote, onMoveAssignment, onPositionUpdate, onSourceDragEnd, onUnassign, sourceDragPersonaId])
+  }, [activeDimensionId, islands, layoutLocked, onAssign, onAssignLeader, onAssignPersonaToTimeSlot, onAssignPersonaToNote, onMoveAssignment, onPositionUpdate, onSourceDragEnd, onUnassign, sourceDragPersonaId])
 
   useEffect(() => {
     window.addEventListener('pointerup', stopDrag)
@@ -889,11 +889,11 @@ function Scene({
     setPosOverrides(prev => ({ ...prev, [id]: newPos }))
     if (focusedCategoryIdRef.current) {
       if (focusedNoteIdRef.current) {
-        const hm = milestoneTargetsRef.current.find(target =>
+        const hm = timeSlotTargetsRef.current.find(target =>
           Math.abs(e.point.x - target.x) <= target.w / 2 &&
           Math.abs(e.point.z - target.z) <= target.d / 2
         )
-        setHoveredMilestoneId(hm?.id ?? null)
+        setHoveredTimeSlotId(hm?.id ?? null)
         setHoveredNoteId(null)
         setHoveringPlateau(false)
         return
@@ -951,16 +951,16 @@ function Scene({
   const focusedNoteOnIsland = focusedNoteId
     ? focusedNotesOnIsland.find(note => note.id === focusedNoteId) ?? null
     : null
-  const focusedNoteMilestones = focusedNoteId
-    ? milestones.filter(ms => ms.noteId === focusedNoteId)
+  const focusedNoteTimeSlots = focusedNoteId
+    ? timeSlots.filter(ms => ms.noteId === focusedNoteId)
     : []
-  const focusedMilestoneTargets = focusedNoteOnIsland
-    ? layoutMilestonesOnNote(focusedNoteMilestones).map(target => ({
-        id: target.milestone.id,
+  const focusedTimeSlotTargets = focusedNoteOnIsland
+    ? layoutTimeSlotsOnNote(focusedNoteTimeSlots).map(target => ({
+        id: target.timeSlot.id,
         x: focusedNoteOnIsland.notePos[0] + target.x,
         z: focusedNoteOnIsland.notePos[2] + target.z,
-        w: target.w + NOTE_MILESTONE_HIT_PAD,
-        d: target.d + NOTE_MILESTONE_HIT_PAD,
+        w: target.w + NOTE_TIME_SLOT_HIT_PAD,
+        d: target.d + NOTE_TIME_SLOT_HIT_PAD,
       }))
     : []
 
@@ -991,7 +991,7 @@ function Scene({
 
   // Keep refs in sync so stopDrag/handleDragMove always see latest state
   focusedNotesRef.current = focusedNotesOnIsland
-  milestoneTargetsRef.current = focusedMilestoneTargets
+  timeSlotTargetsRef.current = focusedTimeSlotTargets
   focusedIslandRef.current = focusedIsland ?? null
 
   // Map noteId → [persona, …] for rendering tiny figures on each note
@@ -1003,12 +1003,12 @@ function Scene({
     notePersonaMap[a.noteId].push(p)
   })
 
-  const milestonePersonaMap = {}
-  personaMilestoneAssignments.forEach(a => {
+  const timeSlotPersonaMap = {}
+  personaTimeSlotAssignments.forEach(a => {
     const p = personas.find(px => px.id === a.personaId)
     if (!p) return
-    if (!milestonePersonaMap[a.milestoneId]) milestonePersonaMap[a.milestoneId] = []
-    milestonePersonaMap[a.milestoneId].push(p)
+    if (!timeSlotPersonaMap[a.timeSlotId]) timeSlotPersonaMap[a.timeSlotId] = []
+    timeSlotPersonaMap[a.timeSlotId].push(p)
   })
 
   return (
@@ -1125,8 +1125,8 @@ function Scene({
               highlighted={hoveredNoteId === note.id}
               focused={noteFocused}
               dimmed={Boolean(focusedNoteId && !noteFocused)}
-              milestones={noteFocused ? focusedNoteMilestones : []}
-              highlightedMilestoneId={hoveredMilestoneId}
+              timeSlots={noteFocused ? focusedNoteTimeSlots : []}
+              highlightedTimeSlotId={hoveredTimeSlotId}
               onDoubleClick={() => onFocusNote?.(note.id)}
             />
             {notePersonas.map((persona, i) => (
@@ -1168,8 +1168,8 @@ function Scene({
         />
       )}
 
-      {focusedNoteOnIsland && focusedMilestoneTargets.flatMap(target => {
-        const assigned = milestonePersonaMap[target.id] || []
+      {focusedNoteOnIsland && focusedTimeSlotTargets.flatMap(target => {
+        const assigned = timeSlotPersonaMap[target.id] || []
         const spacing = 0.15
         return assigned.map((persona, i) => (
           <PersonAvatar
@@ -1177,7 +1177,7 @@ function Scene({
             modelKey={persona.modelKey}
             position={[
               target.x - (assigned.length - 1) * spacing / 2 + i * spacing,
-              focusedNoteOnIsland.notePos[1] + NOTE_MILESTONE_TOP_Y + 0.035,
+              focusedNoteOnIsland.notePos[1] + NOTE_TIME_SLOT_TOP_Y + 0.035,
               target.z,
             ]}
             name={persona.name}
@@ -1557,12 +1557,12 @@ function uniqueBy(items, keyFn) {
   })
 }
 
-function deriveEffectivePersonaNoteAssignments(directNoteAssignments, milestoneAssignments, milestones) {
-  const milestoneNoteById = new Map(milestones.map(ms => [ms.id, ms.noteId]))
+function deriveEffectivePersonaNoteAssignments(directNoteAssignments, timeSlotAssignments, timeSlots) {
+  const timeSlotNoteById = new Map(timeSlots.map(ms => [ms.id, ms.noteId]))
   return uniqueBy([
     ...directNoteAssignments,
-    ...milestoneAssignments
-      .map(a => ({ personaId: a.personaId, noteId: milestoneNoteById.get(a.milestoneId) }))
+    ...timeSlotAssignments
+      .map(a => ({ personaId: a.personaId, noteId: timeSlotNoteById.get(a.timeSlotId) }))
       .filter(a => a.noteId),
   ], a => `${a.personaId}:${a.noteId}`)
 }
@@ -1591,9 +1591,9 @@ function People2DView({
   personaAssignments = [],
   notes = [],
   noteAssignments = [],
-  milestones = [],
+  timeSlots = [],
   personaNoteAssignments = [],
-  personaMilestoneAssignments = [],
+  personaTimeSlotAssignments = [],
   categoryLeaders = [],
   focusedCategory,
   focusedNote,
@@ -1605,7 +1605,7 @@ function People2DView({
   onUnassign,
   onMoveAssignment,
   onAssignPersonaToNote,
-  onAssignPersonaToMilestone,
+  onAssignPersonaToTimeSlot,
   onAssignLeader,
   onSelect,
   selected,
@@ -1662,11 +1662,11 @@ function People2DView({
     const payload = readDragPayload(e)
     if (payload?.personaId) onAssignPersonaToNote?.(payload.personaId, noteId)
   }
-  const handleMilestoneDrop = (milestoneId, e) => {
+  const handleTimeSlotDrop = (timeSlotId, e) => {
     e.preventDefault()
     e.stopPropagation()
     const payload = readDragPayload(e)
-    if (payload?.personaId) onAssignPersonaToMilestone?.(payload.personaId, milestoneId)
+    if (payload?.personaId) onAssignPersonaToTimeSlot?.(payload.personaId, timeSlotId)
   }
 
   const categoryPersonas = catId => personaAssignments
@@ -1677,8 +1677,8 @@ function People2DView({
     .filter(a => a.noteId === noteId)
     .map(a => personas.find(p => p.id === a.personaId))
     .filter(Boolean)
-  const milestonePersonas = milestoneId => personaMilestoneAssignments
-    .filter(a => a.milestoneId === milestoneId)
+  const timeSlotPersonas = timeSlotId => personaTimeSlotAssignments
+    .filter(a => a.timeSlotId === timeSlotId)
     .map(a => personas.find(p => p.id === a.personaId))
     .filter(Boolean)
   const leaderPersonas = focusedCategory
@@ -1697,8 +1697,8 @@ function People2DView({
       .map(a => notes.find(n => n.id === a.noteId))
       .filter(Boolean)
     : []
-  const focusedMilestones = focusedNote
-    ? milestones
+  const focusedTimeSlots = focusedNote
+    ? timeSlots
       .filter(ms => ms.noteId === focusedNote.id)
       .sort((a, b) => (a.startCol ?? 0) - (b.startCol ?? 0))
     : []
@@ -1825,19 +1825,19 @@ function People2DView({
           <section className={styles.people2dFocusedNote}>
             <h2>{focusedNote.title || 'Untitled'}</h2>
             <p>{focusedNote.description || ''}</p>
-            <div className={styles.people2dMilestoneGrid}>
-              {focusedMilestones.map(ms => {
-                const assigned = milestonePersonas(ms.id)
+            <div className={styles.people2dTimeSlotGrid}>
+              {focusedTimeSlots.map(ms => {
+                const assigned = timeSlotPersonas(ms.id)
                 return (
                   <section
                     key={ms.id}
-                    className={styles.people2dMilestone}
-                    style={{ '--milestone-color': ms.color || focusedCategory.color || '#888' }}
+                    className={styles.people2dTimeSlot}
+                    style={{ '--timeSlot-color': ms.color || focusedCategory.color || '#888' }}
                     onDragOver={allowDrop}
-                    onDrop={e => handleMilestoneDrop(ms.id, e)}
+                    onDrop={e => handleTimeSlotDrop(ms.id, e)}
                   >
-                    <div className={styles.people2dMilestoneDate}>{formatMilestoneDate(ms)}</div>
-                    <div className={styles.people2dMilestoneTitle}>{ms.title || 'Milestone'}</div>
+                    <div className={styles.people2dTimeSlotDate}>{formatTimeSlotDate(ms)}</div>
+                    <div className={styles.people2dTimeSlotTitle}>{ms.title || 'Time slot'}</div>
                     <div className={styles.people2dPersonaCloud}>
                       {assigned.map(persona => (
                         <button
@@ -1852,7 +1852,7 @@ function People2DView({
                   </section>
                 )
               })}
-              {focusedMilestones.length === 0 && <div className={styles.people2dBlank}>No milestones yet.</div>}
+              {focusedTimeSlots.length === 0 && <div className={styles.people2dBlank}>No time slots yet.</div>}
             </div>
           </section>
         </div>
@@ -1869,9 +1869,9 @@ export default function PeoplePage() {
   const [personas, setPersonas]         = useState([])
   const [notes, setNotes]               = useState([])
   const [noteAssignments, setNoteAssignments] = useState([])
-  const [milestones, setMilestones]     = useState([])
+  const [timeSlots, setTimeSlots]     = useState([])
   const [personaNoteAssignments, setPersonaNoteAssignments] = useState([])
-  const [personaMilestoneAssignments, setPersonaMilestoneAssignments] = useState([])
+  const [personaTimeSlotAssignments, setPersonaTimeSlotAssignments] = useState([])
   const [categoryLeaders, setCategoryLeaders] = useState([])
   const [personaAssignments, setPersonaAssignments] = useState([])
   const personaAssignmentsRef = useRef([])
@@ -1897,7 +1897,7 @@ export default function PeoplePage() {
   }, [])
 
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getDirectPersonaAssignments(), api.getNotes(), api.getAssignments(), api.getMilestones(), api.getDirectPersonaNoteAssignments(), api.getPersonaMilestoneAssignments(), api.getCategoryLeaders()])
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getDirectPersonaAssignments(), api.getNotes(), api.getAssignments(), api.getTimeSlots(), api.getDirectPersonaNoteAssignments(), api.getPersonaTimeSlotAssignments(), api.getCategoryLeaders()])
       .then(([dims, cats, pers, personaAsns, notesList, noteAsns, ms, pnAsns, pmAsns, leaders]) => {
         setDimensions(dims)
         setCategories(cats)
@@ -1906,9 +1906,9 @@ export default function PeoplePage() {
         replacePersonaAssignments(personaAsns, { revise: true })
         setNotes(notesList)
         setNoteAssignments(noteAsns)
-        setMilestones(ms)
+        setTimeSlots(ms)
         setPersonaNoteAssignments(pnAsns)
-        setPersonaMilestoneAssignments(pmAsns)
+        setPersonaTimeSlotAssignments(pmAsns)
         setCategoryLeaders(leaders)
       })
       .catch(console.error)
@@ -1927,8 +1927,8 @@ export default function PeoplePage() {
     : null
 
   const effectivePersonaNoteAssignments = useMemo(
-    () => deriveEffectivePersonaNoteAssignments(personaNoteAssignments, personaMilestoneAssignments, milestones),
-    [personaNoteAssignments, personaMilestoneAssignments, milestones],
+    () => deriveEffectivePersonaNoteAssignments(personaNoteAssignments, personaTimeSlotAssignments, timeSlots),
+    [personaNoteAssignments, personaTimeSlotAssignments, timeSlots],
   )
   const effectivePersonaAssignments = useMemo(
     () => deriveEffectivePersonaAssignments(personaAssignments, effectivePersonaNoteAssignments, noteAssignments),
@@ -2073,24 +2073,24 @@ export default function PeoplePage() {
     }
   }
 
-  const handleAssignPersonaToMilestone = async (personaId, milestoneId) => {
-    if (personaMilestoneAssignments.some(a => a.personaId === personaId && a.milestoneId === milestoneId)) return
-    setPersonaMilestoneAssignments(prev => [...prev, { personaId, milestoneId }])
+  const handleAssignPersonaToTimeSlot = async (personaId, timeSlotId) => {
+    if (personaTimeSlotAssignments.some(a => a.personaId === personaId && a.timeSlotId === timeSlotId)) return
+    setPersonaTimeSlotAssignments(prev => [...prev, { personaId, timeSlotId }])
     try {
-      await api.assignPersonaToMilestone(personaId, milestoneId)
+      await api.assignPersonaToTimeSlot(personaId, timeSlotId)
     } catch (e) {
       console.error(e)
-      setPersonaMilestoneAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.milestoneId === milestoneId)))
+      setPersonaTimeSlotAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.timeSlotId === timeSlotId)))
     }
   }
 
-  const handleUnassignPersonaFromMilestone = async (personaId, milestoneId) => {
-    setPersonaMilestoneAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.milestoneId === milestoneId)))
+  const handleUnassignPersonaFromTimeSlot = async (personaId, timeSlotId) => {
+    setPersonaTimeSlotAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.timeSlotId === timeSlotId)))
     try {
-      await api.unassignPersonaFromMilestone(personaId, milestoneId)
+      await api.unassignPersonaFromTimeSlot(personaId, timeSlotId)
     } catch (e) {
       console.error(e)
-      setPersonaMilestoneAssignments(prev => [...prev, { personaId, milestoneId }])
+      setPersonaTimeSlotAssignments(prev => [...prev, { personaId, timeSlotId }])
     }
   }
 
@@ -2123,11 +2123,11 @@ export default function PeoplePage() {
     const previousPersonas = personas
     const previousAssignments = personaAssignments
     const previousNoteAssignments = personaNoteAssignments
-    const previousMilestoneAssignments = personaMilestoneAssignments
+    const previousTimeSlotAssignments = personaTimeSlotAssignments
     setPersonas(prev => prev.filter(p => p.id !== id))
     replacePersonaAssignments(personaAssignmentsRef.current.filter(a => a.personaId !== id))
     setPersonaNoteAssignments(prev => prev.filter(a => a.personaId !== id))
-    setPersonaMilestoneAssignments(prev => prev.filter(a => a.personaId !== id))
+    setPersonaTimeSlotAssignments(prev => prev.filter(a => a.personaId !== id))
     setSelected(null)
     setEditPersonaId(null)
     try {
@@ -2136,7 +2136,7 @@ export default function PeoplePage() {
       setPersonas(previousPersonas)
       replacePersonaAssignments(previousAssignments)
       setPersonaNoteAssignments(previousNoteAssignments)
-      setPersonaMilestoneAssignments(previousMilestoneAssignments)
+      setPersonaTimeSlotAssignments(previousTimeSlotAssignments)
       throw e
     }
   }
@@ -2155,11 +2155,11 @@ export default function PeoplePage() {
       .map(a => ({ ...a, note: notes.find(n => n.id === a.noteId) }))
       .filter(a => a.note)
     : []
-  const selectedMilestoneAssignments = selectedPersona && focusedNoteId
-    ? personaMilestoneAssignments
+  const selectedTimeSlotAssignments = selectedPersona && focusedNoteId
+    ? personaTimeSlotAssignments
       .filter(a => a.personaId === selectedPersona.id)
-      .map(a => ({ ...a, milestone: milestones.find(m => m.id === a.milestoneId) }))
-      .filter(a => a.milestone)
+      .map(a => ({ ...a, timeSlot: timeSlots.find(m => m.id === a.timeSlotId) }))
+      .filter(a => a.timeSlot)
     : []
   const isSelectedLeader = selectedPersona && focusedCategoryId
     ? categoryLeaders.some(l => l.personaId === selectedPersona.id && l.categoryId === focusedCategoryId)
@@ -2209,9 +2209,9 @@ export default function PeoplePage() {
             assignmentRevision={assignmentRevision}
             notes={notes}
             noteAssignments={noteAssignments}
-            milestones={milestones}
+            timeSlots={timeSlots}
             personaNoteAssignments={effectivePersonaNoteAssignments}
-            personaMilestoneAssignments={personaMilestoneAssignments}
+            personaTimeSlotAssignments={personaTimeSlotAssignments}
             categoryLeaders={categoryLeaders}
             focusedCategoryId={focusedCategoryId}
             focusedNoteId={focusedNoteId}
@@ -2227,7 +2227,7 @@ export default function PeoplePage() {
             onFocusNote={setFocusedNoteId}
             onSelect={setSelected}
             onAssignPersonaToNote={handleAssignPersonaToNote}
-            onAssignPersonaToMilestone={handleAssignPersonaToMilestone}
+            onAssignPersonaToTimeSlot={handleAssignPersonaToTimeSlot}
             onAssignLeader={handleAssignLeader}
             selected={selected}
           />
@@ -2240,9 +2240,9 @@ export default function PeoplePage() {
           personaAssignments={effectivePersonaAssignments}
           notes={notes}
           noteAssignments={noteAssignments}
-          milestones={milestones}
+          timeSlots={timeSlots}
           personaNoteAssignments={effectivePersonaNoteAssignments}
-          personaMilestoneAssignments={personaMilestoneAssignments}
+          personaTimeSlotAssignments={personaTimeSlotAssignments}
           categoryLeaders={categoryLeaders}
           focusedCategory={focusedCategory}
           focusedNote={focusedNote}
@@ -2254,7 +2254,7 @@ export default function PeoplePage() {
           onUnassign={handleUnassignPersona}
           onMoveAssignment={handleMovePersonaAssignment}
           onAssignPersonaToNote={handleAssignPersonaToNote}
-          onAssignPersonaToMilestone={handleAssignPersonaToMilestone}
+          onAssignPersonaToTimeSlot={handleAssignPersonaToTimeSlot}
           onAssignLeader={handleAssignLeader}
           onSelect={setSelected}
           selected={selected}
@@ -2335,7 +2335,7 @@ export default function PeoplePage() {
           <div>
             <div className={styles.personaPanelTitle}>People</div>
             <div className={styles.personaPanelSub}>
-              {focusedNote ? 'Drag to a milestone' : focusedCategory ? 'Drag to a note' : 'Drag to a category'}
+              {focusedNote ? 'Drag to a time slot' : focusedCategory ? 'Drag to a note' : 'Drag to a category'}
             </div>
           </div>
           <button
@@ -2406,7 +2406,7 @@ export default function PeoplePage() {
             />
             <span className={styles.selectionName}>{selectedPersona.name}</span>
           </div>
-          {(selectedAssignments.length > 0 || selectedNoteAssignments.length > 0 || selectedMilestoneAssignments.length > 0 || isSelectedLeader) && (
+          {(selectedAssignments.length > 0 || selectedNoteAssignments.length > 0 || selectedTimeSlotAssignments.length > 0 || isSelectedLeader) && (
             <div className={styles.assignmentChips}>
               {isSelectedLeader && (
                 <button
@@ -2443,15 +2443,15 @@ export default function PeoplePage() {
                   <span>×</span>
                 </button>
               ))}
-              {selectedMilestoneAssignments.map(({ milestone, milestoneId }) => (
+              {selectedTimeSlotAssignments.map(({ timeSlot, timeSlotId }) => (
                 <button
-                  key={milestoneId}
+                  key={timeSlotId}
                   className={styles.assignmentChip}
-                  style={{ borderColor: milestone.color || focusedCategory?.color || '#888', color: milestone.color || focusedCategory?.color || '#888' }}
-                  onClick={() => handleUnassignPersonaFromMilestone(selectedPersona.id, milestoneId)}
-                  title={`Remove from milestone "${milestone.title || formatMilestoneDate(milestone)}"`}
+                  style={{ borderColor: timeSlot.color || focusedCategory?.color || '#888', color: timeSlot.color || focusedCategory?.color || '#888' }}
+                  onClick={() => handleUnassignPersonaFromTimeSlot(selectedPersona.id, timeSlotId)}
+                  title={`Remove from time slot "${timeSlot.title || formatTimeSlotDate(timeSlot)}"`}
                 >
-                  {milestone.title || formatMilestoneDate(milestone)}
+                  {timeSlot.title || formatTimeSlotDate(timeSlot)}
                   <span>×</span>
                 </button>
               ))}

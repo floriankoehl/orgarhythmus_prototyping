@@ -6,7 +6,7 @@ import { api, projectsApi } from '../api'
 // ── Constants ─────────────────────────────────────────────────────────────────
 const HEADER_H     = 64
 const LANE_HDR_H   = 30
-const MILESTONE_H  = 20   // block height in px
+const TIME_SLOT_H  = 20   // block height in px
 const COL_BUF      = 8
 const ROW_BUF      = 3
 const EXTEND_DELTA = 365  // extra columns added when scrolling to the right edge
@@ -44,7 +44,7 @@ function normalizeTimeZoom(value) {
   return TIME_ZOOM_BY_VALUE[value] ? value : DEFAULT_TIME_ZOOM
 }
 
-function getMilestoneLevel(duration, startCol = null) {
+function getTimeSlotLevel(duration, startCol = null) {
   const d = Math.max(0, Number(duration) || 0)
   if (startCol !== null && isCalendarMonthRange(startCol, d)) return 'months'
   if (d >= 60 * 24 * 30) return 'months'
@@ -56,15 +56,15 @@ function normalizeScaleVisibilityMode(value) {
   return value === SCALE_VISIBILITY_MODES.ALL ? SCALE_VISIBILITY_MODES.ALL : SCALE_VISIBILITY_MODES.HIERARCHY
 }
 
-function isMilestoneVisibleAtZoom(duration, timeZoom, scaleMode = SCALE_VISIBILITY_MODES.HIERARCHY, startCol = null) {
+function isTimeSlotVisibleAtZoom(duration, timeZoom, scaleMode = SCALE_VISIBILITY_MODES.HIERARCHY, startCol = null) {
   if (normalizeScaleVisibilityMode(scaleMode) === SCALE_VISIBILITY_MODES.ALL) return true
-  const msIdx      = ZOOM_ORDER.indexOf(getMilestoneLevel(duration, startCol))
+  const msIdx      = ZOOM_ORDER.indexOf(getTimeSlotLevel(duration, startCol))
   const currentIdx = ZOOM_ORDER.indexOf(timeZoom)
   return msIdx >= currentIdx
 }
 
-function isMilestoneEditableAtZoom(duration, timeZoom, startCol = null) {
-  return getMilestoneLevel(duration, startCol) === normalizeTimeZoom(timeZoom)
+function isTimeSlotEditableAtZoom(duration, timeZoom, startCol = null) {
+  return getTimeSlotLevel(duration, startCol) === normalizeTimeZoom(timeZoom)
 }
 
 function scaleLabelForZoom(timeZoom) {
@@ -97,8 +97,8 @@ function isDeadlineVisibleAtZoom(deadline, timeZoom, scaleMode = SCALE_VISIBILIT
   return deadlineIdx >= currentIdx
 }
 
-function deadlineAppliesToMilestone(deadline, milestone) {
-  return deadline && milestone && deadlineScaleBucket(deadline) === milestoneScaleBucket(milestone)
+function deadlineAppliesToTimeSlot(deadline, timeSlot) {
+  return deadline && timeSlot && deadlineScaleBucket(deadline) === timeSlotScaleBucket(timeSlot)
 }
 
 function getEarliestStartLevel(es) {
@@ -123,26 +123,26 @@ function isEarliestStartVisibleAtZoom(es, timeZoom, scaleMode = SCALE_VISIBILITY
   return esIdx >= currentIdx
 }
 
-function earliestStartAppliesToMilestone(es, milestone) {
-  return es && milestone && earliestStartScaleBucket(es) === milestoneScaleBucket(milestone)
+function earliestStartAppliesToTimeSlot(es, timeSlot) {
+  return es && timeSlot && earliestStartScaleBucket(es) === timeSlotScaleBucket(timeSlot)
 }
 
-function findApplicableDeadline(deadlines, milestone) {
-  if (!milestone) return null
-  return deadlines.find(d => d.noteId === milestone.noteId && deadlineAppliesToMilestone(d, milestone)) ?? null
+function findApplicableDeadline(deadlines, timeSlot) {
+  if (!timeSlot) return null
+  return deadlines.find(d => d.noteId === timeSlot.noteId && deadlineAppliesToTimeSlot(d, timeSlot)) ?? null
 }
 
-function findApplicableEarliestStart(earliestStarts, milestone) {
-  if (!milestone) return null
-  return earliestStarts.find(es => es.noteId === milestone.noteId && earliestStartAppliesToMilestone(es, milestone)) ?? null
+function findApplicableEarliestStart(earliestStarts, timeSlot) {
+  if (!timeSlot) return null
+  return earliestStarts.find(es => es.noteId === timeSlot.noteId && earliestStartAppliesToTimeSlot(es, timeSlot)) ?? null
 }
 
-function noteMilestoneScaleConflict(milestones, noteId, duration, startCol = null) {
+function noteTimeSlotScaleConflict(timeSlots, noteId, duration, startCol = null) {
   const newScale = durationScaleBucket(duration, startCol)
-  return milestones.find(m => m.noteId === noteId && milestoneScaleBucket(m) !== newScale) ?? null
+  return timeSlots.find(m => m.noteId === noteId && timeSlotScaleBucket(m) !== newScale) ?? null
 }
 
-const MIN_MILESTONE_DURATION = 10
+const MIN_TIME_SLOT_DURATION = 10
 const DEFAULT_WARNING_SETTINGS = {
   resizeWarnOrderThreshold: 2,
   resizeBlockOrderThreshold: 2,
@@ -245,9 +245,9 @@ function calendarMonthDurationFromStart(startCol, span = 1) {
 
 function defaultDurationForZoom(timeZoom, startCol = 0) {
   const zoom = normalizeTimeZoom(timeZoom)
-  if (zoom === 'minutes') return MIN_MILESTONE_DURATION
+  if (zoom === 'minutes') return MIN_TIME_SLOT_DURATION
   if (zoom === 'months') return calendarMonthDurationFromStart(startCol, 1)
-  return Math.max(MIN_MILESTONE_DURATION, getZoomUnit(zoom))
+  return Math.max(MIN_TIME_SLOT_DURATION, getZoomUnit(zoom))
 }
 
 function isoWeekInfo(date) {
@@ -291,7 +291,7 @@ function minuteToZoomColExact(minute, timeZoom) {
 
 function getVisualRange(item, timeZoom, proportional = false) {
   const start = Math.max(0, Number(item.startCol) || 0)
-  const end = start + Math.max(MIN_MILESTONE_DURATION, Number(item.duration) || MIN_MILESTONE_DURATION)
+  const end = start + Math.max(MIN_TIME_SLOT_DURATION, Number(item.duration) || MIN_TIME_SLOT_DURATION)
   if (proportional) {
     const startCol = minuteToZoomColExact(start, timeZoom)
     const endCol = minuteToZoomColExact(end, timeZoom)
@@ -339,30 +339,30 @@ function hourBandLabel(date) {
 }
 
 function durationOrderMagnitudeChange(originalDuration, nextDuration) {
-  const original = Math.max(MIN_MILESTONE_DURATION, Number(originalDuration) || MIN_MILESTONE_DURATION)
-  const next = Math.max(MIN_MILESTONE_DURATION, Number(nextDuration) || MIN_MILESTONE_DURATION)
+  const original = Math.max(MIN_TIME_SLOT_DURATION, Number(originalDuration) || MIN_TIME_SLOT_DURATION)
+  const next = Math.max(MIN_TIME_SLOT_DURATION, Number(nextDuration) || MIN_TIME_SLOT_DURATION)
   const ratio = Math.max(original, next) / Math.min(original, next)
   return Math.log10(ratio)
 }
 
 function durationScaleBucket(duration, startCol = null) {
-  const value = Math.max(MIN_MILESTONE_DURATION, Number(duration) || MIN_MILESTONE_DURATION)
+  const value = Math.max(MIN_TIME_SLOT_DURATION, Number(duration) || MIN_TIME_SLOT_DURATION)
   if (startCol !== null && isCalendarMonthRange(startCol, value)) return 'month'
   if (value < 1440) return 'minute'
   if (value < 43200) return 'day'
   return 'month'
 }
 
-function milestoneScaleBucket(milestone) {
-  return durationScaleBucket(milestone?.duration, milestone?.startCol)
+function timeSlotScaleBucket(timeSlot) {
+  return durationScaleBucket(timeSlot?.duration, timeSlot?.startCol)
 }
 
 function durationScaleBucketIndex(bucket) {
   return ['minute', 'day', 'month'].indexOf(bucket)
 }
 
-function areMilestoneScalesCompatible(milestoneA, milestoneB) {
-  return milestoneScaleBucket(milestoneA) === milestoneScaleBucket(milestoneB)
+function areTimeSlotScalesCompatible(timeSlotA, timeSlotB) {
+  return timeSlotScaleBucket(timeSlotA) === timeSlotScaleBucket(timeSlotB)
 }
 
 function zoomForConflictGap(minutes) {
@@ -373,7 +373,7 @@ function zoomForConflictGap(minutes) {
 }
 
 function formatMinutesDuration(minutes) {
-  const value = Math.max(MIN_MILESTONE_DURATION, Number(minutes) || MIN_MILESTONE_DURATION)
+  const value = Math.max(MIN_TIME_SLOT_DURATION, Number(minutes) || MIN_TIME_SLOT_DURATION)
   if (value < 60) return `${value} min`
   if (value < 60 * 24) return `${(value / 60).toFixed(value % 60 === 0 ? 0 : 1)} h`
   return `${(value / (60 * 24)).toFixed(value % (60 * 24) === 0 ? 0 : 1)} d`
@@ -423,7 +423,7 @@ function computeViolations(msList, deps) {
   deps.forEach(dep => {
     const from = msMap[dep.fromId]; const to = msMap[dep.toId]
     if (!from || !to) return
-    if (!areMilestoneScalesCompatible(from, to)) {
+    if (!areTimeSlotScalesCompatible(from, to)) {
       violations.add(from.id)
       violations.add(to.id)
       return
@@ -451,7 +451,7 @@ function getDependencyViolations(msList, deps) {
       const from = msMap[dep.fromId]
       const to = msMap[dep.toId]
       if (!from || !to) return null
-      if (!areMilestoneScalesCompatible(from, to)) return { dep, from, to, type: 'scale_mismatch' }
+      if (!areTimeSlotScalesCompatible(from, to)) return { dep, from, to, type: 'scale_mismatch' }
       if (from.startCol + from.duration <= to.startCol) return null
       return { dep, from, to, type: 'dependency' }
     })
@@ -462,21 +462,21 @@ function getCascadingDependencyConflict(msList, deps, initialViolations = null) 
   const msMap = Object.fromEntries(msList.map(m => [m.id, m]))
   const seedViolations = initialViolations ?? getDependencyViolations(msList, deps)
 
-  // pushedStart tracks where each milestone would land after being pushed by the chain.
-  // Starts at the real current position; gets updated as each cascade step forces a milestone right.
+  // pushedStart tracks where each timeSlot would land after being pushed by the chain.
+  // Starts at the real current position; gets updated as each cascade step forces a timeSlot right.
   const pushedStart = Object.fromEntries(msList.map(m => [m.id, m.startCol]))
 
   const violations = []
   const violationIds = new Set()
-  const milestoneIds = new Set()
+  const timeSlotIds = new Set()
   const queue = []
 
   const addViolation = violation => {
     if (!violation || violationIds.has(violation.dep.id)) return
     violationIds.add(violation.dep.id)
     violations.push(violation)
-    milestoneIds.add(violation.from.id)
-    milestoneIds.add(violation.to.id)
+    timeSlotIds.add(violation.from.id)
+    timeSlotIds.add(violation.to.id)
     // Push `to` to just after `from` ends in the pushed world
     const fromPushedEnd = pushedStart[violation.from.id] + violation.from.duration
     if (pushedStart[violation.to.id] < fromPushedEnd) {
@@ -490,8 +490,8 @@ function getCascadingDependencyConflict(msList, deps, initialViolations = null) 
     if (!violation || violationIds.has(violation.dep.id)) return
     violationIds.add(violation.dep.id)
     violations.push(violation)
-    milestoneIds.add(violation.from.id)
-    milestoneIds.add(violation.to.id)
+    timeSlotIds.add(violation.from.id)
+    timeSlotIds.add(violation.to.id)
   })
 
   while (queue.length) {
@@ -507,7 +507,7 @@ function getCascadingDependencyConflict(msList, deps, initialViolations = null) 
     })
   }
 
-  return { violations, depIds: [...violationIds], milestoneIds }
+  return { violations, depIds: [...violationIds], timeSlotIds }
 }
 
 function hasAlternateDependencyPath(fromId, toId, deps, ignoredDepId) {
@@ -547,11 +547,11 @@ function getOverlapViolation(msList, movedIds = new Set()) {
     if (!byNote.has(m.noteId)) byNote.set(m.noteId, [])
     byNote.get(m.noteId).push(m)
   })
-  for (const laneMilestones of byNote.values()) {
-    for (let i = 0; i < laneMilestones.length; i += 1) {
-      for (let j = i + 1; j < laneMilestones.length; j += 1) {
-        const a = laneMilestones[i]
-        const b = laneMilestones[j]
+  for (const laneTimeSlots of byNote.values()) {
+    for (let i = 0; i < laneTimeSlots.length; i += 1) {
+      for (let j = i + 1; j < laneTimeSlots.length; j += 1) {
+        const a = laneTimeSlots[i]
+        const b = laneTimeSlots[j]
         const overlaps = a.startCol < b.startCol + b.duration && b.startCol < a.startCol + a.duration
         if (overlaps && (movedIds.has(a.id) || movedIds.has(b.id))) return [a.id, b.id]
       }
@@ -560,7 +560,7 @@ function getOverlapViolation(msList, movedIds = new Set()) {
   return null
 }
 
-function getMilestoneOrderViolation(beforeList, afterList, movedIds = new Set()) {
+function getTimeSlotOrderViolation(beforeList, afterList, movedIds = new Set()) {
   const beforeById = Object.fromEntries(beforeList.map(m => [m.id, m]))
   const afterById = Object.fromEntries(afterList.map(m => [m.id, m]))
   const ids = Object.keys(beforeById).filter(id => afterById[id])
@@ -595,7 +595,7 @@ function newClientId(prefix) {
 
 function normalizeTransactionState(state = {}) {
   return {
-    milestones: state.milestones ?? [],
+    timeSlots: state.timeSlots ?? [],
     dependencies: state.dependencies ?? [],
   }
 }
@@ -684,7 +684,7 @@ function SpacingPanel({
   hideCrossCatDeps, onHideCrossCatDepsChange,
   showCrucialDepsOnly, onShowCrucialDepsOnlyChange,
   colorDependencyDirection, onColorDependencyDirectionChange,
-  milestoneScaleFilter, onMilestoneScaleFilterChange,
+  timeSlotScaleFilter, onTimeSlotScaleFilterChange,
   canFilterToSelection, onFilterToSelectedNotes, onExpandEverything,
 }) {
   const panelRef = useRef()
@@ -737,7 +737,7 @@ function SpacingPanel({
         <span className={`${styles.spacingLabel} ${styles.scaleHelpAnchor}`} tabIndex={0}>
           Scale
           <span className={styles.scaleHelpPopover}>
-            <strong>Focused</strong> keeps the view readable by showing the current planning scale and broader milestones only: minute view shows all, day view shows day and month, and month view shows month milestones. <strong>Everything</strong> shows every milestone and dependency. In that mode, milestones use their true proportional position and duration instead of being rounded up to a full visible column, so a 10 minute milestone in month view may become only a tiny mark.
+            <strong>Focused</strong> keeps the view readable by showing the current planning scale and broader time slots only: minute view shows all, day view shows day and month, and month view shows month time slots. <strong>Everything</strong> shows every time slot and dependency. In that mode, time slots use their true proportional position and duration instead of being rounded up to a full visible column, so a 10 minute time slot in month view may become only a tiny mark.
           </span>
         </span>
         <div className={styles.axisModePills}>
@@ -746,8 +746,8 @@ function SpacingPanel({
             [SCALE_VISIBILITY_MODES.ALL, 'Everything'],
           ].map(([val, label]) => (
             <button key={val}
-              className={`${styles.axisModePill} ${normalizeScaleVisibilityMode(milestoneScaleFilter) === val ? styles.axisModePillActive : ''}`}
-              onClick={() => onMilestoneScaleFilterChange(val)}>
+              className={`${styles.axisModePill} ${normalizeScaleVisibilityMode(timeSlotScaleFilter) === val ? styles.axisModePillActive : ''}`}
+              onClick={() => onTimeSlotScaleFilterChange(val)}>
               {label}
             </button>
           ))}
@@ -780,7 +780,7 @@ function SpacingPanel({
             <input type="checkbox" checked={showCrucialDepsOnly} disabled={!showDeps} onChange={e => onShowCrucialDepsOnlyChange(e.target.checked)} />
             <span>Crucial only</span>
           </label>
-          <label className={styles.depToggle} title="Color selected milestone incoming dependencies red and outgoing dependencies green" style={{ opacity: showDeps ? 1 : 0.4 }}>
+          <label className={styles.depToggle} title="Color selected time slot incoming dependencies red and outgoing dependencies green" style={{ opacity: showDeps ? 1 : 0.4 }}>
             <input type="checkbox" checked={colorDependencyDirection} disabled={!showDeps} onChange={e => onColorDependencyDirectionChange(e.target.checked)} />
             <span>Direction colors</span>
           </label>
@@ -797,7 +797,7 @@ function SpacingPanel({
             className={styles.panelActionBtn}
             disabled={!canFilterToSelection}
             onClick={onFilterToSelectedNotes}
-            title="Show only notes that have selected milestones">
+            title="Show only notes that have selected time slots">
             Only selected notes
           </button>
           <button
@@ -951,8 +951,8 @@ function WarningSettingsPanel({
 function ContextMenu({
   menu, onClose, onCreate, onInsertTimeUnit, onDeleteTimeUnit, onSetDeadline, onRemoveDeadline,
   onSetEarliestStart, onRemoveEarliestStart,
-  onCopyNote, onDuplicateNote,
-  onDeleteMilestone, onToggleMilestonePin, pinnedMilestoneId, onEditDepReason, onDeleteDep,
+  onCopyNote, onDuplicateNote, onStartInheritancePick,
+  onDeleteTimeSlot, onToggleTimeSlotPin, pinnedTimeSlotId, onEditDepReason, onDeleteDep,
 }) {
   if (!menu) return null
   return createPortal(
@@ -968,6 +968,14 @@ function ContextMenu({
             onClick={() => { onDuplicateNote(menu.noteId); onClose() }}>
             Duplicate note
           </button>
+          <button className={styles.ctxItem}
+            onClick={() => { onStartInheritancePick(menu.noteId, 'child'); onClose() }}>
+            Inherit from...
+          </button>
+          <button className={styles.ctxItem}
+            onClick={() => { onStartInheritancePick(menu.noteId, 'parent'); onClose() }}>
+            Make parent of...
+          </button>
           {menu.isReadOnly ? (
             <div className={styles.ctxReadOnly}>
               Switch to {menu.readOnlyLabel} view to edit this row
@@ -975,7 +983,7 @@ function ContextMenu({
           ) : (<>
           <button className={styles.ctxItem}
             onClick={() => { onCreate(menu.noteId, menu.col, menu.color); onClose() }}>
-            Add milestone — {menu.noteTitle}
+            Add time slot — {menu.noteTitle}
           </button>
           {menu.hasDeadline
             ? <button className={styles.ctxItem}
@@ -1009,6 +1017,14 @@ function ContextMenu({
               onClick={() => { onDuplicateNote(menu.noteId); onClose() }}>
               Duplicate note
             </button>
+            <button className={styles.ctxItem}
+              onClick={() => { onStartInheritancePick(menu.noteId, 'child'); onClose() }}>
+              Inherit from...
+            </button>
+            <button className={styles.ctxItem}
+              onClick={() => { onStartInheritancePick(menu.noteId, 'parent'); onClose() }}>
+              Make parent of...
+            </button>
           </>
         )}
         {menu.type === 'header' && (<>
@@ -1019,14 +1035,22 @@ function ContextMenu({
             Remove this {menu.unitLabel || 'unit'}
           </button>
         </>)}
-        {menu.type === 'milestone' && (<>
+        {menu.type === 'timeSlot' && (<>
           <button className={styles.ctxItem}
-            onClick={() => { onToggleMilestonePin(menu.milestoneId); onClose() }}>
-            {pinnedMilestoneId === menu.milestoneId ? 'Unpin milestone' : 'Pin milestone'}
+            onClick={() => { onStartInheritancePick(menu.noteId, 'child'); onClose() }}>
+            Inherit note from...
+          </button>
+          <button className={styles.ctxItem}
+            onClick={() => { onStartInheritancePick(menu.noteId, 'parent'); onClose() }}>
+            Make note parent of...
+          </button>
+          <button className={styles.ctxItem}
+            onClick={() => { onToggleTimeSlotPin(menu.timeSlotId); onClose() }}>
+            {pinnedTimeSlotId === menu.timeSlotId ? 'Unpin time slot' : 'Pin time slot'}
           </button>
           <button className={`${styles.ctxItem} ${styles.ctxItemDanger}`}
-            onClick={() => { onDeleteMilestone(menu.milestoneId, menu.label); onClose() }}>
-            Delete milestone
+            onClick={() => { onDeleteTimeSlot(menu.timeSlotId, menu.label); onClose() }}>
+            Delete time slot
           </button>
         </>)}
         {menu.type === 'dep' && (<>
@@ -1193,7 +1217,7 @@ function GanttToolbar({
   showDeps, onShowDepsChange, hideCrossCatDeps, onHideCrossCatDepsChange,
   showCrucialDepsOnly, onShowCrucialDepsOnlyChange,
   colorDependencyDirection, onColorDependencyDirectionChange,
-  milestoneScaleFilter, onMilestoneScaleFilterChange,
+  timeSlotScaleFilter, onTimeSlotScaleFilterChange,
   autoResolveDependencyView, onAutoResolveDependencyViewChange,
   warningSettings, onWarningSettingsChange,
   canDeleteSelection, onDeleteSelection,
@@ -1224,8 +1248,8 @@ function GanttToolbar({
         </button>
       </div>
       <div className={styles.modePills}>
-        <button className={`${styles.modePill} ${mode === 'milestone' ? styles.modePillActive : ''}`}
-          onClick={() => onModeChange('milestone')}>Milestone</button>
+        <button className={`${styles.modePill} ${mode === 'timeSlot' ? styles.modePillActive : ''}`}
+          onClick={() => onModeChange('timeSlot')}>Time slot</button>
         <button className={`${styles.modePill} ${mode === 'dependency' ? styles.modePillActive : ''}`}
           onClick={() => onModeChange('dependency')}>Dependency</button>
       </div>
@@ -1317,7 +1341,7 @@ function GanttToolbar({
             hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={onHideCrossCatDepsChange}
             showCrucialDepsOnly={showCrucialDepsOnly} onShowCrucialDepsOnlyChange={onShowCrucialDepsOnlyChange}
             colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={onColorDependencyDirectionChange}
-            milestoneScaleFilter={milestoneScaleFilter} onMilestoneScaleFilterChange={onMilestoneScaleFilterChange}
+            timeSlotScaleFilter={timeSlotScaleFilter} onTimeSlotScaleFilterChange={onTimeSlotScaleFilterChange}
             canFilterToSelection={canFilterToSelection}
             onFilterToSelectedNotes={onFilterToSelectedNotes}
             onExpandEverything={onExpandEverything} />
@@ -1748,7 +1772,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [categories,   setCategories]   = useState([])
   const [assignments,  setAssignments]  = useState({})
   const [assignmentOrders, setAssignmentOrders] = useState({})
-  const [milestones,   setMilestones]   = useState([])
+  const [timeSlots,   setTimeSlots]   = useState([])
   const [dependencies, setDependencies] = useState([])
   const [deadlines,    setDeadlines]    = useState([])
   const [earliestStarts, setEarliestStarts] = useState([])
@@ -1781,7 +1805,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const refreshScheduleData = useCallback(async () => {
     const [assigns, mss, deps, dls, ess, inherited, history] = await Promise.all([
       api.getAssignments(),
-      api.getMilestones(),
+      api.getTimeSlots(),
       api.getDependencies(),
       api.getDeadlines(),
       api.getEarliestStarts(),
@@ -1789,7 +1813,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       api.getTransactionHistory(),
     ])
     applyAssignments(assigns)
-    setMilestones(mss)
+    setTimeSlots(mss)
     setDependencies(deps)
     setDeadlines(dls)
     setEarliestStarts(ess)
@@ -1801,14 +1825,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (!isActive) return
     Promise.all([
       api.getDimensions(), api.getAllCategories(), api.getAssignments(),
-      api.getMilestones(), api.getDependencies(), api.getDeadlines(), api.getEarliestStarts(), api.getNoteInheritance(), api.getFilters(), api.getSchedulePerspectives(),
+      api.getTimeSlots(), api.getDependencies(), api.getDeadlines(), api.getEarliestStarts(), api.getNoteInheritance(), api.getFilters(), api.getSchedulePerspectives(),
       api.getTransactionHistory(),
     ]).then(([dims, cats, assigns, mss, deps, dls, ess, inherited, filters, loadedPerspectives, history]) => {
       setDimensions(dims); setCategories(cats)
       setSavedFilters(filters)
       setPerspectives(loadedPerspectives.map(normalizePerspective))
       applyAssignments(assigns)
-      setMilestones(mss)
+      setTimeSlots(mss)
       setDependencies(deps)
       setDeadlines(dls)
       setEarliestStarts(ess)
@@ -1823,14 +1847,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }, [refreshKey])
 
   const inheritedWindows = useMemo(() => {
-    const milestoneByNote = new Map(milestones.map(ms => [ms.noteId, ms]))
+    const timeSlotByNote = new Map(timeSlots.map(ms => [ms.noteId, ms]))
     const starts = []
     const ends = []
     noteInheritance.forEach(link => {
-      const child = milestoneByNote.get(link.childNoteId)
-      const parent = milestoneByNote.get(link.parentNoteId)
+      const child = timeSlotByNote.get(link.childNoteId)
+      const parent = timeSlotByNote.get(link.parentNoteId)
       if (!child || !parent) return
-      const childScale = milestoneScaleBucket(child)
+      const childScale = timeSlotScaleBucket(child)
       starts.push({
         id: `inh-start:${link.childNoteId}:${link.parentNoteId}`,
         noteId: link.childNoteId,
@@ -1849,7 +1873,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       })
     })
     return { starts, deadlines: ends }
-  }, [milestones, noteInheritance])
+  }, [timeSlots, noteInheritance])
 
   const effectiveDeadlines = useMemo(() => {
     const byKey = new Map()
@@ -1872,12 +1896,12 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }, [earliestStarts, inheritedWindows.starts])
 
   const dependencyConstraintWindows = useMemo(() => {
-    const milestoneById = new Map(milestones.map(ms => [ms.id, ms]))
+    const timeSlotById = new Map(timeSlots.map(ms => [ms.id, ms]))
     const startsByNote = new Map()
     const deadlinesByNote = new Map()
     dependencies.forEach(dep => {
-      const from = milestoneById.get(dep.fromId)
-      const to = milestoneById.get(dep.toId)
+      const from = timeSlotById.get(dep.fromId)
+      const to = timeSlotById.get(dep.toId)
       if (!from || !to) return
       const fromEnd = from.startCol + from.duration
       const incoming = startsByNote.get(to.noteId)
@@ -1885,7 +1909,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         startsByNote.set(to.noteId, {
           id: `dep-start:${to.noteId}`,
           noteId: to.noteId,
-          milestoneId: to.id,
+          timeSlotId: to.id,
           col: fromEnd,
           dependencyIds: [dep.id],
         })
@@ -1897,7 +1921,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         deadlinesByNote.set(from.noteId, {
           id: `dep-deadline:${from.noteId}`,
           noteId: from.noteId,
-          milestoneId: from.id,
+          timeSlotId: from.id,
           col: to.startCol,
           dependencyIds: [dep.id],
         })
@@ -1909,10 +1933,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       starts: [...startsByNote.values()],
       deadlines: [...deadlinesByNote.values()],
     }
-  }, [dependencies, milestones])
+  }, [dependencies, timeSlots])
 
   // ── Toolbar / mode state ───────────────────────────────────────────────────
-  const [mode,              setMode]              = useState('milestone')
+  const [mode,              setMode]              = useState('timeSlot')
   const [activeDimId,       setActiveDimId]       = useState('')
   const [activeLaneFilterId, setActiveLaneFilterId] = useState('')
   const [axisMode, setAxisMode] = useState('full')
@@ -1922,7 +1946,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [hideCrossCatDeps, setHideCrossCatDeps] = useState(false)
   const [showCrucialDepsOnly, setShowCrucialDepsOnly] = useState(false)
   const [colorDependencyDirection, setColorDependencyDirection] = useState(false)
-  const [milestoneScaleFilter, setMilestoneScaleFilter] = useState(SCALE_VISIBILITY_MODES.HIERARCHY)
+  const [timeSlotScaleFilter, setTimeSlotScaleFilter] = useState(SCALE_VISIBILITY_MODES.HIERARCHY)
   const [reasonModal, setReasonModal] = useState(null)   // null | { depId }
   const [reasonDraft, setReasonDraft] = useState('')
   const reasonInputRef = useRef()
@@ -1936,10 +1960,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [hiddenNotesByLane, setHiddenNotesByLane] = useState({})
   const [revealedConflictNoteIds, setRevealedConflictNoteIds] = useState(new Set())
   const [visibleNoteFilterIds, setVisibleNoteFilterIds] = useState(new Set())
-  const [pendingConflictMilestoneIds, setPendingConflictMilestoneIds] = useState(new Set())
+  const [pendingConflictTimeSlotIds, setPendingConflictTimeSlotIds] = useState(new Set())
   const [warningPrompt, setWarningPrompt] = useState(null)
   const [blinkingDepIds, setBlinkingDepIds] = useState(new Set())
-  const [blinkingMilestoneIds, setBlinkingMilestoneIds] = useState(new Set())
+  const [blinkingTimeSlotIds, setBlinkingTimeSlotIds] = useState(new Set())
   const [pendingDependencyResolveIds, setPendingDependencyResolveIds] = useState(new Set())
   const [dependencyResolveSnapshot, setDependencyResolveSnapshot] = useState(null)
   const [autoResolveDependencyView, setAutoResolveDependencyView] = useState(false)
@@ -2039,7 +2063,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         hideCrossCatDeps: false,
         showCrucialDepsOnly: false,
         colorDependencyDirection: false,
-        milestoneScaleFilter: SCALE_VISIBILITY_MODES.HIERARCHY,
+        timeSlotScaleFilter: SCALE_VISIBILITY_MODES.HIERARCHY,
         leftPanelWidth: 220,
         group: { activeDimId: '', activeLaneFilterId: '' },
         collapsedCategories: [],
@@ -2116,15 +2140,15 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
   const showAllCategories = useCallback(() => setHiddenCatIds(new Set()), [])
 
-  const presentConflictMilestones = useCallback(ids => {
+  const presentConflictTimeSlots = useCallback(ids => {
     const idSet = new Set(ids)
-    const conflictMilestones = milestonesRef.current.filter(m => idSet.has(m.id))
-    const noteIds = conflictMilestones.map(m => m.noteId)
-    if (conflictMilestones.length === 0 || noteIds.length === 0) return
-    const hiddenMilestoneIds = conflictMilestones
+    const conflictTimeSlots = timeSlotsRef.current.filter(m => idSet.has(m.id))
+    const noteIds = conflictTimeSlots.map(m => m.noteId)
+    if (conflictTimeSlots.length === 0 || noteIds.length === 0) return
+    const hiddenTimeSlotIds = conflictTimeSlots
       .filter(m => !noteRowMapRef.current[m.noteId])
       .map(m => m.id)
-    setPendingConflictMilestoneIds(new Set(hiddenMilestoneIds.length ? hiddenMilestoneIds : conflictMilestones.map(m => m.id)))
+    setPendingConflictTimeSlotIds(new Set(hiddenTimeSlotIds.length ? hiddenTimeSlotIds : conflictTimeSlots.map(m => m.id)))
     setRevealedConflictNoteIds(prev => new Set([...prev, ...noteIds]))
     setHiddenCatIds(prev => {
       const next = new Set(prev)
@@ -2167,8 +2191,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       })
       return next
     })
-    setBlinkingMilestoneIds(idSet)
-    window.setTimeout(() => setBlinkingMilestoneIds(new Set()), 3000)
+    setBlinkingTimeSlotIds(idSet)
+    window.setTimeout(() => setBlinkingTimeSlotIds(new Set()), 3000)
     setSelectedDepIds(new Set())
     setSelectedIds(idSet)
   }, [activeDimId, activeLaneFilter, assignments, colorDimId])
@@ -2223,10 +2247,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   // ── Selection + context menu ───────────────────────────────────────────────
   const [selectedIds,  setSelectedIds]  = useState(new Set())
   const [selectedDepIds, setSelectedDepIds] = useState(new Set())
-  const [pinnedMilestoneId, setPinnedMilestoneId] = useState(null)
+  const [pinnedTimeSlotId, setPinnedTimeSlotId] = useState(null)
   const [contextMenu,  setContextMenu]  = useState(null)
   const [clickedNoteId, setClickedNoteId] = useState(null)
   const [copiedNoteId, setCopiedNoteId] = useState(null)
+  const [inheritancePick, setInheritancePick] = useState(null)
 
   // ── DOM refs ───────────────────────────────────────────────────────────────
   const gridBodyRef      = useRef()
@@ -2247,7 +2272,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const dragRef           = useRef(null)         // drag state machine
   const dragAutoScrollRef = useRef(null)
   const yWheelZoomRef     = useRef(false)
-  const milestoneElsRef = useRef(new Map())      // id → DOM element
+  const inheritancePickRef = useRef(null)
+  const completeInheritancePickRef = useRef(null)
+  const timeSlotElsRef = useRef(new Map())      // id → DOM element
   const hoveredCellRef  = useRef(null)
   const drawingRef      = useRef(null)           // { fromId } sync access during drawing
   const previewArrowRef = useRef(null)           // SVG path element for live preview
@@ -2255,8 +2282,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const dependenciesRef = useRef([])
   const deadlinesRef    = useRef([])
   const earliestStartsRef = useRef([])
-  const modeRef         = useRef('milestone')
-  const milestoneScaleFilterRef = useRef(SCALE_VISIBILITY_MODES.HIERARCHY)
+  const modeRef         = useRef('timeSlot')
+  const timeSlotScaleFilterRef = useRef(SCALE_VISIBILITY_MODES.HIERARCHY)
 
   // Keep imperative refs in sync with state (assigned synchronously in render)
   spacingRef.current       = spacing
@@ -2266,37 +2293,38 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   deadlinesRef.current       = effectiveDeadlines
   earliestStartsRef.current  = effectiveEarliestStarts
   modeRef.current            = mode
-  milestoneScaleFilterRef.current = normalizeScaleVisibilityMode(milestoneScaleFilter)
+  timeSlotScaleFilterRef.current = normalizeScaleVisibilityMode(timeSlotScaleFilter)
 
-  const visualRangeFor = useCallback(item => getRenderedVisualRange(item, timeZoomRef.current, milestoneScaleFilterRef.current), [])
+  const visualRangeFor = useCallback(item => getRenderedVisualRange(item, timeZoomRef.current, timeSlotScaleFilterRef.current), [])
   const visualColToMinute = useCallback(col => zoomColToMinute(col, timeZoomRef.current), [])
   const minuteLabel = useCallback(minute => minuteToLabel(minute, timeZoomRef.current), [])
 
   // Live refs that closures read — no useEffect needed
-  const milestonesRef  = useRef([])
-  milestonesRef.current = milestones
+  const timeSlotsRef  = useRef([])
+  timeSlotsRef.current = timeSlots
   const selectedIdsRef = useRef(new Set())
   selectedIdsRef.current = selectedIds
   const selectedDepIdsRef = useRef(new Set())
   selectedDepIdsRef.current = selectedDepIds
-  const pinnedMilestoneIdRef = useRef(null)
-  pinnedMilestoneIdRef.current = pinnedMilestoneId
+  const pinnedTimeSlotIdRef = useRef(null)
+  pinnedTimeSlotIdRef.current = pinnedTimeSlotId
+  inheritancePickRef.current = inheritancePick
 
   const applyTransactionState = useCallback((nextState, previousState = {}) => {
     const next = normalizeTransactionState(nextState)
     const previous = normalizeTransactionState(previousState)
-    const touchedMsIds = new Set([...previous.milestones, ...next.milestones].map(m => m.id))
+    const touchedMsIds = new Set([...previous.timeSlots, ...next.timeSlots].map(m => m.id))
     const touchedDepIds = new Set([...previous.dependencies, ...next.dependencies].map(d => d.id))
-    const nextMsById = new Map(next.milestones.map(m => [m.id, m]))
+    const nextMsById = new Map(next.timeSlots.map(m => [m.id, m]))
     const nextDepById = new Map(next.dependencies.map(d => [d.id, d]))
-    setMilestones(prev => {
+    setTimeSlots(prev => {
       const existingIds = new Set(prev.map(m => m.id))
       return [
         ...prev.flatMap(m => {
           if (!touchedMsIds.has(m.id)) return [m]
           return nextMsById.has(m.id) ? [nextMsById.get(m.id)] : []
         }),
-        ...next.milestones.filter(m => !existingIds.has(m.id)),
+        ...next.timeSlots.filter(m => !existingIds.has(m.id)),
       ]
     })
     setDependencies(prev => {
@@ -2313,11 +2341,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
   const refreshGanttTransactions = useCallback(async () => {
     const [mss, deps, history] = await Promise.all([
-      api.getMilestones(),
+      api.getTimeSlots(),
       api.getDependencies(),
       api.getTransactionHistory(),
     ])
-    setMilestones(mss)
+    setTimeSlots(mss)
     setDependencies(deps)
     setTransactionHistory(history)
   }, [])
@@ -2340,22 +2368,22 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       console.error(err)
       applyTransactionState(before, after)
       const detail = err?.detail
-      if (detail?.type === 'overlap' && Array.isArray(detail.milestoneIds)) {
-        presentConflictMilestones(detail.milestoneIds)
-        showWarningPrompt({ title: 'Milestone overlap', message: detail.message, actions: 'close' })
+      if (detail?.type === 'overlap' && Array.isArray(detail.timeSlotIds)) {
+        presentConflictTimeSlots(detail.timeSlotIds)
+        showWarningPrompt({ title: 'Time slot overlap', message: detail.message, actions: 'close' })
       } else if (detail?.type === 'deadline') {
         showWarningPrompt({ title: 'Hard deadline', message: detail.message, actions: 'close' })
       } else if (detail?.type === 'dependency') {
         const depIds = detail.dependencyIds ?? []
-        const attemptedMilestones = [
-          ...milestonesRef.current.filter(m => !after.milestones.some(next => next.id === m.id)),
-          ...after.milestones,
+        const attemptedTimeSlots = [
+          ...timeSlotsRef.current.filter(m => !after.timeSlots.some(next => next.id === m.id)),
+          ...after.timeSlots,
         ]
         const attemptedDependencies = [
           ...dependenciesRef.current.filter(d => !after.dependencies.some(next => next.id === d.id)),
           ...after.dependencies,
         ]
-        const msMap = Object.fromEntries(attemptedMilestones.map(m => [m.id, m]))
+        const msMap = Object.fromEntries(attemptedTimeSlots.map(m => [m.id, m]))
         const depMap = Object.fromEntries(attemptedDependencies.map(d => [d.id, d]))
         const violations = depIds
           .map(depId => {
@@ -2365,14 +2393,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
             return dep && from && to ? { dep, from, to } : null
           })
           .filter(Boolean)
-        if (violations.length) reportDependencyViolationsRef.current?.(violations, attemptedMilestones, attemptedDependencies)
+        if (violations.length) reportDependencyViolationsRef.current?.(violations, attemptedTimeSlots, attemptedDependencies)
         else showWarningPrompt({ title: 'Dependency violation', message: detail.message, actions: 'dependency', dependencyIds: depIds })
       } else {
         showTransactionFailure(err)
       }
       return false
     }
-  }, [applyTransactionState, presentConflictMilestones, refreshGanttTransactions, showTransactionFailure, showWarningPrompt])
+  }, [applyTransactionState, presentConflictTimeSlots, refreshGanttTransactions, showTransactionFailure, showWarningPrompt])
 
   const undoGanttTransaction = useCallback(async () => {
     try {
@@ -2456,28 +2484,28 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
   useEffect(() => {
     if (selectedIds.size === 0) return
-    const milestoneById = new Map(milestones.map(m => [m.id, m]))
+    const timeSlotById = new Map(timeSlots.map(m => [m.id, m]))
     let changed = false
     const next = new Set()
     selectedIds.forEach(msId => {
-      const milestone = milestoneById.get(msId)
-      if (milestone && noteRowMap[milestone.noteId]) {
+      const timeSlot = timeSlotById.get(msId)
+      if (timeSlot && noteRowMap[timeSlot.noteId]) {
         next.add(msId)
       } else {
         changed = true
       }
     })
     if (changed) setSelectedIds(next)
-  }, [noteRowMap, milestones, selectedIds])
+  }, [noteRowMap, timeSlots, selectedIds])
 
   useEffect(() => {
-    if (!pinnedMilestoneId) return
-    if (!milestones.some(m => m.id === pinnedMilestoneId)) setPinnedMilestoneId(null)
-  }, [milestones, pinnedMilestoneId])
+    if (!pinnedTimeSlotId) return
+    if (!timeSlots.some(m => m.id === pinnedTimeSlotId)) setPinnedTimeSlotId(null)
+  }, [timeSlots, pinnedTimeSlotId])
 
   useEffect(() => {
-    if (pendingConflictMilestoneIds.size === 0) return
-    const conflictMs = milestones.filter(m => pendingConflictMilestoneIds.has(m.id) && noteRowMap[m.noteId])
+    if (pendingConflictTimeSlotIds.size === 0) return
+    const conflictMs = timeSlots.filter(m => pendingConflictTimeSlotIds.has(m.id) && noteRowMap[m.noteId])
     if (conflictMs.length === 0) return
     const target = conflictMs[0]
     const row = noteRowMap[target.noteId]
@@ -2497,18 +2525,18 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       el.scrollLeft = nextLeft
       scrollLeftRef.current = el.scrollLeft
       setScrollLeft(el.scrollLeft)
-      setPendingConflictMilestoneIds(new Set())
+      setPendingConflictTimeSlotIds(new Set())
     })
-  }, [noteRowMap, milestones, pendingConflictMilestoneIds])
+  }, [noteRowMap, timeSlots, pendingConflictTimeSlotIds])
 
   const selectedNoteIds = useMemo(() => {
     const set = new Set()
     selectedIds.forEach(msId => {
-      const m = milestones.find(m => m.id === msId)
+      const m = timeSlots.find(m => m.id === msId)
       if (m) set.add(m.noteId)
     })
     return set
-  }, [selectedIds, milestones])
+  }, [selectedIds, timeSlots])
 
   const activeNoteIdForCopy = clickedNoteId || (selectedNoteIds.size === 1 ? [...selectedNoteIds][0] : null)
 
@@ -2542,6 +2570,52 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (!copiedNoteId) return
     await duplicateNoteInSchedule(copiedNoteId)
   }, [copiedNoteId, duplicateNoteInSchedule])
+
+  const startInheritancePick = useCallback((noteId, direction) => {
+    if (!noteId) return
+    setInheritancePick({ noteId, direction })
+    setClickedNoteId(noteId)
+    showWarningPrompt({
+      title: direction === 'child' ? 'Pick parent note' : 'Pick child note',
+      message: direction === 'child'
+        ? 'Click the note or time slot this note should inherit from.'
+        : 'Click the note or time slot that should inherit from this note.',
+      actions: 'close',
+    })
+  }, [showWarningPrompt])
+
+  const completeInheritancePick = useCallback(async targetNoteId => {
+    const draft = inheritancePickRef.current
+    if (!draft || !targetNoteId) return false
+    if (draft.noteId === targetNoteId) {
+      showWarningPrompt({ title: 'Inheritance not changed', message: 'A note cannot inherit from itself.', actions: 'close' })
+      return true
+    }
+    const childNoteId = draft.direction === 'child' ? draft.noteId : targetNoteId
+    const parentNoteId = draft.direction === 'child' ? targetNoteId : draft.noteId
+    try {
+      const saved = await api.setNoteInheritance(childNoteId, parentNoteId)
+      setNoteInheritance(prev => [
+        ...prev.filter(link => link.childNoteId !== saved.childNoteId),
+        saved,
+      ])
+      setClickedNoteId(childNoteId)
+      setInheritancePick(null)
+      clearWarningPrompt()
+      await refreshScheduleData()
+      return true
+    } catch (err) {
+      console.error(err)
+      showWarningPrompt({
+        title: 'Inheritance rejected',
+        message: err?.message || 'This inheritance relationship is not valid.',
+        actions: 'close',
+      })
+      return true
+    }
+  }, [clearWarningPrompt, refreshScheduleData, showWarningPrompt])
+
+  completeInheritancePickRef.current = completeInheritancePick
 
   const applyNoteVisibilityFilter = useCallback(noteIds => {
     if (noteIds.size === 0) return
@@ -2615,8 +2689,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setHiddenNotesByLane({})
   }, [])
 
-  const resolveDependencySelection = useCallback((milestoneIds = null) => {
-    const explicitIds = milestoneIds ? new Set(milestoneIds) : null
+  const resolveDependencySelection = useCallback((timeSlotIds = null) => {
+    const explicitIds = timeSlotIds ? new Set(timeSlotIds) : null
     const idsToResolve = explicitIds?.size > 0
       ? explicitIds
       : pendingDependencyResolveIds.size > 0
@@ -2625,8 +2699,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const accumulatedIds = new Set([...selectedIdsRef.current, ...idsToResolve])
     const noteIds = new Set()
     accumulatedIds.forEach(msId => {
-      const milestone = milestonesRef.current.find(m => m.id === msId)
-      if (milestone) noteIds.add(milestone.noteId)
+      const timeSlot = timeSlotsRef.current.find(m => m.id === msId)
+      if (timeSlot) noteIds.add(timeSlot.noteId)
     })
     const snapshot = capturePerspectiveStateRef.current?.()
     if (snapshot) setDependencyResolveSnapshot(prev => prev ?? snapshot)
@@ -2741,18 +2815,18 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     }
   }, [activeDimId, categories])
 
-  const getMilestoneColor = useCallback(milestone => {
-    if (!colorDimId) return milestone.color
+  const getTimeSlotColor = useCallback(timeSlot => {
+    if (!colorDimId) return timeSlot.color
     if (colorDimId === FILTER_DIMENSION_ID) {
-      const match = filterCategories.find(cat => filterMatchesNote(savedFilters.find(f => f.id === cat.filterId), milestone.noteId, assignments))
+      const match = filterCategories.find(cat => filterMatchesNote(savedFilters.find(f => f.id === cat.filterId), timeSlot.noteId, assignments))
       return match?.color ?? null
     }
-    const catId = assignments[milestone.noteId]?.[colorDimId]
+    const catId = assignments[timeSlot.noteId]?.[colorDimId]
     if (!catId) return null
     return categories.find(c => c.id === catId)?.color ?? null
   }, [assignments, categories, colorDimId, filterCategories, savedFilters])
 
-  // Color for the note row indicator dot — same logic as milestones but returns null when unassigned
+  // Color for the note row indicator dot — same logic as timeSlots but returns null when unassigned
   const getNoteColor = useCallback(noteId => {
     if (!colorDimId) return null
     if (colorDimId === FILTER_DIMENSION_ID) {
@@ -2765,8 +2839,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }, [assignments, categories, colorDimId, filterCategories, savedFilters])
 
   const getDependencyPathD = useCallback((dep, overrides = {}) => {
-    const from = overrides[dep.fromId] ?? milestonesRef.current.find(m => m.id === dep.fromId)
-    const to   = overrides[dep.toId]   ?? milestonesRef.current.find(m => m.id === dep.toId)
+    const from = overrides[dep.fromId] ?? timeSlotsRef.current.find(m => m.id === dep.fromId)
+    const to   = overrides[dep.toId]   ?? timeSlotsRef.current.find(m => m.id === dep.toId)
     if (!from || !to) return null
     const fromRow = noteRowMapRef.current[from.noteId]
     const toRow   = noteRowMapRef.current[to.noteId]
@@ -2803,23 +2877,23 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     ? rowItems[rowItems.length - 1].top + rowItems[rowItems.length - 1].height
     : 0
 
-  // Violations: recomputed whenever milestones or dependencies change
-  const violationIds = useMemo(() => computeViolations(milestones, dependencies), [milestones, dependencies])
+  // Violations: recomputed whenever timeSlots or dependencies change
+  const violationIds = useMemo(() => computeViolations(timeSlots, dependencies), [timeSlots, dependencies])
   const crucialDependencyIds = useMemo(() => getCrucialDependencyIds(dependencies), [dependencies])
 
   const reportOverlapViolation = useCallback(ids => {
-    presentConflictMilestones(ids)
+    presentConflictTimeSlots(ids)
     showWarningPrompt({
-      title: 'Milestone overlap',
-      message: 'Milestones in the same note row cannot overlap or pass each other.',
+      title: 'Time slot overlap',
+      message: 'Time slots in the same note row cannot overlap or pass each other.',
       actions: 'close',
     })
-  }, [presentConflictMilestones, showWarningPrompt])
+  }, [presentConflictTimeSlots, showWarningPrompt])
 
   const reportDeadlineViolation = useCallback(() => {
     showWarningPrompt({
       title: 'Hard deadline',
-      message: "Milestones cannot move before today or past their note's hard deadline.",
+      message: "Time slots cannot move before today or past their note's hard deadline.",
       actions: 'close',
     })
   }, [showWarningPrompt])
@@ -2827,36 +2901,36 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const reportEarliestStartViolation = useCallback(() => {
     showWarningPrompt({
       title: 'Earliest start date',
-      message: "Milestones cannot start before the row's earliest start date.",
+      message: "Time slots cannot start before the row's earliest start date.",
       actions: 'close',
     })
   }, [showWarningPrompt])
 
-  const reportDependencyViolations = useCallback((violations, allMilestones = milestonesRef.current, allDependencies = dependenciesRef.current) => {
-    const conflict = getCascadingDependencyConflict(allMilestones, allDependencies, violations)
+  const reportDependencyViolations = useCallback((violations, allTimeSlots = timeSlotsRef.current, allDependencies = dependenciesRef.current) => {
+    const conflict = getCascadingDependencyConflict(allTimeSlots, allDependencies, violations)
     const depIds = conflict.depIds
-    const milestoneIds = conflict.milestoneIds
-    const conflictMilestones = allMilestones.filter(m => milestoneIds.has(m.id))
-    const noteIds = new Set(conflictMilestones.map(m => m.noteId))
-    const smallestDuration = conflictMilestones.length ? Math.min(...conflictMilestones.map(m => m.duration)) : 0
+    const timeSlotIds = conflict.timeSlotIds
+    const conflictTimeSlots = allTimeSlots.filter(m => timeSlotIds.has(m.id))
+    const noteIds = new Set(conflictTimeSlots.map(m => m.noteId))
+    const smallestDuration = conflictTimeSlots.length ? Math.min(...conflictTimeSlots.map(m => m.duration)) : 0
     const previousSnapshot = capturePerspectiveStateRef.current?.()
     const shouldAutoSelect = autoResolveDependencyViewRef.current
 
     if (shouldAutoSelect) {
-      resolveDependencySelectionRef.current?.(milestoneIds)
+      resolveDependencySelectionRef.current?.(timeSlotIds)
     } else {
       // Build the note set for the filter: new conflict notes + notes of already-selected
-      // milestones. Without this union, applyNoteVisibilityFilter would hide the notes of
-      // milestones that were selected from a previous conflict step, and the deselection
+      // timeSlots. Without this union, applyNoteVisibilityFilter would hide the notes of
+      // timeSlots that were selected from a previous conflict step, and the deselection
       // effect would then strip them from selectedIds before the user can click Resolve.
       const resolveNoteIds = new Set(noteIds)
-      milestonesRef.current.forEach(m => {
+      timeSlotsRef.current.forEach(m => {
         if (selectedIdsRef.current.has(m.id)) resolveNoteIds.add(m.noteId)
       })
       setSelectedDepIds(new Set())
       setRevealedConflictNoteIds(resolveNoteIds)
-      setPendingConflictMilestoneIds(milestoneIds)
-      setPendingDependencyResolveIds(milestoneIds)
+      setPendingConflictTimeSlotIds(timeSlotIds)
+      setPendingDependencyResolveIds(timeSlotIds)
       setActiveFilterIds([])
       setQuickFilters([])
       setPaintCat(null)
@@ -2866,29 +2940,29 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
     setTimeZoom(zoomForConflictGap(smallestDuration))
     setBlinkingDepIds(new Set(depIds))
-    setBlinkingMilestoneIds(new Set(milestoneIds))
+    setBlinkingTimeSlotIds(new Set(timeSlotIds))
     window.setTimeout(() => setBlinkingDepIds(new Set()), 3000)
-    window.setTimeout(() => setBlinkingMilestoneIds(new Set()), 3000)
+    window.setTimeout(() => setBlinkingTimeSlotIds(new Set()), 3000)
     showWarningPrompt({
       title: 'Dependency violation',
       message: conflict.violations.some(v => v.type === 'scale_mismatch')
         ? conflict.violations.length === 1
-          ? 'Dependency scale mismatch. Dependencies can only link milestones on the same planning scale.'
+          ? 'Dependency scale mismatch. Dependencies can only link time slots on the same planning scale.'
           : `${conflict.violations.length} dependency constraints were violated, including scale mismatch.`
         : conflict.violations.length === 1
-          ? 'A predecessor milestone must finish before its successor starts.'
+          ? 'A predecessor time slot must finish before its successor starts.'
           : `${conflict.violations.length} dependency constraints were violated.`,
       actions: 'dependency',
       dependencyIds: depIds,
-      milestoneIds,
+      timeSlotIds,
     })
   }, [applyNoteVisibilityFilter, showWarningPrompt])
   reportDependencyViolationsRef.current = reportDependencyViolations
 
-  const maybeBlockDependencyWarning = useCallback((nextMilestones, nextDependencies) => {
-    const violations = getDependencyViolations(nextMilestones, nextDependencies)
+  const maybeBlockDependencyWarning = useCallback((nextTimeSlots, nextDependencies) => {
+    const violations = getDependencyViolations(nextTimeSlots, nextDependencies)
     if (violations.length === 0) return false
-    reportDependencyViolations(violations, nextMilestones, nextDependencies)
+    reportDependencyViolations(violations, nextTimeSlots, nextDependencies)
     return true
   }, [reportDependencyViolations])
 
@@ -2973,7 +3047,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       if (highlightRef.current) highlightRef.current.style.display = ''
       return
     }
-    if (modeRef.current !== 'milestone') {
+    if (modeRef.current !== 'timeSlot') {
       hoveredCellRef.current = null
       if (highlightRef.current) highlightRef.current.style.display = ''
       return
@@ -3061,11 +3135,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const prevZoom = timeZoomRef.current
     if (nextZoom === prevZoom) return
     const sp = spacingRef.current
-    const pinned = pinnedMilestoneIdRef.current
-      ? milestonesRef.current.find(m => m.id === pinnedMilestoneIdRef.current)
+    const pinned = pinnedTimeSlotIdRef.current
+      ? timeSlotsRef.current.find(m => m.id === pinnedTimeSlotIdRef.current)
       : null
     const selectedAnchor = [...selectedIdsRef.current]
-      .map(id => milestonesRef.current.find(m => m.id === id))
+      .map(id => timeSlotsRef.current.find(m => m.id === id))
       .find(Boolean)
     const anchor = pinned ?? selectedAnchor
     const currentMinute = anchor
@@ -3110,8 +3184,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }, [visualColToMinute])
 
   const isNoteRowReadOnly = useCallback((noteId) => {
-    const ms = milestonesRef.current.find(m => m.noteId === noteId)
-    return !!ms && !isMilestoneEditableAtZoom(ms.duration, timeZoomRef.current, ms.startCol)
+    const ms = timeSlotsRef.current.find(m => m.noteId === noteId)
+    return !!ms && !isTimeSlotEditableAtZoom(ms.duration, timeZoomRef.current, ms.startCol)
   }, [])
 
   const handleContextMenu = useCallback(e => {
@@ -3124,29 +3198,29 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       setContextMenu({ type: 'header', x: e.clientX, y: e.clientY, col, unitLabel: TIME_ZOOM_BY_VALUE[timeZoomRef.current]?.label.toLowerCase() ?? 'unit' })
       return
     }
-    if (e.target.closest('[data-ms-id]')) return  // right-click on milestone — skip for now
+    if (e.target.closest('[data-ms-id]')) return  // right-click on timeSlot — skip for now
 
     const hasDeadline = deadlines.some(d => d.noteId === cell.noteId)
     const hasEarliestStart = earliestStarts.some(e => e.noteId === cell.noteId)
     const readOnly = isNoteRowReadOnly(cell.noteId)
-    const rowMs = readOnly ? milestonesRef.current.find(m => m.noteId === cell.noteId) : null
-    const readOnlyLabel = rowMs ? scaleLabelForZoom(getMilestoneLevel(rowMs.duration, rowMs.startCol)) : null
+    const rowMs = readOnly ? timeSlotsRef.current.find(m => m.noteId === cell.noteId) : null
+    const readOnlyLabel = rowMs ? scaleLabelForZoom(getTimeSlotLevel(rowMs.duration, rowMs.startCol)) : null
     setClickedNoteId(cell.noteId)
     setContextMenu({ type: 'cell', x: e.clientX, y: e.clientY, col: cell.col,
       noteId: cell.noteId, noteTitle: cell.noteTitle, color: cell.color, hasDeadline, hasEarliestStart,
       isReadOnly: readOnly, readOnlyLabel })
   }, [deadlines, earliestStarts, getNoteCellFromPointer, isNoteRowReadOnly])
 
-  // ── Milestone CRUD ─────────────────────────────────────────────────────────
-  const handleCreateMilestone = useCallback(async (noteId, startCol, color) => {
+  // ── TimeSlot CRUD ─────────────────────────────────────────────────────────
+  const handleCreateTimeSlot = useCallback(async (noteId, startCol, color) => {
     clearWarningPrompt()
     const duration = defaultDurationForZoom(timeZoomRef.current, startCol)
     const ms = { id: newClientId('ms'), noteId, startCol, duration, title: '', color: color || '#1a73e8' }
-    const scaleConflict = noteMilestoneScaleConflict(milestonesRef.current, noteId, duration, startCol)
+    const scaleConflict = noteTimeSlotScaleConflict(timeSlotsRef.current, noteId, duration, startCol)
     if (scaleConflict) {
       showWarningPrompt({
         title: 'Planning scale locked',
-        message: `This note already contains ${milestoneScaleBucket(scaleConflict)}-scale milestones. New milestones in the same note must use that same planning scale.`,
+        message: `This note already contains ${timeSlotScaleBucket(scaleConflict)}-scale time slots. New time slots in the same note must use that same planning scale.`,
         actions: 'close',
       })
       return
@@ -3161,53 +3235,53 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       reportDeadlineViolation()
       return
     }
-    const overlap = getOverlapViolation([...milestonesRef.current, ms], new Set([ms.id]))
+    const overlap = getOverlapViolation([...timeSlotsRef.current, ms], new Set([ms.id]))
     if (overlap) {
       reportOverlapViolation(overlap)
       return
     }
     await commitTransaction({
       id: newClientId('tx'),
-      type: 'milestone.create',
-      label: 'Create milestone',
-      before: { milestones: [], dependencies: [] },
-      after: { milestones: [ms], dependencies: [] },
+      type: 'timeSlot.create',
+      label: 'Create time slot',
+      before: { timeSlots: [], dependencies: [] },
+      after: { timeSlots: [ms], dependencies: [] },
     })
   }, [clearWarningPrompt, commitTransaction, reportDeadlineViolation, reportOverlapViolation, showWarningPrompt])
 
   const handleGridDoubleClick = useCallback(e => {
-    if (modeRef.current !== 'milestone') return
+    if (modeRef.current !== 'timeSlot') return
     if (e.target.closest('[data-ms-id]')) return
     const cell = getNoteCellFromPointer(e)
     if (!cell || cell.type !== 'cell') return
     if (isNoteRowReadOnly(cell.noteId)) return
     e.preventDefault()
-    handleCreateMilestone(cell.noteId, cell.col, cell.color)
-  }, [getNoteCellFromPointer, handleCreateMilestone, isNoteRowReadOnly])
+    handleCreateTimeSlot(cell.noteId, cell.col, cell.color)
+  }, [getNoteCellFromPointer, handleCreateTimeSlot, isNoteRowReadOnly])
 
   // ── Column insert / delete ─────────────────────────────────────────────────
   const handleInsertTimeUnit = useCallback(async col => {
     const unit = getZoomUnit(timeZoomRef.current)
     const updates = []
-    milestonesRef.current.forEach(m => {
+    timeSlotsRef.current.forEach(m => {
       if (m.startCol >= col) updates.push({ id: m.id, startCol: m.startCol + unit })
     })
     if (updates.length) {
-      const before = updates.map(u => milestonesRef.current.find(m => m.id === u.id)).filter(Boolean)
+      const before = updates.map(u => timeSlotsRef.current.find(m => m.id === u.id)).filter(Boolean)
       const after = before.map(m => ({ ...m, startCol: m.startCol + unit }))
       const tx = {
         id: newClientId('tx'),
-        type: 'milestone.move-many',
+        type: 'timeSlot.move-many',
         label: 'Insert time unit',
-        before: { milestones: before, dependencies: [] },
-        after: { milestones: after, dependencies: [] },
+        before: { timeSlots: before, dependencies: [] },
+        after: { timeSlots: after, dependencies: [] },
       }
-      const nextMilestones = milestonesRef.current.map(m => after.find(candidate => candidate.id === m.id) ?? m)
-      const overlap = getOverlapViolation(nextMilestones, new Set(before.map(m => m.id)))
+      const nextTimeSlots = timeSlotsRef.current.map(m => after.find(candidate => candidate.id === m.id) ?? m)
+      const overlap = getOverlapViolation(nextTimeSlots, new Set(before.map(m => m.id)))
       if (overlap) { reportOverlapViolation(overlap); return }
-      const order = getMilestoneOrderViolation(milestonesRef.current, nextMilestones, new Set(before.map(m => m.id)))
+      const order = getTimeSlotOrderViolation(timeSlotsRef.current, nextTimeSlots, new Set(before.map(m => m.id)))
       if (order) { reportOverlapViolation(order); return }
-      if (maybeBlockDependencyWarning(nextMilestones, dependenciesRef.current)) return
+      if (maybeBlockDependencyWarning(nextTimeSlots, dependenciesRef.current)) return
       await commitTransaction(tx)
     }
   }, [commitTransaction, maybeBlockDependencyWarning, reportOverlapViolation])
@@ -3216,7 +3290,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const unit = getZoomUnit(timeZoomRef.current)
     const cutEnd = col + unit
     const updates = []
-    const updated = milestonesRef.current.map(m => {
+    const updated = timeSlotsRef.current.map(m => {
       if (m.startCol >= cutEnd) {
         updates.push({ id: m.id, startCol: Math.max(0, m.startCol - unit) })
         return { ...m, startCol: Math.max(0, m.startCol - unit) }
@@ -3224,25 +3298,25 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       const overlapStart = Math.max(m.startCol, col)
       const overlapEnd = Math.min(m.startCol + m.duration, cutEnd)
       if (overlapStart < overlapEnd) {
-        const d = Math.max(MIN_MILESTONE_DURATION, m.duration - (overlapEnd - overlapStart))
+        const d = Math.max(MIN_TIME_SLOT_DURATION, m.duration - (overlapEnd - overlapStart))
         updates.push({ id: m.id, duration: d })
         return { ...m, duration: d }
       }
       return m
     })
     if (updates.length) {
-      const before = updates.map(u => milestonesRef.current.find(m => m.id === u.id)).filter(Boolean)
+      const before = updates.map(u => timeSlotsRef.current.find(m => m.id === u.id)).filter(Boolean)
       const after = before.map(m => updated.find(next => next.id === m.id)).filter(Boolean)
       const tx = {
         id: newClientId('tx'),
-        type: 'milestone.move-many',
+        type: 'timeSlot.move-many',
         label: 'Delete time unit',
-        before: { milestones: before, dependencies: [] },
-        after: { milestones: after, dependencies: [] },
+        before: { timeSlots: before, dependencies: [] },
+        after: { timeSlots: after, dependencies: [] },
       }
       const overlap = getOverlapViolation(updated, new Set(before.map(m => m.id)))
       if (overlap) { reportOverlapViolation(overlap); return }
-      const order = getMilestoneOrderViolation(milestonesRef.current, updated, new Set(before.map(m => m.id)))
+      const order = getTimeSlotOrderViolation(timeSlotsRef.current, updated, new Set(before.map(m => m.id)))
       if (order) { reportOverlapViolation(order); return }
       if (maybeBlockDependencyWarning(updated, dependenciesRef.current)) return
       await commitTransaction(tx)
@@ -3250,32 +3324,32 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }, [commitTransaction, maybeBlockDependencyWarning, reportOverlapViolation])
 
   // ── Drag helpers ───────────────────────────────────────────────────────────
-  const showScaleEditBlocked = useCallback((milestone) => {
-    const level = getMilestoneLevel(milestone.duration, milestone.startCol)
+  const showScaleEditBlocked = useCallback((timeSlot) => {
+    const level = getTimeSlotLevel(timeSlot.duration, timeSlot.startCol)
     showWarningPrompt({
       title: 'Different planning scale',
-      message: `This is a ${milestoneScaleBucket(milestone)}-scale milestone. Switch to ${scaleLabelForZoom(level)} view to move, resize, or link it.`,
+      message: `This is a ${timeSlotScaleBucket(timeSlot)}-scale time slot. Switch to ${scaleLabelForZoom(level)} view to move, resize, or link it.`,
       actions: 'close',
     })
   }, [showWarningPrompt])
 
-  const canEditMilestoneNow = useCallback((milestone) => (
-    milestone && isMilestoneEditableAtZoom(milestone.duration, timeZoomRef.current, milestone.startCol)
+  const canEditTimeSlotNow = useCallback((timeSlot) => (
+    timeSlot && isTimeSlotEditableAtZoom(timeSlot.duration, timeZoomRef.current, timeSlot.startCol)
   ), [])
 
-  const findScaleLockedMilestone = useCallback((milestoneIds) => {
-    for (const id of milestoneIds) {
-      const milestone = milestonesRef.current.find(m => m.id === id)
-      if (milestone && !canEditMilestoneNow(milestone)) return milestone
+  const findScaleLockedTimeSlot = useCallback((timeSlotIds) => {
+    for (const id of timeSlotIds) {
+      const timeSlot = timeSlotsRef.current.find(m => m.id === id)
+      if (timeSlot && !canEditTimeSlotNow(timeSlot)) return timeSlot
     }
     return null
-  }, [canEditMilestoneNow])
+  }, [canEditTimeSlotNow])
 
   function startMoveDrag(startMouseX, originals) {
     if (Object.keys(originals).length === 0) return
-    const blockedMilestone = findScaleLockedMilestone(Object.keys(originals))
-    if (blockedMilestone) {
-      showScaleEditBlocked(blockedMilestone)
+    const blockedTimeSlot = findScaleLockedTimeSlot(Object.keys(originals))
+    if (blockedTimeSlot) {
+      showScaleEditBlocked(blockedTimeSlot)
       return
     }
     clearWarningPrompt()
@@ -3303,7 +3377,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       let maxDelta = Infinity
       let minDeltaFromEarliest = -Infinity
       Object.entries(originals).forEach(([id, orig]) => {
-        const ms = milestonesRef.current.find(m => m.id === id)
+        const ms = timeSlotsRef.current.find(m => m.id === id)
         const dl = findApplicableDeadline(deadlinesRef.current, ms)
         const es = findApplicableEarliestStart(earliestStartsRef.current, ms)
         if (isMonthMove) {
@@ -3361,7 +3435,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       return clamped
     }
 
-    const buildMovedMilestones = colDelta => milestonesRef.current.map(m => {
+    const buildMovedTimeSlots = colDelta => timeSlotsRef.current.map(m => {
       if (!originals[m.id]) return m
       if (isMonthMove) {
         const origVisualStart = minuteToZoomCol(originals[m.id].startCol, 'months')
@@ -3378,7 +3452,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       Object.entries(originals).forEach(([id, orig]) => {
         const origVisual = getVisualRange(orig, timeZoomRef.current)
         dx = Math.max(dx, -origVisual.startCol * sp.colW)
-        const ms = milestonesRef.current.find(m => m.id === id)
+        const ms = timeSlotsRef.current.find(m => m.id === id)
         const dl = findApplicableDeadline(deadlinesRef.current, ms)
         if (dl) {
           const maxVisual = isMonthMove
@@ -3402,11 +3476,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       if (Math.abs(dx) > 2) dragRef.current.hasMoved = true
       const overrides = {}
       Object.entries(originals).forEach(([id, orig]) => {
-        const ms = milestonesRef.current.find(m => m.id === id)
+        const ms = timeSlotsRef.current.find(m => m.id === id)
         const origVisual = getVisualRange(orig, timeZoomRef.current)
         const leftPx = origVisual.startCol * sp.colW + dx
         if (ms) overrides[id] = { ...ms, leftPx, widthPx: origVisual.duration * sp.colW }
-        const el = milestoneElsRef.current.get(id)
+        const el = timeSlotElsRef.current.get(id)
         if (el) el.style.left = `${leftPx}px`
       })
       updateDependencyPaths(overrides)
@@ -3469,7 +3543,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       dragRef.current = null
       const resetToOriginal = () => {
         Object.entries(originals).forEach(([id, orig]) => {
-          const el = milestoneElsRef.current.get(id)
+          const el = timeSlotElsRef.current.get(id)
           const origVisual = getVisualRange(orig, timeZoomRef.current)
           if (el) el.style.left = `${origVisual.startCol * sp.colW}px`
         })
@@ -3478,7 +3552,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       if (!hasMoved) { resetToOriginal(); return }
 
       const colDelta = getSnappedColDelta(e.clientX)
-      const finalOverlap = getOverlapViolation(buildMovedMilestones(colDelta), new Set(Object.keys(originals)))
+      const finalOverlap = getOverlapViolation(buildMovedTimeSlots(colDelta), new Set(Object.keys(originals)))
       if (finalOverlap) {
         resetToOriginal()
         reportOverlapViolation(finalOverlap)
@@ -3487,15 +3561,15 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       if (hitBoundary) reportDeadlineViolation()
       if (hitEarliestBoundary) reportEarliestStartViolation()
       const updates = []
-      const next = milestonesRef.current.map(m => {
+      const next = timeSlotsRef.current.map(m => {
         if (!originals[m.id]) return m
-        const moved = buildMovedMilestones(colDelta).find(candidate => candidate.id === m.id)
+        const moved = buildMovedTimeSlots(colDelta).find(candidate => candidate.id === m.id)
         if (moved && (moved.startCol !== originals[m.id].startCol || moved.duration !== originals[m.id].duration)) {
           updates.push({ id: m.id, startCol: moved.startCol, duration: moved.duration })
         }
         return moved ?? m
       })
-      const finalOrder = getMilestoneOrderViolation(milestonesRef.current, next, new Set(Object.keys(originals)))
+      const finalOrder = getTimeSlotOrderViolation(timeSlotsRef.current, next, new Set(Object.keys(originals)))
       if (finalOrder) {
         resetToOriginal()
         reportOverlapViolation(finalOrder)
@@ -3504,15 +3578,15 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       if (updates.length) {
         const applyMove = async () => {
           const before = Object.entries(originals)
-            .map(([id]) => milestonesRef.current.find(m => m.id === id))
+            .map(([id]) => timeSlotsRef.current.find(m => m.id === id))
             .filter(Boolean)
           const after = before.map(m => next.find(candidate => candidate.id === m.id)).filter(Boolean)
           await commitTransaction({
             id: newClientId('tx'),
-            type: before.length > 1 ? 'milestone.move-many' : 'milestone.move',
-            label: before.length > 1 ? 'Move milestones' : 'Move milestone',
-            before: { milestones: before, dependencies: [] },
-            after: { milestones: after, dependencies: [] },
+            type: before.length > 1 ? 'timeSlot.move-many' : 'timeSlot.move',
+            label: before.length > 1 ? 'Move time slots' : 'Move time slot',
+            before: { timeSlots: before, dependencies: [] },
+            after: { timeSlots: after, dependencies: [] },
           })
         }
         const blocked = maybeBlockDependencyWarning(next, dependenciesRef.current)
@@ -3530,11 +3604,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     document.addEventListener('mouseup', onUp)
   }
 
-  function startResizeDrag(startMouseX, milestoneId, side) {
+  function startResizeDrag(startMouseX, timeSlotId, side) {
     const sp  = spacingRef.current
-    const ms  = milestonesRef.current.find(m => m.id === milestoneId)
+    const ms  = timeSlotsRef.current.find(m => m.id === timeSlotId)
     if (!ms) return
-    if (!canEditMilestoneNow(ms)) {
+    if (!canEditTimeSlotNow(ms)) {
       showScaleEditBlocked(ms)
       return
     }
@@ -3545,7 +3619,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     document.body.style.cursor = 'col-resize'
 
     const resetToOriginal = () => {
-      const el = milestoneElsRef.current.get(milestoneId)
+      const el = timeSlotElsRef.current.get(timeSlotId)
       if (el) {
         const origVisual = getVisualRange({ startCol: origStart, duration: origDur }, timeZoomRef.current)
         el.style.left = `${origVisual.startCol * sp.colW}px`
@@ -3569,7 +3643,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         const requestedVisual = snapPxToCol(origVisualStart * sp.colW + dx, sp.colW)
         const requested = isMonthResize ? zoomColToMinute(requestedVisual, 'months') : requestedVisual * getZoomUnit(timeZoomRef.current)
         const minRightVisual = minuteEndToZoomCol(origRight, timeZoomRef.current) - 1
-        const maxLeft = isMonthResize ? zoomColToMinute(minRightVisual, 'months') : origRight - MIN_MILESTONE_DURATION
+        const maxLeft = isMonthResize ? zoomColToMinute(minRightVisual, 'months') : origRight - MIN_TIME_SLOT_DURATION
         const esMinLeft = esResize ? esResize.col : 0
         const leftCol = Math.min(maxLeft, Math.max(esMinLeft, requested))
         if (dragRef.current && leftCol !== requested) {
@@ -3583,19 +3657,19 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       const requested = isMonthResize ? zoomColToMinute(requestedVisual, 'months') : requestedVisual * getZoomUnit(timeZoomRef.current)
       const minRight = isMonthResize
         ? zoomColToMinute(minuteToZoomCol(origStart, 'months') + 1, 'months')
-        : origStart + MIN_MILESTONE_DURATION
+        : origStart + MIN_TIME_SLOT_DURATION
       const rightCol = Math.min(maxRight, Math.max(minRight, requested))
       if (dragRef.current && rightCol !== requested) dragRef.current.hitBoundary = true
       return { startCol: origStart, duration: rightCol - origStart }
     }
 
-    const buildResizedMilestones = next => milestonesRef.current.map(m =>
-      m.id === milestoneId ? { ...m, startCol: next.startCol, duration: next.duration } : m
+    const buildResizedTimeSlots = next => timeSlotsRef.current.map(m =>
+      m.id === timeSlotId ? { ...m, startCol: next.startCol, duration: next.duration } : m
     )
 
     const getSafeResize = clientX => {
       const next = getSnappedResize(clientX)
-      const overlap = getOverlapViolation(buildResizedMilestones(next), new Set([milestoneId]))
+      const overlap = getOverlapViolation(buildResizedTimeSlots(next), new Set([timeSlotId]))
       if (!overlap) {
         if (dragRef.current) {
           dragRef.current.lastValid = next
@@ -3614,9 +3688,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     }
 
     const onMove = e => {
-      const el   = milestoneElsRef.current.get(milestoneId); if (!el) return
+      const el   = timeSlotElsRef.current.get(timeSlotId); if (!el) return
       const next = getLiveResize(e.clientX)
-      const overrides = { [milestoneId]: { ...ms, leftPx: next.leftPx, widthPx: next.widthPx } }
+      const overrides = { [timeSlotId]: { ...ms, leftPx: next.leftPx, widthPx: next.widthPx } }
       if (side === 'left') {
         el.style.left     = `${next.leftPx}px`
         el.style.width    = `${next.widthPx}px`
@@ -3635,8 +3709,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       dragRef.current = null
       const { startCol: newStart, duration: newDur } = getSnappedResize(e.clientX)
       const finalOverlap = dragState.blockedOverlap || getOverlapViolation(
-        buildResizedMilestones({ startCol: newStart, duration: newDur }),
-        new Set([milestoneId])
+        buildResizedTimeSlots({ startCol: newStart, duration: newDur }),
+        new Set([timeSlotId])
       )
       if (finalOverlap) {
         resetToOriginal()
@@ -3646,17 +3720,17 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       if (dragState.hitBoundary) reportDeadlineViolation()
       if (dragState.hitEarliestBoundary) reportEarliestStartViolation()
       const changed = newStart !== origStart || newDur !== origDur
-      const nextAll = milestonesRef.current.map(m => m.id === milestoneId ? { ...m, startCol: newStart, duration: newDur } : m)
+      const nextAll = timeSlotsRef.current.map(m => m.id === timeSlotId ? { ...m, startCol: newStart, duration: newDur } : m)
       if (changed) {
         const applyResize = async () => {
-          const current = milestonesRef.current.find(m => m.id === milestoneId)
-          const next = nextAll.find(m => m.id === milestoneId)
+          const current = timeSlotsRef.current.find(m => m.id === timeSlotId)
+          const next = nextAll.find(m => m.id === timeSlotId)
           await commitTransaction({
             id: newClientId('tx'),
-            type: 'milestone.resize',
-            label: 'Resize milestone',
-            before: { milestones: current ? [current] : [], dependencies: [] },
-            after: { milestones: next ? [next] : [], dependencies: [] },
+            type: 'timeSlot.resize',
+            label: 'Resize time slot',
+            before: { timeSlots: current ? [current] : [], dependencies: [] },
+            after: { timeSlots: next ? [next] : [], dependencies: [] },
           })
         }
         const applyResizeIfValid = async () => {
@@ -3666,13 +3740,13 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         }
         if (durationScaleBucket(origDur, origStart) !== durationScaleBucket(newDur, newStart)) {
           const crossMetricDeps = dependenciesRef.current.filter(dep => {
-            if (dep.fromId === milestoneId) {
-              const to = milestonesRef.current.find(m => m.id === dep.toId)
-              return to && durationScaleBucket(newDur, newStart) !== milestoneScaleBucket(to)
+            if (dep.fromId === timeSlotId) {
+              const to = timeSlotsRef.current.find(m => m.id === dep.toId)
+              return to && durationScaleBucket(newDur, newStart) !== timeSlotScaleBucket(to)
             }
-            if (dep.toId === milestoneId) {
-              const from = milestonesRef.current.find(m => m.id === dep.fromId)
-              return from && milestoneScaleBucket(from) !== durationScaleBucket(newDur, newStart)
+            if (dep.toId === timeSlotId) {
+              const from = timeSlotsRef.current.find(m => m.id === dep.fromId)
+              return from && timeSlotScaleBucket(from) !== durationScaleBucket(newDur, newStart)
             }
             return false
           })
@@ -3681,7 +3755,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
             const origBucket = durationScaleBucket(origDur, origStart)
             const newBucket  = durationScaleBucket(newDur, newStart)
             const direction  = durationScaleBucketIndex(newBucket) > durationScaleBucketIndex(origBucket) ? 'UP' : 'DOWN'
-            setMetricResizeDraft({ milestoneId, newStart, newDur, origDur, origBucket, newBucket, direction, crossMetricDeps, applyResizeIfValid })
+            setMetricResizeDraft({ timeSlotId, newStart, newDur, origDur, origBucket, newBucket, direction, crossMetricDeps, applyResizeIfValid })
             return
           }
         }
@@ -3699,7 +3773,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           const durationChange = `The duration would move from ${formatMinutesDuration(origDur)} to ${formatMinutesDuration(newDur)}.`
           const concerns = [
             crossedMagnitude
-              ? `Magnitude level ${magnitude.toFixed(1)} is unusually high for the currently picked duration of that milestone.`
+              ? `Magnitude level ${magnitude.toFixed(1)} is unusually high for the currently picked duration of that time slot.`
               : null,
             crossedScale
               ? `It also crosses from ${originalScale} level to ${nextScale} level.`
@@ -3772,7 +3846,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       const sp    = spacingRef.current
       const grm   = noteRowMapRef.current
       const hit   = new Set()
-      milestonesRef.current.forEach(m => {
+      timeSlotsRef.current.forEach(m => {
         const row = grm[m.noteId]; if (!row) return
         const visual = getVisualRange(m, timeZoomRef.current)
         const mL  = visual.startCol * sp.colW; const mR = visual.endCol * sp.colW
@@ -3791,17 +3865,17 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (!fromId || !toId || fromId === toId) return
     if (hasCycle(fromId, toId, dependenciesRef.current)) return
     if (dependenciesRef.current.some(d => d.fromId === fromId && d.toId === toId)) return
-    const fromMs = milestonesRef.current.find(m => m.id === fromId)
-    const toMs   = milestonesRef.current.find(m => m.id === toId)
-    const scaleLocked = [fromMs, toMs].find(m => m && !canEditMilestoneNow(m))
+    const fromMs = timeSlotsRef.current.find(m => m.id === fromId)
+    const toMs   = timeSlotsRef.current.find(m => m.id === toId)
+    const scaleLocked = [fromMs, toMs].find(m => m && !canEditTimeSlotNow(m))
     if (scaleLocked) {
       showScaleEditBlocked(scaleLocked)
       return
     }
-    if (fromMs && toMs && milestoneScaleBucket(fromMs) !== milestoneScaleBucket(toMs)) {
+    if (fromMs && toMs && timeSlotScaleBucket(fromMs) !== timeSlotScaleBucket(toMs)) {
       showWarningPrompt({
         title: 'Scale mismatch',
-        message: `Dependencies can only link milestones on the same planning scale. ${milestoneScaleBucket(fromMs)}-scale and ${milestoneScaleBucket(toMs)}-scale milestones cannot be linked.`,
+        message: `Dependencies can only link time slots on the same planning scale. ${timeSlotScaleBucket(fromMs)}-scale and ${timeSlotScaleBucket(toMs)}-scale time slots cannot be linked.`,
         actions: 'close',
       })
       return
@@ -3813,14 +3887,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         id: newClientId('tx'),
         type: 'dependency.create',
         label: 'Create dependency',
-        before: { milestones: [], dependencies: [] },
-        after: { milestones: [], dependencies: [pendingDep] },
+        before: { timeSlots: [], dependencies: [] },
+        after: { timeSlots: [], dependencies: [pendingDep] },
       })
     }
-    const blocked = maybeBlockDependencyWarning(milestonesRef.current, nextDependencies)
+    const blocked = maybeBlockDependencyWarning(timeSlotsRef.current, nextDependencies)
     if (blocked) return
     try { await applyDependency() } catch (err) { console.error(err) }
-  }, [canEditMilestoneNow, clearWarningPrompt, commitTransaction, maybeBlockDependencyWarning, showScaleEditBlocked, showWarningPrompt])
+  }, [canEditTimeSlotNow, clearWarningPrompt, commitTransaction, maybeBlockDependencyWarning, showScaleEditBlocked, showWarningPrompt])
 
   const handleMetricResizeAccept = useCallback(async () => {
     const draft = metricResizeDraft
@@ -3832,8 +3906,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           id: newClientId('tx'),
           type: 'dependency.delete-many',
           label: `Delete ${draft.crossMetricDeps.length} incompatible dependenc${draft.crossMetricDeps.length === 1 ? 'y' : 'ies'}`,
-          before: { milestones: [], dependencies: draft.crossMetricDeps },
-          after:  { milestones: [], dependencies: [] },
+          before: { timeSlots: [], dependencies: draft.crossMetricDeps },
+          after:  { timeSlots: [], dependencies: [] },
         })
       } catch (err) { console.error(err) }
     }
@@ -3844,7 +3918,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const draft = metricResizeDraft
     setMetricResizeDraft(null)
     if (!draft) return
-    const originalMs = milestonesRef.current.find(m => m.id === draft.milestoneId)
+    const originalMs = timeSlotsRef.current.find(m => m.id === draft.timeSlotId)
     if (!originalMs) return
     const originalNote = notes.find(n => n.id === originalMs.noteId)
     if (!originalNote) return
@@ -3862,7 +3936,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           api.assign(clonedNote.id, dimId, catId).catch(console.error)
         )
       )
-      const clonedMs = await api.createMilestone({
+      const clonedMs = await api.createTimeSlot({
         id: newClientId('ms'),
         noteId: clonedNote.id,
         startCol: draft.newStart,
@@ -3870,20 +3944,20 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         title: originalMs.title ?? '',
         color: originalMs.color ?? '#1a73e8',
       })
-      setMilestones(prev => [...prev, clonedMs])
+      setTimeSlots(prev => [...prev, clonedMs])
     } catch (err) { console.error('Clone note failed', err) }
   }, [assignments, metricResizeDraft, notes, onNoteCreated])
 
   const updatePreviewArrow = useCallback((sourceId, clientX, clientY) => {
     const rect = gridBodyRef.current?.getBoundingClientRect()
-    const source = milestonesRef.current.find(m => m.id === sourceId)
+    const source = timeSlotsRef.current.find(m => m.id === sourceId)
     const sourceRow = source && noteRowMapRef.current[source.noteId]
     if (!rect || !source || !sourceRow || !previewArrowRef.current) return
     const sp = spacingRef.current
     const x2 = clientX - rect.left + scrollLeftRef.current
     const y2 = clientY - rect.top + scrollTopRef.current
     const sourceVisual = getVisualRange(source, timeZoomRef.current)
-    // Pick source edge based on which side of the milestone the cursor is on
+    // Pick source edge based on which side of the timeSlot the cursor is on
     const sourceCenter = (sourceVisual.startCol + sourceVisual.duration / 2) * sp.colW
     const x1 = x2 >= sourceCenter
       ? sourceVisual.endCol * sp.colW
@@ -3901,8 +3975,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (e.button !== 0) return
     e.preventDefault()
     e.stopPropagation()
-    const source = milestonesRef.current.find(m => m.id === sourceId)
-    if (!source || !canEditMilestoneNow(source)) {
+    const source = timeSlotsRef.current.find(m => m.id === sourceId)
+    if (!source || !canEditTimeSlotNow(source)) {
       if (source) showScaleEditBlocked(source)
       return
     }
@@ -3953,7 +4027,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
-  }, [canEditMilestoneNow, createDependencyFromDrag, showScaleEditBlocked, updatePreviewArrow])
+  }, [canEditTimeSlotNow, createDependencyFromDrag, showScaleEditBlocked, updatePreviewArrow])
 
   // ── Deadlines ──────────────────────────────────────────────────────────────
   const handleSetDeadline = useCallback(async (noteId, col) => {
@@ -3994,12 +4068,12 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     } catch (err) { console.error(err) }
   }, [])
 
-  const handleDeleteMilestoneRequest = useCallback((milestoneId, label) => {
-    setDeleteDraft({ items: [{ key: `milestone:${milestoneId}`, type: 'milestone', id: milestoneId, label, checked: true }] })
+  const handleDeleteTimeSlotRequest = useCallback((timeSlotId, label) => {
+    setDeleteDraft({ items: [{ key: `timeSlot:${timeSlotId}`, type: 'timeSlot', id: timeSlotId, label, checked: true }] })
   }, [])
 
-  const handleToggleMilestonePin = useCallback(milestoneId => {
-    setPinnedMilestoneId(prev => prev === milestoneId ? null : milestoneId)
+  const handleToggleTimeSlotPin = useCallback(timeSlotId => {
+    setPinnedTimeSlotId(prev => prev === timeSlotId ? null : timeSlotId)
   }, [])
 
   const handleDeleteDepRequest = useCallback((depId, label) => {
@@ -4022,26 +4096,26 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         id: newClientId('tx'),
         type: 'dependency.update',
         label: 'Update dependency',
-        before: { milestones: [], dependencies: [current] },
-        after: { milestones: [], dependencies: [next] },
+        before: { timeSlots: [], dependencies: [current] },
+        after: { timeSlots: [], dependencies: [next] },
       })
     } catch (err) { console.error(err) }
     setReasonModal(null)
   }, [commitTransaction, reasonModal, reasonDraft])
 
   const buildDeleteItems = useCallback(() => {
-    const milestoneIds = [...selectedIdsRef.current]
+    const timeSlotIds = [...selectedIdsRef.current]
     const dependencyIds = [...selectedDepIdsRef.current]
-    const milestoneItems = milestoneIds
+    const timeSlotItems = timeSlotIds
       .map(id => {
-        const milestone = milestonesRef.current.find(m => m.id === id)
-        if (!milestone) return null
-        const note = notes.find(g => g.id === milestone.noteId)
+        const timeSlot = timeSlotsRef.current.find(m => m.id === id)
+        if (!timeSlot) return null
+        const note = notes.find(g => g.id === timeSlot.noteId)
         return {
-          key: `milestone:${id}`,
-          type: 'milestone',
+          key: `timeSlot:${id}`,
+          type: 'timeSlot',
           id,
-          label: `${note?.title ?? 'Milestone'} · ${milestone.title || minuteLabel(milestone.startCol)}`,
+          label: `${note?.title ?? 'Time slot'} · ${timeSlot.title || minuteLabel(timeSlot.startCol)}`,
           checked: true,
         }
       })
@@ -4050,20 +4124,20 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       .map(id => {
         const dep = dependenciesRef.current.find(d => d.id === id)
         if (!dep) return null
-        const from = milestonesRef.current.find(m => m.id === dep.fromId)
-        const to = milestonesRef.current.find(m => m.id === dep.toId)
+        const from = timeSlotsRef.current.find(m => m.id === dep.fromId)
+        const to = timeSlotsRef.current.find(m => m.id === dep.toId)
         const fromNote = notes.find(g => g.id === from?.noteId)
         const toNote = notes.find(g => g.id === to?.noteId)
         return {
           key: `dependency:${id}`,
           type: 'dependency',
           id,
-          label: `${fromNote?.title ?? 'Milestone'} -> ${toNote?.title ?? 'Milestone'}`,
+          label: `${fromNote?.title ?? 'Time slot'} -> ${toNote?.title ?? 'Time slot'}`,
           checked: true,
         }
       })
       .filter(Boolean)
-    return [...milestoneItems, ...dependencyItems]
+    return [...timeSlotItems, ...dependencyItems]
   }, [notes])
 
   const handleRequestDeleteSelection = useCallback(() => {
@@ -4076,22 +4150,22 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (!deleteDraft) return
     const checked = deleteDraft.items.filter(item => item.checked)
     if (checked.length === 0) { setDeleteDraft(null); return }
-    const milestoneIds = checked.filter(item => item.type === 'milestone').map(item => item.id)
+    const timeSlotIds = checked.filter(item => item.type === 'timeSlot').map(item => item.id)
     const dependencyIds = checked.filter(item => item.type === 'dependency').map(item => item.id)
 
-    const milestoneSet = new Set(milestoneIds)
+    const timeSlotSet = new Set(timeSlotIds)
     const dependencySet = new Set(dependencyIds)
     const depsToDelete = dependenciesRef.current
-      .filter(d => dependencySet.has(d.id) || milestoneSet.has(d.fromId) || milestoneSet.has(d.toId))
-    const milestonesToDelete = milestonesRef.current.filter(m => milestoneSet.has(m.id))
+      .filter(d => dependencySet.has(d.id) || timeSlotSet.has(d.fromId) || timeSlotSet.has(d.toId))
+    const timeSlotsToDelete = timeSlotsRef.current.filter(m => timeSlotSet.has(m.id))
 
     try {
       const ok = await commitTransaction({
         id: newClientId('tx'),
-        type: milestonesToDelete.length > 1 || depsToDelete.length > 1 ? 'delete-many' : milestonesToDelete.length ? 'milestone.delete' : 'dependency.delete',
+        type: timeSlotsToDelete.length > 1 || depsToDelete.length > 1 ? 'delete-many' : timeSlotsToDelete.length ? 'timeSlot.delete' : 'dependency.delete',
         label: checked.length > 1 ? 'Delete selected items' : `Delete ${checked[0].type}`,
-        before: { milestones: milestonesToDelete, dependencies: depsToDelete },
-        after: { milestones: [], dependencies: [] },
+        before: { timeSlots: timeSlotsToDelete, dependencies: depsToDelete },
+        after: { timeSlots: [], dependencies: [] },
       })
       if (ok) {
         setSelectedIds(new Set())
@@ -4102,7 +4176,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }, [commitTransaction, deleteDraft])
 
   const handleWarningResolve = useCallback(() => {
-    resolveDependencySelection(warningPrompt?.milestoneIds ?? null)
+    resolveDependencySelection(warningPrompt?.timeSlotIds ?? null)
   }, [resolveDependencySelection, warningPrompt])
 
   useEffect(() => {
@@ -4146,8 +4220,13 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         return
       }
       if (isTyping) return
+      if (key === 'escape' && inheritancePickRef.current) {
+        setInheritancePick(null)
+        clearWarningPrompt()
+        return
+      }
       if (key === 'd') setMode('dependency')
-      if (key === 'e') setMode('milestone')
+      if (key === 'e') setMode('timeSlot')
       if (e.key === 'Delete' || e.key === 'Del') handleRequestDeleteSelection()
     }
     const onKeyUp = e => {
@@ -4165,7 +4244,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       document.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onBlur)
     }
-  }, [activeNoteIdForCopy, copiedNoteId, copyNoteToScheduleClipboard, deleteDraft, handleConfirmDeleteDraft, handleRequestDeleteSelection, isActive, pasteCopiedNote, redoGanttTransaction, undoGanttTransaction])
+  }, [activeNoteIdForCopy, clearWarningPrompt, copiedNoteId, copyNoteToScheduleClipboard, deleteDraft, handleConfirmDeleteDraft, handleRequestDeleteSelection, isActive, pasteCopiedNote, redoGanttTransaction, undoGanttTransaction])
 
   useEffect(() => {
     if (reasonModal) setTimeout(() => reasonInputRef.current?.focus(), 30)
@@ -4186,7 +4265,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     hideCrossCatDeps,
     showCrucialDepsOnly,
     colorDependencyDirection,
-    milestoneScaleFilter,
+    timeSlotScaleFilter,
     leftPanelWidth,
     group: {
       activeDimId,
@@ -4204,14 +4283,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       quickFilters,
     },
     selection: {
-      milestoneIds: [...selectedIdsRef.current],
+      timeSlotIds: [...selectedIdsRef.current],
       dependencyIds: [...selectedDepIdsRef.current],
-      pinnedMilestoneId: pinnedMilestoneIdRef.current,
+      pinnedTimeSlotId: pinnedTimeSlotIdRef.current,
     },
   }), [
     activeDimId, activeFilterIds, activeLaneFilterId, activePerspectiveId, axisMode, colorDimId,
     colorDependencyDirection, hiddenCatIds, hiddenNotesByLane, hideCrossCatDeps,
-    leftPanelWidth, milestoneScaleFilter, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps, spacing, timeZoom, visibleNoteFilterIds,
+    leftPanelWidth, timeSlotScaleFilter, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps, spacing, timeZoom, visibleNoteFilterIds,
   ])
   capturePerspectiveStateRef.current = capturePerspectiveState
 
@@ -4232,7 +4311,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (typeof state.showCrucialDepsOnly === 'boolean') setShowCrucialDepsOnly(state.showCrucialDepsOnly)
     if (typeof state.colorDependencyDirection === 'boolean') setColorDependencyDirection(state.colorDependencyDirection)
     if (typeof state.leftPanelWidth === 'number') setLeftPanelWidth(Math.max(120, Math.min(600, state.leftPanelWidth)))
-    if (state.milestoneScaleFilter) setMilestoneScaleFilter(normalizeScaleVisibilityMode(state.milestoneScaleFilter))
+    if (state.timeSlotScaleFilter) setTimeSlotScaleFilter(normalizeScaleVisibilityMode(state.timeSlotScaleFilter))
 
     setActiveDimId(nextActiveDimId)
     setActiveLaneFilterId(nextActiveLaneFilterId)
@@ -4248,7 +4327,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setPaintCat(null)
     setRevealedConflictNoteIds(new Set())
     setDependencyResolveSnapshot(null)
-    setPinnedMilestoneId(state.selection?.pinnedMilestoneId ?? null)
+    setPinnedTimeSlotId(state.selection?.pinnedTimeSlotId ?? null)
     setActivePerspectiveId(perspective?.id ?? NONE_PERSPECTIVE_ID)
 
     requestAnimationFrame(() => {
@@ -4280,7 +4359,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (typeof state.showCrucialDepsOnly === 'boolean') setShowCrucialDepsOnly(state.showCrucialDepsOnly)
     if (typeof state.colorDependencyDirection === 'boolean') setColorDependencyDirection(state.colorDependencyDirection)
     if (typeof state.leftPanelWidth === 'number') setLeftPanelWidth(Math.max(120, Math.min(600, state.leftPanelWidth)))
-    if (state.milestoneScaleFilter) setMilestoneScaleFilter(normalizeScaleVisibilityMode(state.milestoneScaleFilter))
+    if (state.timeSlotScaleFilter) setTimeSlotScaleFilter(normalizeScaleVisibilityMode(state.timeSlotScaleFilter))
 
     setActiveDimId(nextActiveDimId)
     setActiveLaneFilterId(nextActiveLaneFilterId)
@@ -4295,9 +4374,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setQuickFilters(Array.isArray(state.color?.quickFilters) ? state.color.quickFilters : [])
     setPaintCat(null)
     setRevealedConflictNoteIds(new Set())
-    setSelectedIds(new Set(Array.isArray(state.selection?.milestoneIds) ? state.selection.milestoneIds : []))
+    setSelectedIds(new Set(Array.isArray(state.selection?.timeSlotIds) ? state.selection.timeSlotIds : []))
     setSelectedDepIds(new Set(Array.isArray(state.selection?.dependencyIds) ? state.selection.dependencyIds : []))
-    setPinnedMilestoneId(state.selection?.pinnedMilestoneId ?? null)
+    setPinnedTimeSlotId(state.selection?.pinnedTimeSlotId ?? null)
     setActivePerspectiveId(state.activePerspectiveId ?? activePerspectiveId)
     setPendingDependencyResolveIds(new Set())
     setDependencyResolveSnapshot(null)
@@ -4390,35 +4469,41 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     document.addEventListener('mouseup', onUp)
   }, [])
 
-  // ── Milestone mouse-down (move / resize) ───────────────────────────────────
-  const handleMilestoneMouseDown = useCallback((e, milestoneId, side) => {
+  // ── TimeSlot mouse-down (move / resize) ───────────────────────────────────
+  const handleTimeSlotMouseDown = useCallback((e, timeSlotId, side) => {
     if (e.button !== 0) return
     e.preventDefault()
     e.stopPropagation()
     setContextMenu(null)
     setSelectedDepIds(new Set())
+    const pickDraft = inheritancePickRef.current
+    if (pickDraft) {
+      const target = timeSlotsRef.current.find(m => m.id === timeSlotId)
+      if (target) completeInheritancePickRef.current?.(target.noteId)
+      return
+    }
     if (modeRef.current === 'dependency') return  // handled by dependency port dragging
 
     if (side) {
-      startResizeDrag(e.clientX, milestoneId, side)
+      startResizeDrag(e.clientX, timeSlotId, side)
       return
     }
 
-    const alreadySelected = selectedIdsRef.current.has(milestoneId)
+    const alreadySelected = selectedIdsRef.current.has(timeSlotId)
     let idsToMove
     if (e.ctrlKey || e.metaKey) {
-      // Ctrl/Cmd: toggle this milestone in/out of the existing selection
+      // Ctrl/Cmd: toggle this timeSlot in/out of the existing selection
       const next = new Set(selectedIdsRef.current)
-      if (alreadySelected) next.delete(milestoneId)
-      else next.add(milestoneId)
+      if (alreadySelected) next.delete(timeSlotId)
+      else next.add(timeSlotId)
       idsToMove = [...next]
     } else {
-      idsToMove = alreadySelected ? [...selectedIdsRef.current] : [milestoneId]
+      idsToMove = alreadySelected ? [...selectedIdsRef.current] : [timeSlotId]
     }
 
     const originals = {}
     idsToMove.forEach(id => {
-      const m = milestonesRef.current.find(m => m.id === id)
+      const m = timeSlotsRef.current.find(m => m.id === id)
       if (m) originals[id] = { startCol: m.startCol, duration: m.duration }
     })
     startMoveDrag(e.clientX, originals)
@@ -4452,6 +4537,15 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     }
     if (e.button !== 0) return
     setContextMenu(null)
+    if (inheritancePickRef.current) {
+      const cell = getNoteCellFromPointer(e)
+      if (cell?.type === 'cell') {
+        e.preventDefault()
+        e.stopPropagation()
+        completeInheritancePickRef.current?.(cell.noteId)
+      }
+      return
+    }
     // In dep mode: any background click cancels in-progress arrow drawing
     if (modeRef.current === 'dependency') {
       if (drawingRef.current) {
@@ -4463,14 +4557,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     }
     const rect = gridBodyRef.current?.getBoundingClientRect(); if (!rect) return
     if (e.clientY - rect.top < HEADER_H) return  // in time axis
-    if (e.target.closest('[data-ms-id]')) return  // handled by milestone
+    if (e.target.closest('[data-ms-id]')) return  // handled by timeSlot
     startMarqueeDrag(e.clientX, e.clientY)
-  }, []) // eslint-disable-line
+  }, [getNoteCellFromPointer]) // eslint-disable-line
 
   // ── Virtual ranges ─────────────────────────────────────────────────────────
   const { colW, rowH } = spacing
-  // Milestone geometry — clamp to fit within row height
-  const msH = Math.min(MILESTONE_H, Math.max(4, rowH - 8))
+  // TimeSlot geometry — clamp to fit within row height
+  const msH = Math.min(TIME_SLOT_H, Math.max(4, rowH - 8))
   const msY = Math.max(2, Math.floor((rowH - msH) / 2))
 
   const startCol = Math.max(0,         Math.floor(scrollLeft / colW) - COL_BUF)
@@ -4518,20 +4612,20 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       })
     : []
   const axisLabelVertical = timeZoom === 'months' && colW < 58
-  const scaleVisibilityMode = normalizeScaleVisibilityMode(milestoneScaleFilter)
-  const proportionalMilestones = scaleVisibilityMode === SCALE_VISIBILITY_MODES.ALL
+  const scaleVisibilityMode = normalizeScaleVisibilityMode(timeSlotScaleFilter)
+  const proportionalTimeSlots = scaleVisibilityMode === SCALE_VISIBILITY_MODES.ALL
 
   const bufH    = ROW_BUF * rowH
   const visItems = rowItems.filter(r => r.top + r.height >= scrollTop - bufH && r.top <= scrollTop + vpSize.h + bufH)
 
-  // Milestones: filter to visible columns + rows + always include dragged
+  // TimeSlots: filter to visible columns + rows + always include dragged
   const draggedIds = dragRef.current?.type === 'move'
     ? new Set(Object.keys(dragRef.current?.originals || {}))
     : new Set()
 
-  const visMilestones = milestones.filter(m => {
+  const visTimeSlots = timeSlots.filter(m => {
     if (draggedIds.has(m.id)) return true
-    if (!isMilestoneVisibleAtZoom(m.duration, timeZoom, scaleVisibilityMode, m.startCol)) return false
+    if (!isTimeSlotVisibleAtZoom(m.duration, timeZoom, scaleVisibilityMode, m.startCol)) return false
     const visual = getRenderedVisualRange(m, timeZoom, scaleVisibilityMode)
     if (visual.endCol < startCol || visual.startCol > endCol) return false
     const row = noteRowMap[m.noteId]; if (!row) return false
@@ -4543,7 +4637,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div
-      className={`${styles.note} ${paintCat ? styles.paintMode : ''}`}
+      className={`${styles.note} ${paintCat ? styles.paintMode : ''} ${inheritancePick ? styles.inheritancePickMode : ''}`}
       style={paintCat ? { cursor: makeColorCursor(paintCat.color) } : undefined}
       onClick={paintCat ? () => setPaintCat(null) : undefined}>
       <GanttToolbar
@@ -4573,7 +4667,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={setHideCrossCatDeps}
         showCrucialDepsOnly={showCrucialDepsOnly} onShowCrucialDepsOnlyChange={setShowCrucialDepsOnly}
         colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={setColorDependencyDirection}
-        milestoneScaleFilter={milestoneScaleFilter} onMilestoneScaleFilterChange={setMilestoneScaleFilter}
+        timeSlotScaleFilter={timeSlotScaleFilter} onTimeSlotScaleFilterChange={setTimeSlotScaleFilter}
         autoResolveDependencyView={autoResolveDependencyView}
         onAutoResolveDependencyViewChange={setAutoResolveDependencyView}
         warningSettings={warningSettings}
@@ -4722,6 +4816,12 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                         e.stopPropagation()
                         paintNote(item.note.id)
                       } : undefined}
+                      onMouseDown={e => {
+                        if (e.button !== 0 || !inheritancePickRef.current) return
+                        e.preventDefault()
+                        e.stopPropagation()
+                        completeInheritancePickRef.current?.(item.note.id)
+                      }}
                       onContextMenu={e => {
                         e.preventDefault()
                         e.stopPropagation()
@@ -4904,7 +5004,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
             {effectiveEarliestStarts.map(es => {
               const row = noteRowMap[es.noteId]; if (!row) return null
               if (!isEarliestStartVisibleAtZoom(es, timeZoom, scaleVisibilityMode)) return null
-              const visualCol = proportionalMilestones
+              const visualCol = proportionalTimeSlots
                 ? minuteToZoomColExact(es.col, timeZoom)
                 : minuteToZoomCol(es.col, timeZoom)
               const hatchWidth = Math.max(0, visualCol) * colW
@@ -4918,7 +5018,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
             {effectiveDeadlines.map(dl => {
               const row = noteRowMap[dl.noteId]; if (!row) return null
               if (!isDeadlineVisibleAtZoom(dl, timeZoom, scaleVisibilityMode)) return null
-              const visualCol = proportionalMilestones
+              const visualCol = proportionalTimeSlots
                 ? minuteToZoomColExact(dl.col, timeZoom)
                 : minuteToZoomCol(dl.col, timeZoom)
               const hatchLeft  = visualCol * colW
@@ -4932,8 +5032,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
             {/* Dependency-derived movement limits */}
             {dependencyConstraintWindows.starts.map(es => {
               const row = noteRowMap[es.noteId]; if (!row) return null
-              const affected = milestones.find(m => m.id === es.milestoneId); if (!affected) return null
-              const visualCol = proportionalMilestones
+              const affected = timeSlots.find(m => m.id === es.timeSlotId); if (!affected) return null
+              const visualCol = proportionalTimeSlots
                 ? minuteToZoomColExact(es.col, timeZoom)
                 : minuteToZoomCol(es.col, timeZoom)
               const hatchWidth = Math.max(0, visualCol) * colW
@@ -4946,8 +5046,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
             })}
             {dependencyConstraintWindows.deadlines.map(dl => {
               const row = noteRowMap[dl.noteId]; if (!row) return null
-              const affected = milestones.find(m => m.id === dl.milestoneId); if (!affected) return null
-              const visualCol = proportionalMilestones
+              const affected = timeSlots.find(m => m.id === dl.timeSlotId); if (!affected) return null
+              const visualCol = proportionalTimeSlots
                 ? minuteToZoomColExact(dl.col, timeZoom)
                 : minuteToZoomCol(dl.col, timeZoom)
               const hatchLeft = visualCol * colW
@@ -4960,48 +5060,48 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
               ) : null
             })}
 
-            {/* Milestones */}
-	            {visMilestones.map(m => {
+            {/* TimeSlots */}
+	            {visTimeSlots.map(m => {
 	              const row = noteRowMap[m.noteId]; if (!row) return null
 	              const visual = getRenderedVisualRange(m, timeZoom, scaleVisibilityMode)
 	              const isSelected    = selectedIds.has(m.id)
-              const isPinned      = pinnedMilestoneId === m.id
+              const isPinned      = pinnedTimeSlotId === m.id
               const isViolating   = violationIds.has(m.id)
-              const isBlinking    = blinkingMilestoneIds.has(m.id)
+              const isBlinking    = blinkingTimeSlotIds.has(m.id)
               const isDepMode     = mode === 'dependency'
               const isSource      = drawingState?.fromId === m.id
-	              const msColor       = getMilestoneColor(m)
+	              const msColor       = getTimeSlotColor(m)
 	              const isUnassigned  = msColor === null
-	              const isMinimumDuration = m.duration <= MIN_MILESTONE_DURATION
-	              const isScaleEditable = isMilestoneEditableAtZoom(m.duration, timeZoom, m.startCol)
+	              const isMinimumDuration = m.duration <= MIN_TIME_SLOT_DURATION
+	              const isScaleEditable = isTimeSlotEditableAtZoom(m.duration, timeZoom, m.startCol)
 	              const widthPx = visual.duration * colW
-	              const isTinyProportional = proportionalMilestones && widthPx < 12
+	              const isTinyProportional = proportionalTimeSlots && widthPx < 12
 	              return (
                 <div key={m.id}
                   data-ms-id={m.id}
-                  ref={el => { el ? milestoneElsRef.current.set(m.id, el) : milestoneElsRef.current.delete(m.id) }}
+                  ref={el => { el ? timeSlotElsRef.current.set(m.id, el) : timeSlotElsRef.current.delete(m.id) }}
                   className={[
-                    styles.milestone,
-                    isSelected   && styles.milestoneSelected,
-                    isPinned     && styles.milestonePinned,
-                    isViolating  && styles.milestoneViolation,
-                    isBlinking   && styles.milestoneBlink,
-	                    isDepMode    && styles.milestoneDepMode,
-	                    isUnassigned && styles.milestoneUnassigned,
-	                    isMinimumDuration && styles.milestoneMinimum,
-	                    proportionalMilestones && styles.milestoneProportional,
-	                    isTinyProportional && styles.milestoneTiny,
-	                    !isScaleEditable && styles.milestoneScaleLocked,
+                    styles.timeSlot,
+                    isSelected   && styles.timeSlotSelected,
+                    isPinned     && styles.timeSlotPinned,
+                    isViolating  && styles.timeSlotViolation,
+                    isBlinking   && styles.timeSlotBlink,
+	                    isDepMode    && styles.timeSlotDepMode,
+	                    isUnassigned && styles.timeSlotUnassigned,
+	                    isMinimumDuration && styles.timeSlotMinimum,
+	                    proportionalTimeSlots && styles.timeSlotProportional,
+	                    isTinyProportional && styles.timeSlotTiny,
+	                    !isScaleEditable && styles.timeSlotScaleLocked,
 	                  ].filter(Boolean).join(' ')}
 	                  style={{
 	                    left:       visual.startCol * colW,
 	                    top:        HEADER_H + row.top + msY,
 	                    width:      widthPx,
-	                    minWidth:   proportionalMilestones ? 0 : undefined,
+	                    minWidth:   proportionalTimeSlots ? 0 : undefined,
                     height:     msH,
                     background: msColor ?? '#fff',
                   }}
-                  title={!isScaleEditable ? `Switch to ${scaleLabelForZoom(getMilestoneLevel(m.duration, m.startCol))} view to edit this milestone.` : undefined}
+                  title={!isScaleEditable ? `Switch to ${scaleLabelForZoom(getTimeSlotLevel(m.duration, m.startCol))} view to edit this time slot.` : undefined}
                   onMouseDown={e => {
                     if (paintCat) {
                       e.preventDefault()
@@ -5012,7 +5112,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                       startDependencyDrag(e, m.id)
                       return
                     }
-                    handleMilestoneMouseDown(e, m.id, null)
+                    handleTimeSlotMouseDown(e, m.id, null)
                   }}
                   onClick={paintCat ? e => {
                     e.stopPropagation()
@@ -5023,8 +5123,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                     e.stopPropagation()
                     if (paintCat) return
                     const note = notes.find(g => g.id === m.noteId)
-                    const label = `${note?.title ?? 'Milestone'} · ${m.title || minuteToLabel(m.startCol, timeZoom)}`
-                    setContextMenu({ type: 'milestone', x: e.clientX, y: e.clientY, milestoneId: m.id, label })
+                    const label = `${note?.title ?? 'Time slot'} · ${m.title || minuteToLabel(m.startCol, timeZoom)}`
+                    setContextMenu({ type: 'timeSlot', x: e.clientX, y: e.clientY, timeSlotId: m.id, noteId: m.noteId, label })
 	                  }}>
 	                  <div
                     className={[styles.msHandle, isDepMode && styles.depHandle, isDepMode && isSource && styles.depHandleSource].filter(Boolean).join(' ')}
@@ -5035,7 +5135,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                       e.stopPropagation()
                       if (paintCat) return
                       if (isDepMode) startDependencyDrag(e, m.id)
-                      else handleMilestoneMouseDown(e, m.id, 'left')
+                      else handleTimeSlotMouseDown(e, m.id, 'left')
 	                    }} />
 	                  <span className={styles.msLabel}>{m.title || minuteToLabel(m.startCol, timeZoom)}</span>
                     {isMinimumDuration && !isTinyProportional && <span className={styles.msMinBadge}>10m</span>}
@@ -5048,7 +5148,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                       e.stopPropagation()
                       if (paintCat) return
                       if (isDepMode) startDependencyDrag(e, m.id)
-                      else handleMilestoneMouseDown(e, m.id, 'right')
+                      else handleTimeSlotMouseDown(e, m.id, 'right')
                     }} />
                 </div>
               )
@@ -5059,11 +5159,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
               style={{ width: totalCols * colW, height: totalContentH + HEADER_H }}>
               {showDeps && dependencies.map(dep => {
                 if (showCrucialDepsOnly && !crucialDependencyIds.has(dep.id)) return null
-	                const from = milestones.find(m => m.id === dep.fromId)
-	                const to   = milestones.find(m => m.id === dep.toId)
+	                const from = timeSlots.find(m => m.id === dep.fromId)
+	                const to   = timeSlots.find(m => m.id === dep.toId)
 	                if (!from || !to) return null
-	                if (!isMilestoneVisibleAtZoom(from.duration, timeZoom, scaleVisibilityMode, from.startCol)) return null
-	                if (!isMilestoneVisibleAtZoom(to.duration, timeZoom, scaleVisibilityMode, to.startCol)) return null
+	                if (!isTimeSlotVisibleAtZoom(from.duration, timeZoom, scaleVisibilityMode, from.startCol)) return null
+	                if (!isTimeSlotVisibleAtZoom(to.duration, timeZoom, scaleVisibilityMode, to.startCol)) return null
                 const fromRow = noteRowMap[from.noteId]; const toRow = noteRowMap[to.noteId]
                 if (!fromRow || !toRow) return null
                 if (hideCrossCatDeps && activeDimId) {
@@ -5211,7 +5311,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       </div>
 
       <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)}
-        onCreate={handleCreateMilestone}
+        onCreate={handleCreateTimeSlot}
         onInsertTimeUnit={handleInsertTimeUnit}
         onDeleteTimeUnit={handleDeleteTimeUnit}
         onSetDeadline={handleSetDeadline}
@@ -5220,9 +5320,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         onRemoveEarliestStart={handleRemoveEarliestStart}
         onCopyNote={copyNoteToScheduleClipboard}
         onDuplicateNote={duplicateNoteInSchedule}
-        onDeleteMilestone={handleDeleteMilestoneRequest}
-        onToggleMilestonePin={handleToggleMilestonePin}
-        pinnedMilestoneId={pinnedMilestoneId}
+        onStartInheritancePick={startInheritancePick}
+        onDeleteTimeSlot={handleDeleteTimeSlotRequest}
+        onToggleTimeSlotPin={handleToggleTimeSlotPin}
+        pinnedTimeSlotId={pinnedTimeSlotId}
         onEditDepReason={handleEditDepReason}
         onDeleteDep={handleDeleteDepRequest} />
 
@@ -5231,7 +5332,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           <div className={styles.warningPromptTitle}>{warningPrompt.title ?? 'Dependency warning'}</div>
           <div className={styles.warningPromptText}>
             {warningPrompt.message ??
-              `This change would make ${warningPrompt.count} milestone${warningPrompt.count === 1 ? '' : 's'} violate dependency timing.`}
+              `This change would make ${warningPrompt.count} time slot${warningPrompt.count === 1 ? '' : 's'} violate dependency timing.`}
           </div>
           <div className={styles.warningPromptActions}>
             {warningPrompt.actions === 'dependency' ? (
@@ -5295,7 +5396,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           <div className={styles.deleteModal} role="dialog" aria-modal="true" onMouseDown={e => e.stopPropagation()}>
             <div className={styles.deleteModalTitle}>Time scale change</div>
             <div className={styles.deleteModalText}>
-              This resize moves the milestone from <strong>{metricResizeDraft.origBucket}</strong>-level to <strong>{metricResizeDraft.newBucket}</strong>-level.{' '}
+              This resize moves the time slot from <strong>{metricResizeDraft.origBucket}</strong>-level to <strong>{metricResizeDraft.newBucket}</strong>-level.{' '}
               {metricResizeDraft.crossMetricDeps.length} existing dependenc{metricResizeDraft.crossMetricDeps.length === 1 ? 'y' : 'ies'} would become incompatible across time scales.
             </div>
             <div className={styles.deleteModalActions}>
@@ -5342,7 +5443,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                       }))}
                     />
                   )}
-                  <span className={styles.deleteItemType}>{item.type === 'milestone' ? 'Milestone' : 'Dependency'}</span>
+                  <span className={styles.deleteItemType}>{item.type === 'timeSlot' ? 'Time slot' : 'Dependency'}</span>
                   <span className={styles.deleteItemLabel}>{item.label}</span>
                 </label>
               ))}
@@ -5392,8 +5493,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
             <div className={styles.deleteModalActions}>
               <button className={styles.deleteDepBtn} onClick={() => {
                 const dep = dependencies.find(d => d.id === reasonModal.depId)
-                const from = milestones.find(m => m.id === dep?.fromId)
-                const to   = milestones.find(m => m.id === dep?.toId)
+                const from = timeSlots.find(m => m.id === dep?.fromId)
+                const to   = timeSlots.find(m => m.id === dep?.toId)
                 const fromNote = notes.find(g => g.id === from?.noteId)
                 const toNote   = notes.find(g => g.id === to?.noteId)
                 const label = `${fromNote?.title ?? '?'} → ${toNote?.title ?? '?'}`

@@ -155,9 +155,9 @@ export const api = {
   getDirectPersonaNoteAssignments: ()      => req('GET',    '/persona-note-assignments/direct'),
   assignPersonaToNote:  (personaId, noteId) => req('PUT',  `/personas/${personaId}/note-assign/${noteId}`),
   unassignPersonaFromNote: (personaId, noteId) => req('DELETE', `/personas/${personaId}/note-assign/${noteId}`),
-  getPersonaMilestoneAssignments: ()            => req('GET',    '/persona-milestone-assignments'),
-  assignPersonaToMilestone:  (personaId, milestoneId) => req('PUT',  `/personas/${personaId}/milestone-assign/${milestoneId}`),
-  unassignPersonaFromMilestone: (personaId, milestoneId) => req('DELETE', `/personas/${personaId}/milestone-assign/${milestoneId}`),
+  getPersonaTimeSlotAssignments: ()            => req('GET',    '/persona-time-slot-assignments'),
+  assignPersonaToTimeSlot:  (personaId, timeSlotId) => req('PUT',  `/personas/${personaId}/time-slot-assign/${timeSlotId}`),
+  unassignPersonaFromTimeSlot: (personaId, timeSlotId) => req('DELETE', `/personas/${personaId}/time-slot-assign/${timeSlotId}`),
   getCategoryLeaders:     ()               => req('GET',    '/category-leaders'),
   addCategoryLeader:    (catId, personaId) => req('PUT',    `/categories/${catId}/leaders/${personaId}`),
   removeCategoryLeader: (catId, personaId) => req('DELETE', `/categories/${catId}/leaders/${personaId}`),
@@ -186,12 +186,12 @@ export const api = {
   updateClassificationPerspective:  (id, patch)     => req('PATCH',  `/classification-perspectives/${id}`, patch),
   deleteClassificationPerspective:  (id)            => req('DELETE', `/classification-perspectives/${id}`),
 
-  // Milestones
-  getMilestones:         ()        => req('GET',    '/milestones'),
-  createMilestone:       (data)    => req('POST',   '/milestones', data),
-  updateMilestone:       (id, patch) => req('PATCH', `/milestones/${id}`, patch),
-  deleteMilestone:       (id)      => req('DELETE', `/milestones/${id}`),
-  batchUpdateMilestones: (updates) => req('PUT',    '/milestones/batch', { updates }),
+  // Time slots
+  getTimeSlots:         ()        => req('GET',    '/time-slots'),
+  createTimeSlot:       (data)    => req('POST',   '/time-slots', data),
+  updateTimeSlot:       (id, patch) => req('PATCH', `/time-slots/${id}`, patch),
+  deleteTimeSlot:       (id)      => req('DELETE', `/time-slots/${id}`),
+  batchUpdateTimeSlots: (updates) => req('PUT',    '/time-slots/batch', { updates }),
 
   // Gantt transactions
   getTransactionHistory: ()            => req('GET',  '/transactions/history'),

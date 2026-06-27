@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 DB_PATH = "notes.db"
 LEGACY_DB_PATH = "goals.db"
-MIN_MILESTONE_DURATION = 10
+MIN_TIME_SLOT_DURATION = 10
 MINUTE_SCALE_UNIT = 15
 DAY_MINUTES = 60 * 24
 MONTH_MINUTES = DAY_MINUTES * 30
@@ -159,7 +159,7 @@ def _init_db():
             )
         """)
         con.execute("""
-            CREATE TABLE IF NOT EXISTS milestones (
+            CREATE TABLE IF NOT EXISTS time_slots (
                 id         TEXT PRIMARY KEY,
                 note_id    TEXT NOT NULL,
                 start_col  INTEGER NOT NULL,
@@ -265,10 +265,10 @@ def _init_db():
             )
         """)
         con.execute("""
-            CREATE TABLE IF NOT EXISTS persona_milestone_assignments (
+            CREATE TABLE IF NOT EXISTS persona_time_slot_assignments (
                 persona_id   TEXT NOT NULL,
-                milestone_id TEXT NOT NULL,
-                PRIMARY KEY (persona_id, milestone_id)
+                time_slot_id TEXT NOT NULL,
+                PRIMARY KEY (persona_id, time_slot_id)
             )
         """)
         con.execute("""
@@ -295,7 +295,31 @@ def _migrate():
             """)
             con.execute("DROP TABLE pages")
 
-        for table in ("assignments", "milestones", "deadlines"):
+        if "milestones" in tables:
+            legacy_time_slot_cols = [r[1] for r in con.execute("PRAGMA table_info(milestones)").fetchall()]
+            note_col = "note_id" if "note_id" in legacy_time_slot_cols else "goal_id"
+            con.execute(f"""
+                INSERT OR IGNORE INTO time_slots (id, note_id, start_col, duration, title, color)
+                SELECT id, {note_col}, start_col, duration, title, color FROM milestones
+            """)
+            con.execute("DROP TABLE milestones")
+            tables.discard("milestones")
+            tables.add("time_slots")
+
+        if "persona_milestone_assignments" in tables:
+            con.execute("""
+                INSERT OR IGNORE INTO persona_time_slot_assignments (persona_id, time_slot_id)
+                SELECT persona_id, milestone_id FROM persona_milestone_assignments
+            """)
+            con.execute("DROP TABLE persona_milestone_assignments")
+            tables.discard("persona_milestone_assignments")
+            tables.add("persona_time_slot_assignments")
+
+        persona_time_slot_cols = [r[1] for r in con.execute("PRAGMA table_info(persona_time_slot_assignments)").fetchall()]
+        if "milestone_id" in persona_time_slot_cols and "time_slot_id" not in persona_time_slot_cols:
+            con.execute("ALTER TABLE persona_time_slot_assignments RENAME COLUMN milestone_id TO time_slot_id")
+
+        for table in ("assignments", "time_slots", "deadlines"):
             cols = [r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()]
             if "goal_id" in cols and "note_id" not in cols:
                 con.execute(f"ALTER TABLE {table} RENAME COLUMN goal_id TO note_id")
@@ -329,7 +353,7 @@ def _migrate():
                     PARTITION BY note_id
                     ORDER BY start_col, rowid
                 ) AS rn
-                FROM milestones
+                FROM time_slots
             )
             WHERE rn > 1
             """
@@ -338,8 +362,8 @@ def _migrate():
         if duplicate_ms_ids:
             ph = ",".join("?" for _ in duplicate_ms_ids)
             con.execute(f"DELETE FROM dependencies WHERE from_id IN ({ph}) OR to_id IN ({ph})", duplicate_ms_ids + duplicate_ms_ids)
-            con.execute(f"DELETE FROM persona_milestone_assignments WHERE milestone_id IN ({ph})", duplicate_ms_ids)
-            con.execute(f"DELETE FROM milestones WHERE id IN ({ph})", duplicate_ms_ids)
+            con.execute(f"DELETE FROM persona_time_slot_assignments WHERE time_slot_id IN ({ph})", duplicate_ms_ids)
+            con.execute(f"DELETE FROM time_slots WHERE id IN ({ph})", duplicate_ms_ids)
 
         for table, cols in {
             "schedule_perspectives": ("state_json",),
@@ -354,12 +378,16 @@ def _migrate():
                     continue
                 con.execute(f"""
                     UPDATE {table}
-                    SET {col} = replace(replace(replace(replace(replace({col},
+                    SET {col} = replace(replace(replace(replace(replace(replace(replace(replace(replace({col},
                         'goalId', 'noteId'),
                         'hiddenGoalsByLane', 'hiddenNotesByLane'),
                         'visibleGoalFilterIds', 'visibleNoteFilterIds'),
                         'revealedConflictGoalIds', 'revealedConflictNoteIds'),
-                        'selectedGoalIds', 'selectedNoteIds')
+                        'selectedGoalIds', 'selectedNoteIds'),
+                        'milestones', 'timeSlots'),
+                        'Milestones', 'Time slots'),
+                        'milestone', 'timeSlot'),
+                        'Milestone', 'Time slot')
                     WHERE {col} IS NOT NULL
                 """)
 
@@ -436,8 +464,8 @@ def _migrate():
             )
         """)
         con.execute(
-            "UPDATE milestones SET duration = ? WHERE duration < ?",
-            (MIN_MILESTONE_DURATION, MIN_MILESTONE_DURATION),
+            "UPDATE time_slots SET duration = ? WHERE duration < ?",
+            (MIN_TIME_SLOT_DURATION, MIN_TIME_SLOT_DURATION),
         )
 
         def clamp_history_durations(value):
@@ -450,9 +478,9 @@ def _migrate():
                         try:
                             duration = int(node["duration"])
                         except (TypeError, ValueError):
-                            duration = MIN_MILESTONE_DURATION
-                        if duration < MIN_MILESTONE_DURATION:
-                            node["duration"] = MIN_MILESTONE_DURATION
+                            duration = MIN_TIME_SLOT_DURATION
+                        if duration < MIN_TIME_SLOT_DURATION:
+                            node["duration"] = MIN_TIME_SLOT_DURATION
                             changed = True
                     for child in node.values():
                         visit(child)
@@ -668,21 +696,21 @@ class CategoryPatch(BaseModel):
 class AssignIn(BaseModel):
     categoryId: str
 
-class MilestoneIn(BaseModel):
+class TimeSlotIn(BaseModel):
     id: Optional[str] = None
     noteId: str
     startCol: int
-    duration: int = Field(default=MIN_MILESTONE_DURATION, ge=MIN_MILESTONE_DURATION)
+    duration: int = Field(default=MIN_TIME_SLOT_DURATION, ge=MIN_TIME_SLOT_DURATION)
     title: str = ''
     color: str = '#1a73e8'
 
-class MilestonePatch(BaseModel):
+class TimeSlotPatch(BaseModel):
     startCol: Optional[int] = None
-    duration: Optional[int] = Field(default=None, ge=MIN_MILESTONE_DURATION)
+    duration: Optional[int] = Field(default=None, ge=MIN_TIME_SLOT_DURATION)
     title: Optional[str] = None
     color: Optional[str] = None
 
-class MilestoneBatch(BaseModel):
+class TimeSlotBatch(BaseModel):
     updates: list[dict]
 
 class DependencyIn(BaseModel):
@@ -801,7 +829,7 @@ def _assign(row) -> dict:
     d = dict(row)
     return {"noteId": d["note_id"], "dimensionId": d["dimension_id"], "categoryId": d["category_id"], "orderIdx": d["order_idx"]}
 
-def _ms(row) -> dict:
+def _time_slot(row) -> dict:
     d = dict(row)
     return {"id": d["id"], "noteId": d["note_id"], "startCol": d["start_col"],
             "duration": d["duration"], "title": d["title"], "color": d["color"]}
@@ -905,21 +933,21 @@ def _project_id_for_persona(con, persona_id: str) -> str:
         raise HTTPException(404, "Persona not found")
     return row["project_id"]
 
-def _project_id_for_milestone(con, ms_id: str) -> str:
+def _project_id_for_time_slot(con, ms_id: str) -> str:
     row = con.execute(
-        """SELECT p.project_id FROM milestones m
+        """SELECT p.project_id FROM time_slots m
         JOIN notes p ON p.id = m.note_id
         WHERE m.id = ?""",
         (ms_id,),
     ).fetchone()
     if not row:
-        raise HTTPException(404, "Milestone not found")
+        raise HTTPException(404, "Time slot not found")
     return row["project_id"]
 
 def _project_id_for_dependency(con, dep_id: str) -> str:
     row = con.execute(
         """SELECT p.project_id FROM dependencies d
-        JOIN milestones m ON m.id = d.from_id
+        JOIN time_slots m ON m.id = d.from_id
         JOIN notes p ON p.id = m.note_id
         WHERE d.id = ?""",
         (dep_id,),
@@ -948,17 +976,17 @@ def _project_id_for_classification_perspective(con, perspective_id: str) -> str:
 
 HISTORY_LIMIT = 20
 
-def _milestone_duration_value(value) -> int:
+def _time_slot_duration_value(value) -> int:
     try:
         duration = int(value)
     except (TypeError, ValueError):
-        raise HTTPException(422, f"Milestone duration must be at least {MIN_MILESTONE_DURATION} minutes")
-    if duration < MIN_MILESTONE_DURATION:
-        raise HTTPException(422, f"Milestone duration must be at least {MIN_MILESTONE_DURATION} minutes")
+        raise HTTPException(422, f"Time slot duration must be at least {MIN_TIME_SLOT_DURATION} minutes")
+    if duration < MIN_TIME_SLOT_DURATION:
+        raise HTTPException(422, f"Time slot duration must be at least {MIN_TIME_SLOT_DURATION} minutes")
     return duration
 
 def _planning_scale_for_duration(duration) -> str:
-    value = max(MIN_MILESTONE_DURATION, int(duration or MIN_MILESTONE_DURATION))
+    value = max(MIN_TIME_SLOT_DURATION, int(duration or MIN_TIME_SLOT_DURATION))
     if value >= MONTH_MINUTES:
         return "month"
     if value >= DAY_MINUTES:
@@ -995,10 +1023,10 @@ def _is_calendar_month_range(start_col: int, duration: int) -> bool:
     end = start + max(0, int(duration or 0))
     return end > start and _is_calendar_month_boundary(start) and _is_calendar_month_boundary(end)
 
-def _planning_scale_for_milestone(milestone: dict) -> str:
-    if _is_calendar_month_range(milestone.get("startCol", 0), milestone.get("duration", 0)):
+def _planning_scale_for_time_slot(time_slot: dict) -> str:
+    if _is_calendar_month_range(time_slot.get("startCol", 0), time_slot.get("duration", 0)):
         return "month"
-    return _planning_scale_for_duration(milestone.get("duration", MIN_MILESTONE_DURATION))
+    return _planning_scale_for_duration(time_slot.get("duration", MIN_TIME_SLOT_DURATION))
 
 def _planning_scale_index(scale: str) -> int:
     return {"minute": 0, "day": 1, "month": 2}.get(scale, -1)
@@ -1034,7 +1062,7 @@ def _deadline_scale_unit_minutes(scale: str) -> int:
         return DAY_MINUTES
     return MINUTE_SCALE_UNIT
 
-def _assert_scale_aligned_col(col: int, scale: str, kind: str = "Milestone"):
+def _assert_scale_aligned_col(col: int, scale: str, kind: str = "Time slot"):
     if scale == "month":
         if not _is_calendar_month_boundary(col):
             raise HTTPException(422, {
@@ -1056,18 +1084,18 @@ def _assert_scale_aligned_col(col: int, scale: str, kind: str = "Milestone"):
 def _schedule_fields_changed(before: dict, after: dict) -> bool:
     return (
         int(before.get("startCol", 0)) != int(after.get("startCol", 0))
-        or int(before.get("duration", MIN_MILESTONE_DURATION)) != int(after.get("duration", MIN_MILESTONE_DURATION))
+        or int(before.get("duration", MIN_TIME_SLOT_DURATION)) != int(after.get("duration", MIN_TIME_SLOT_DURATION))
     )
 
-def _assert_milestone_scale_edit_allowed(before: dict | None, after: dict):
-    after_scale = _planning_scale_for_milestone(after)
+def _assert_time_slot_scale_edit_allowed(before: dict | None, after: dict):
+    after_scale = _planning_scale_for_time_slot(after)
     if before is not None:
-        before_scale = _planning_scale_for_milestone(before)
+        before_scale = _planning_scale_for_time_slot(before)
         if before_scale != after_scale:
             raise HTTPException(422, {
-                "message": "Milestone planning scale cannot be changed by moving or resizing",
-                "type": "milestone_scale_mismatch",
-                "milestoneIds": [after["id"]],
+                "message": "Time slot planning scale cannot be changed by moving or resizing",
+                "type": "time_slot_scale_mismatch",
+                "timeSlotIds": [after["id"]],
                 "fromScale": before_scale,
                 "toScale": after_scale,
             })
@@ -1078,55 +1106,55 @@ def _assert_milestone_scale_edit_allowed(before: dict | None, after: dict):
     unit = _planning_scale_unit_minutes(after_scale)
     if int(after["startCol"]) % unit != 0 or int(after["duration"]) % unit != 0:
         raise HTTPException(422, {
-            "message": "Milestone can only be moved or resized on its own planning scale",
-            "type": "milestone_scale_alignment",
-            "milestoneIds": [after["id"]],
+            "message": "Time slot can only be moved or resized on its own planning scale",
+            "type": "time_slot_scale_alignment",
+            "timeSlotIds": [after["id"]],
             "scale": after_scale,
             "unitMinutes": unit,
         })
 
-def _assert_note_milestone_scales_match(milestones: list[dict], note_ids: set[str] | None = None):
+def _assert_note_time_slot_scales_match(time_slots: list[dict], note_ids: set[str] | None = None):
     scales_by_note: dict[str, dict[str, str]] = {}
-    for milestone in milestones:
-        note_id = milestone["noteId"]
+    for time_slot in time_slots:
+        note_id = time_slot["noteId"]
         if note_ids is not None and note_id not in note_ids:
             continue
-        scale = _planning_scale_for_milestone(milestone)
-        scales_by_note.setdefault(note_id, {})[scale] = milestone["id"]
+        scale = _planning_scale_for_time_slot(time_slot)
+        scales_by_note.setdefault(note_id, {})[scale] = time_slot["id"]
     for note_id, scale_ids in scales_by_note.items():
         if len(scale_ids) > 1:
             raise HTTPException(422, {
-                "message": "A note row can only contain milestones on one planning scale",
+                "message": "A note row can only contain time slots on one planning scale",
                 "type": "note_scale_mismatch",
                 "noteId": note_id,
                 "scales": sorted(scale_ids.keys()),
-                "milestoneIds": list(scale_ids.values()),
+                "timeSlotIds": list(scale_ids.values()),
             })
 
-def _dependency_scale_mismatch(dep: dict, milestones: dict[str, dict]) -> dict | None:
-    from_ms = milestones.get(dep["fromId"])
-    to_ms = milestones.get(dep["toId"])
+def _dependency_scale_mismatch(dep: dict, time_slots: dict[str, dict]) -> dict | None:
+    from_ms = time_slots.get(dep["fromId"])
+    to_ms = time_slots.get(dep["toId"])
     if not from_ms or not to_ms:
         return None
-    from_scale = _planning_scale_for_milestone(from_ms)
-    to_scale = _planning_scale_for_milestone(to_ms)
+    from_scale = _planning_scale_for_time_slot(from_ms)
+    to_scale = _planning_scale_for_time_slot(to_ms)
     if from_scale == to_scale:
         return None
     return {
         "message": "Dependency scale mismatch",
         "type": "scale_mismatch",
         "dependencyIds": [dep["id"]],
-        "milestoneIds": [dep["fromId"], dep["toId"]],
+        "timeSlotIds": [dep["fromId"], dep["toId"]],
         "fromScale": from_scale,
         "toScale": to_scale,
     }
 
-def _milestone_from_api(data: dict) -> dict:
+def _time_slot_from_api(data: dict) -> dict:
     return {
         "id": data["id"],
         "noteId": data["noteId"],
         "startCol": int(data.get("startCol", 0)),
-        "duration": _milestone_duration_value(data.get("duration", MIN_MILESTONE_DURATION)),
+        "duration": _time_slot_duration_value(data.get("duration", MIN_TIME_SLOT_DURATION)),
         "title": data.get("title", ""),
         "color": data.get("color", "#1a73e8"),
     }
@@ -1140,19 +1168,25 @@ def _dependency_from_api(data: dict) -> dict:
     }
 
 def _normalize_tx_state(state: dict) -> dict:
+    raw_time_slots = (
+        state.get("timeSlots")
+        or state.get("time_slots")
+        or state.get("milestones")
+        or []
+    )
     return {
-        "milestones": [_milestone_from_api(m) for m in state.get("milestones", [])],
+        "time_slots": [_time_slot_from_api(m) for m in raw_time_slots],
         "dependencies": [_dependency_from_api(d) for d in state.get("dependencies", [])],
     }
 
-def _ms_by_id(con, ids: set[str]) -> dict[str, dict]:
+def _time_slots_by_id(con, ids: set[str]) -> dict[str, dict]:
     if not ids:
         return {}
     rows = con.execute(
-        f"SELECT * FROM milestones WHERE id IN ({','.join('?' for _ in ids)})",
+        f"SELECT * FROM time_slots WHERE id IN ({','.join('?' for _ in ids)})",
         tuple(ids),
     ).fetchall()
-    return {row["id"]: _ms(row) for row in rows}
+    return {row["id"]: _time_slot(row) for row in rows}
 
 def _deps_by_id(con, ids: set[str]) -> dict[str, dict]:
     if not ids:
@@ -1170,35 +1204,35 @@ def _json_equal(left, right) -> bool:
     return json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True)
 
 def _assert_before_matches(con, before: dict, after: dict):
-    ms_ids = _state_ids(before, "milestones") | _state_ids(after, "milestones")
+    ms_ids = _state_ids(before, "time_slots") | _state_ids(after, "time_slots")
     dep_ids = _state_ids(before, "dependencies") | _state_ids(after, "dependencies")
-    current_ms = _ms_by_id(con, ms_ids)
+    current_ms = _time_slots_by_id(con, ms_ids)
     current_deps = _deps_by_id(con, dep_ids)
 
-    for item in before["milestones"]:
+    for item in before["time_slots"]:
         if not _json_equal(current_ms.get(item["id"]), item):
-            raise HTTPException(409, {"message": "Milestone changed before transaction applied", "id": item["id"]})
+            raise HTTPException(409, {"message": "Time slot changed before transaction applied", "id": item["id"]})
     for item in before["dependencies"]:
         if not _json_equal(current_deps.get(item["id"]), item):
             raise HTTPException(409, {"message": "Dependency changed before transaction applied", "id": item["id"]})
 
-    before_ms_ids = _state_ids(before, "milestones")
+    before_ms_ids = _state_ids(before, "time_slots")
     before_dep_ids = _state_ids(before, "dependencies")
-    for item in after["milestones"]:
+    for item in after["time_slots"]:
         if item["id"] not in before_ms_ids and item["id"] in current_ms:
-            raise HTTPException(409, {"message": "Milestone already exists", "id": item["id"]})
+            raise HTTPException(409, {"message": "Time slot already exists", "id": item["id"]})
     for item in after["dependencies"]:
         if item["id"] not in before_dep_ids and item["id"] in current_deps:
             raise HTTPException(409, {"message": "Dependency already exists", "id": item["id"]})
 
 def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
-    touched_ms = _state_ids(before, "milestones") | _state_ids(after, "milestones")
+    touched_ms = _state_ids(before, "time_slots") | _state_ids(after, "time_slots")
     touched_deps = _state_ids(before, "dependencies") | _state_ids(after, "dependencies")
     current_ms = {
-        row["id"]: _ms(row)
+        row["id"]: _time_slot(row)
         for row in con.execute(
             """
-            SELECT m.* FROM milestones m
+            SELECT m.* FROM time_slots m
             JOIN notes n ON n.id = m.note_id
             WHERE n.project_id = ?
             """,
@@ -1206,8 +1240,8 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
         ).fetchall()
     }
     final_ms = {
-        mid: milestone
-        for mid, milestone in current_ms.items()
+        mid: time_slot
+        for mid, time_slot in current_ms.items()
         if mid not in touched_ms
     }
     final_deps = {
@@ -1215,9 +1249,9 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
         for row in con.execute(
             """
             SELECT d.* FROM dependencies d
-            JOIN milestones from_ms ON from_ms.id = d.from_id
+            JOIN time_slots from_ms ON from_ms.id = d.from_id
             JOIN notes from_note ON from_note.id = from_ms.note_id
-            JOIN milestones to_ms ON to_ms.id = d.to_id
+            JOIN time_slots to_ms ON to_ms.id = d.to_id
             JOIN notes to_note ON to_note.id = to_ms.note_id
             WHERE from_note.project_id = ? AND to_note.project_id = ?
             """,
@@ -1225,46 +1259,46 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
         ).fetchall()
         if row["id"] not in touched_deps
     }
-    final_ms.update({m["id"]: m for m in after["milestones"]})
+    final_ms.update({m["id"]: m for m in after["time_slots"]})
     final_deps.update({d["id"]: d for d in after["dependencies"]})
 
-    for milestone in final_ms.values():
-        if milestone["startCol"] < 0:
-            raise HTTPException(422, {"message": "Milestones must have a non-negative start", "id": milestone["id"]})
-        if milestone["duration"] < MIN_MILESTONE_DURATION:
-            raise HTTPException(422, {"message": f"Milestones must be at least {MIN_MILESTONE_DURATION} minutes long", "id": milestone["id"]})
+    for time_slot in final_ms.values():
+        if time_slot["startCol"] < 0:
+            raise HTTPException(422, {"message": "Time slots must have a non-negative start", "id": time_slot["id"]})
+        if time_slot["duration"] < MIN_TIME_SLOT_DURATION:
+            raise HTTPException(422, {"message": f"Time slots must be at least {MIN_TIME_SLOT_DURATION} minutes long", "id": time_slot["id"]})
 
-    for milestone in after["milestones"]:
-        before_milestone = current_ms.get(milestone["id"])
-        if before_milestone is None or _schedule_fields_changed(before_milestone, milestone):
-            _assert_milestone_scale_edit_allowed(before_milestone, milestone)
+    for time_slot in after["time_slots"]:
+        before_time_slot = current_ms.get(time_slot["id"])
+        if before_time_slot is None or _schedule_fields_changed(before_time_slot, time_slot):
+            _assert_time_slot_scale_edit_allowed(before_time_slot, time_slot)
 
     touched_note_ids = {
-        milestone["noteId"]
-        for milestone in before["milestones"] + after["milestones"]
-        if milestone.get("noteId")
+        time_slot["noteId"]
+        for time_slot in before["time_slots"] + after["time_slots"]
+        if time_slot.get("noteId")
     }
-    _assert_note_milestone_scales_match(list(final_ms.values()), touched_note_ids)
+    _assert_note_time_slot_scales_match(list(final_ms.values()), touched_note_ids)
 
     by_note = {}
-    for milestone in final_ms.values():
-        by_note.setdefault(milestone["noteId"], []).append(milestone)
-    for note_id, note_milestones in by_note.items():
-        if len(note_milestones) > 1:
+    for time_slot in final_ms.values():
+        by_note.setdefault(time_slot["noteId"], []).append(time_slot)
+    for note_id, note_time_slots in by_note.items():
+        if len(note_time_slots) > 1:
             raise HTTPException(422, {
-                "message": "A note can only contain one milestone",
-                "type": "note_milestone_limit",
+                "message": "A note can only contain one time slot",
+                "type": "note_time_slot_limit",
                 "noteId": note_id,
-                "milestoneIds": [m["id"] for m in note_milestones],
+                "timeSlotIds": [m["id"] for m in note_time_slots],
             })
-    for lane_milestones in by_note.values():
-        for i, first in enumerate(lane_milestones):
-            for second in lane_milestones[i + 1:]:
+    for lane_time_slots in by_note.values():
+        for i, first in enumerate(lane_time_slots):
+            for second in lane_time_slots[i + 1:]:
                 if first["startCol"] < second["startCol"] + second["duration"] and second["startCol"] < first["startCol"] + first["duration"]:
                     raise HTTPException(422, {
-                        "message": "Milestones in the same note row cannot overlap",
+                        "message": "Time slots in the same note row cannot overlap",
                         "type": "overlap",
-                        "milestoneIds": [first["id"], second["id"]],
+                        "timeSlotIds": [first["id"], second["id"]],
                     })
 
     comparable_ids = [mid for mid in current_ms.keys() if mid in final_ms]
@@ -1290,9 +1324,9 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
                 after_relation = "second-before-first"
             if before_relation and after_relation and before_relation != after_relation:
                 raise HTTPException(422, {
-                    "message": "Milestones in the same note row cannot pass each other",
+                    "message": "Time slots in the same note row cannot pass each other",
                     "type": "overlap",
-                    "milestoneIds": [first_id, second_id],
+                    "timeSlotIds": [first_id, second_id],
                 })
 
     deadlines = {}
@@ -1310,14 +1344,14 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
         if current is None or row["col"] < current["col"]:
             deadlines[key] = {"col": row["col"], "scale": scale}
 
-    for milestone in final_ms.values():
-        milestone_scale = _planning_scale_for_milestone(milestone)
-        deadline = deadlines.get((milestone["noteId"], milestone_scale))
+    for time_slot in final_ms.values():
+        time_slot_scale = _planning_scale_for_time_slot(time_slot)
+        deadline = deadlines.get((time_slot["noteId"], time_slot_scale))
         if (
             deadline is not None
-            and milestone["startCol"] + milestone["duration"] > deadline["col"]
+            and time_slot["startCol"] + time_slot["duration"] > deadline["col"]
         ):
-            raise HTTPException(422, {"message": "Milestone exceeds hard deadline", "type": "deadline", "id": milestone["id"]})
+            raise HTTPException(422, {"message": "Time slot exceeds hard deadline", "type": "deadline", "id": time_slot["id"]})
 
     earliest_starts = {}
     for row in con.execute(
@@ -1346,19 +1380,19 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
             (project_id, project_id),
         ).fetchall()
     ]
-    milestone_by_note = {}
-    for milestone in final_ms.values():
-        milestone_by_note[milestone["noteId"]] = milestone
+    time_slot_by_note = {}
+    for time_slot in final_ms.values():
+        time_slot_by_note[time_slot["noteId"]] = time_slot
 
     inherited_starts = {}
     inherited_deadlines = {}
     for item in inheritance_rows:
-        child_ms = milestone_by_note.get(item["childNoteId"])
-        parent_ms = milestone_by_note.get(item["parentNoteId"])
+        child_ms = time_slot_by_note.get(item["childNoteId"])
+        parent_ms = time_slot_by_note.get(item["parentNoteId"])
         if not child_ms or not parent_ms:
             continue
-        child_scale = _planning_scale_for_milestone(child_ms)
-        parent_scale = _planning_scale_for_milestone(parent_ms)
+        child_scale = _planning_scale_for_time_slot(child_ms)
+        parent_scale = _planning_scale_for_time_slot(parent_ms)
         if not _is_parent_scale_for_child(parent_scale, child_scale):
             raise HTTPException(422, {
                 "message": "Inherited parent note must be exactly one planning scale broader than the child note",
@@ -1370,31 +1404,31 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
         inherited_deadline = parent_ms["startCol"] + parent_ms["duration"]
         inherited_deadlines[item["childNoteId"]] = min(inherited_deadlines.get(item["childNoteId"], inherited_deadline), inherited_deadline)
 
-    for milestone in final_ms.values():
-        inherited_deadline = inherited_deadlines.get(milestone["noteId"])
-        if inherited_deadline is not None and milestone["startCol"] + milestone["duration"] > inherited_deadline:
+    for time_slot in final_ms.values():
+        inherited_deadline = inherited_deadlines.get(time_slot["noteId"])
+        if inherited_deadline is not None and time_slot["startCol"] + time_slot["duration"] > inherited_deadline:
             raise HTTPException(422, {
-                "message": "Milestone exceeds inherited hard deadline",
+                "message": "Time slot exceeds inherited hard deadline",
                 "type": "inheritance_deadline",
-                "id": milestone["id"],
-                "noteId": milestone["noteId"],
+                "id": time_slot["id"],
+                "noteId": time_slot["noteId"],
             })
 
-    for milestone in final_ms.values():
-        milestone_scale = _planning_scale_for_milestone(milestone)
-        es = earliest_starts.get((milestone["noteId"], milestone_scale))
-        inherited_start = inherited_starts.get(milestone["noteId"])
+    for time_slot in final_ms.values():
+        time_slot_scale = _planning_scale_for_time_slot(time_slot)
+        es = earliest_starts.get((time_slot["noteId"], time_slot_scale))
+        inherited_start = inherited_starts.get(time_slot["noteId"])
         if (
             es is not None
-            and milestone["startCol"] < es["col"]
+            and time_slot["startCol"] < es["col"]
         ):
-            raise HTTPException(422, {"message": "Milestone violates earliest start date", "type": "earliest_start", "id": milestone["id"]})
-        if inherited_start is not None and milestone["startCol"] < inherited_start:
+            raise HTTPException(422, {"message": "Time slot violates earliest start date", "type": "earliest_start", "id": time_slot["id"]})
+        if inherited_start is not None and time_slot["startCol"] < inherited_start:
             raise HTTPException(422, {
-                "message": "Milestone violates inherited earliest start date",
+                "message": "Time slot violates inherited earliest start date",
                 "type": "inheritance_earliest_start",
-                "id": milestone["id"],
-                "noteId": milestone["noteId"],
+                "id": time_slot["id"],
+                "noteId": time_slot["noteId"],
             })
 
     pairs = set()
@@ -1412,10 +1446,10 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
             raise HTTPException(422, scale_mismatch)
         if final_ms[dep["fromId"]]["startCol"] + final_ms[dep["fromId"]]["duration"] > final_ms[dep["toId"]]["startCol"]:
             raise HTTPException(422, {
-                "message": "A predecessor milestone must finish before its successor starts",
+                "message": "A predecessor time slot must finish before its successor starts",
                 "type": "dependency",
                 "dependencyIds": [dep["id"]],
-                "milestoneIds": [dep["fromId"], dep["toId"]],
+                "timeSlotIds": [dep["fromId"], dep["toId"]],
             })
         pairs.add(pair)
         adjacency.setdefault(dep["fromId"], []).append(dep["toId"])
@@ -1439,7 +1473,7 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
             raise HTTPException(422, {"message": "Dependency cycle detected"})
 
 def _is_pure_dependency_removal(before: dict, after: dict) -> bool:
-    if before["milestones"] or after["milestones"]:
+    if before["time_slots"] or after["time_slots"]:
         return False
 
     before_deps = {d["id"]: d for d in before["dependencies"]}
@@ -1451,8 +1485,8 @@ def _is_pure_dependency_removal(before: dict, after: dict) -> bool:
     return all(_json_equal(before_deps[dep_id], dep) for dep_id, dep in after_deps.items())
 
 def _apply_transaction_rows(con, before: dict, after: dict):
-    before_ms = {m["id"]: m for m in before["milestones"]}
-    after_ms = {m["id"]: m for m in after["milestones"]}
+    before_ms = {m["id"]: m for m in before["time_slots"]}
+    after_ms = {m["id"]: m for m in after["time_slots"]}
     before_deps = {d["id"]: d for d in before["dependencies"]}
     after_deps = {d["id"]: d for d in after["dependencies"]}
 
@@ -1460,16 +1494,16 @@ def _apply_transaction_rows(con, before: dict, after: dict):
         con.execute("DELETE FROM dependencies WHERE id = ?", (dep_id,))
     for ms_id in before_ms.keys() - after_ms.keys():
         con.execute("DELETE FROM dependencies WHERE from_id = ? OR to_id = ?", (ms_id, ms_id))
-        con.execute("DELETE FROM milestones WHERE id = ?", (ms_id,))
+        con.execute("DELETE FROM time_slots WHERE id = ?", (ms_id,))
     for m in after_ms.values():
         if m["id"] in before_ms:
             con.execute(
-                "UPDATE milestones SET note_id = ?, start_col = ?, duration = ?, title = ?, color = ? WHERE id = ?",
+                "UPDATE time_slots SET note_id = ?, start_col = ?, duration = ?, title = ?, color = ? WHERE id = ?",
                 (m["noteId"], m["startCol"], m["duration"], m["title"], m["color"], m["id"]),
             )
         else:
             con.execute(
-                "INSERT INTO milestones (id, note_id, start_col, duration, title, color) VALUES (?,?,?,?,?,?)",
+                "INSERT INTO time_slots (id, note_id, start_col, duration, title, color) VALUES (?,?,?,?,?,?)",
                 (m["id"], m["noteId"], m["startCol"], m["duration"], m["title"], m["color"]),
             )
     for d in after_deps.values():
@@ -1485,15 +1519,15 @@ def _apply_transaction_rows(con, before: dict, after: dict):
             )
 
 def _assert_transaction_project_scope(con, project_id: str, before: dict, after: dict):
-    for milestone in before["milestones"] + after["milestones"]:
-        note_id = milestone.get("noteId")
+    for time_slot in before["time_slots"] + after["time_slots"]:
+        note_id = time_slot.get("noteId")
         row = con.execute("SELECT project_id FROM notes WHERE id = ?", (note_id,)).fetchone()
         if not row or row["project_id"] != project_id:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Transaction milestone is outside this project")
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Transaction time slot is outside this project")
 
-    milestone_ids = {
+    time_slot_ids = {
         m["id"]
-        for m in before["milestones"] + after["milestones"]
+        for m in before["time_slots"] + after["time_slots"]
         if m.get("id")
     }
     dep_endpoint_ids = {
@@ -1502,14 +1536,14 @@ def _assert_transaction_project_scope(con, project_id: str, before: dict, after:
         for endpoint in (dep.get("fromId"), dep.get("toId"))
         if endpoint
     }
-    current_ms = _ms_by_id(con, milestone_ids | dep_endpoint_ids)
-    after_ms = {m["id"]: m for m in after["milestones"] if m.get("id")}
+    current_ms = _time_slots_by_id(con, time_slot_ids | dep_endpoint_ids)
+    after_ms = {m["id"]: m for m in after["time_slots"] if m.get("id")}
     for dep in before["dependencies"] + after["dependencies"]:
         for endpoint in (dep.get("fromId"), dep.get("toId")):
-            milestone = after_ms.get(endpoint) or current_ms.get(endpoint)
-            if not milestone:
+            time_slot = after_ms.get(endpoint) or current_ms.get(endpoint)
+            if not time_slot:
                 continue
-            row = con.execute("SELECT project_id FROM notes WHERE id = ?", (milestone["noteId"],)).fetchone()
+            row = con.execute("SELECT project_id FROM notes WHERE id = ?", (time_slot["noteId"],)).fetchone()
             if not row or row["project_id"] != project_id:
                 raise HTTPException(status.HTTP_403_FORBIDDEN, "Transaction dependency is outside this project")
 
@@ -1605,9 +1639,9 @@ def _dependency_violations_for_project(con, project_id: str) -> list[dict]:
             to_note.id AS to_note_id,
             to_note.title AS to_note_title
         FROM dependencies d
-        JOIN milestones from_ms ON from_ms.id = d.from_id
+        JOIN time_slots from_ms ON from_ms.id = d.from_id
         JOIN notes from_note ON from_note.id = from_ms.note_id
-        JOIN milestones to_ms ON to_ms.id = d.to_id
+        JOIN time_slots to_ms ON to_ms.id = d.to_id
         JOIN notes to_note ON to_note.id = to_ms.note_id
         WHERE from_note.project_id = ? AND to_note.project_id = ?
         ORDER BY from_note.order_idx, from_ms.start_col, to_note.order_idx, to_ms.start_col
@@ -1619,14 +1653,14 @@ def _dependency_violations_for_project(con, project_id: str) -> list[dict]:
         from_end = int(row["from_start"]) + int(row["from_duration"])
         to_start = int(row["to_start"])
         to_end = int(row["to_start"]) + int(row["to_duration"])
-        from_scale = _planning_scale_for_milestone({"startCol": row["from_start"], "duration": row["from_duration"]})
-        to_scale = _planning_scale_for_milestone({"startCol": row["to_start"], "duration": row["to_duration"]})
+        from_scale = _planning_scale_for_time_slot({"startCol": row["from_start"], "duration": row["from_duration"]})
+        to_scale = _planning_scale_for_time_slot({"startCol": row["to_start"], "duration": row["to_duration"]})
         base = {
             "dependencyId": row["dep_id"],
             "reason": row["reason"] or "",
             "from": {
-                "milestoneId": row["from_id"],
-                "milestoneTitle": row["from_title"] or "",
+                "timeSlotId": row["from_id"],
+                "timeSlotTitle": row["from_title"] or "",
                 "noteId": row["from_note_id"],
                 "noteTitle": row["from_note_title"],
                 "startCol": row["from_start"],
@@ -1635,8 +1669,8 @@ def _dependency_violations_for_project(con, project_id: str) -> list[dict]:
                 "scale": from_scale,
             },
             "to": {
-                "milestoneId": row["to_id"],
-                "milestoneTitle": row["to_title"] or "",
+                "timeSlotId": row["to_id"],
+                "timeSlotTitle": row["to_title"] or "",
                 "noteId": row["to_note_id"],
                 "noteTitle": row["to_note_title"],
                 "startCol": row["to_start"],
@@ -1657,7 +1691,7 @@ def _dependency_violations_for_project(con, project_id: str) -> list[dict]:
             violations.append({
                 **base,
                 "type": "dependency",
-                "message": "A predecessor milestone must finish before its successor starts",
+                "message": "A predecessor time slot must finish before its successor starts",
                 "overlapMinutes": from_end - to_start,
             })
     return violations
@@ -1869,8 +1903,8 @@ def get_project_stats(project_id: str, user: dict = Depends(current_user)):
         notes = con.execute(
             "SELECT COUNT(*) FROM notes WHERE project_id = ?", (project_id,)
         ).fetchone()[0]
-        milestones = con.execute(
-            "SELECT COUNT(*) FROM milestones WHERE note_id IN (SELECT id FROM notes WHERE project_id = ?)",
+        time_slots = con.execute(
+            "SELECT COUNT(*) FROM time_slots WHERE note_id IN (SELECT id FROM notes WHERE project_id = ?)",
             (project_id,)
         ).fetchone()[0]
         dimensions = con.execute(
@@ -1883,7 +1917,7 @@ def get_project_stats(project_id: str, user: dict = Depends(current_user)):
         ).fetchone()[0]
         dependencies = con.execute(
             """SELECT COUNT(*) FROM dependencies WHERE from_id IN (
-                SELECT id FROM milestones WHERE note_id IN (SELECT id FROM notes WHERE project_id = ?)
+                SELECT id FROM time_slots WHERE note_id IN (SELECT id FROM notes WHERE project_id = ?)
             )""",
             (project_id,)
         ).fetchone()[0]
@@ -1895,7 +1929,7 @@ def get_project_stats(project_id: str, user: dict = Depends(current_user)):
         ).fetchone()[0]
     return {
         "notes": notes,
-        "milestones": milestones,
+        "timeSlots": time_slots,
         "dimensions": dimensions,
         "categories": categories,
         "dependencies": dependencies,
@@ -1906,18 +1940,18 @@ def get_project_stats(project_id: str, user: dict = Depends(current_user)):
 def delete_project(project_id: str, user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     with _db() as con:
-        # Cascade: notes and their milestones/deadlines/assignments
+        # Cascade: notes and their time_slots/deadlines/assignments
         note_rows = con.execute("SELECT id FROM notes WHERE project_id = ?", (project_id,)).fetchall()
         note_ids = [r["id"] for r in note_rows]
         if note_ids:
             ph = ','.join('?' * len(note_ids))
-            ms_rows = con.execute(f"SELECT id FROM milestones WHERE note_id IN ({ph})", note_ids).fetchall()
+            ms_rows = con.execute(f"SELECT id FROM time_slots WHERE note_id IN ({ph})", note_ids).fetchall()
             ms_ids = [r["id"] for r in ms_rows]
             if ms_ids:
                 mph = ','.join('?' * len(ms_ids))
                 con.execute(f"DELETE FROM dependencies WHERE from_id IN ({mph}) OR to_id IN ({mph})", ms_ids + ms_ids)
-                con.execute(f"DELETE FROM persona_milestone_assignments WHERE milestone_id IN ({mph})", ms_ids)
-                con.execute(f"DELETE FROM milestones WHERE id IN ({mph})", ms_ids)
+                con.execute(f"DELETE FROM persona_time_slot_assignments WHERE time_slot_id IN ({mph})", ms_ids)
+                con.execute(f"DELETE FROM time_slots WHERE id IN ({mph})", ms_ids)
             con.execute(f"DELETE FROM deadlines WHERE note_id IN ({ph})", note_ids)
             con.execute(f"DELETE FROM earliest_starts WHERE note_id IN ({ph})", note_ids)
             con.execute(f"DELETE FROM note_inheritance WHERE child_note_id IN ({ph}) OR parent_note_id IN ({ph})", note_ids + note_ids)
@@ -2012,31 +2046,31 @@ def duplicate_note(note_id: str, user: dict = Depends(current_user)):
                 (row["persona_id"], new_note_id),
             )
 
-        source_milestone_ids = []
-        milestone_id_map = {}
-        for row in con.execute("SELECT * FROM milestones WHERE note_id = ? ORDER BY start_col, rowid", (note_id,)).fetchall():
+        source_time_slot_ids = []
+        time_slot_id_map = {}
+        for row in con.execute("SELECT * FROM time_slots WHERE note_id = ? ORDER BY start_col, rowid", (note_id,)).fetchall():
             new_ms_id = str(uuid.uuid4())
-            source_milestone_ids.append(row["id"])
-            milestone_id_map[row["id"]] = new_ms_id
+            source_time_slot_ids.append(row["id"])
+            time_slot_id_map[row["id"]] = new_ms_id
             con.execute(
-                "INSERT INTO milestones (id, note_id, start_col, duration, title, color) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO time_slots (id, note_id, start_col, duration, title, color) VALUES (?, ?, ?, ?, ?, ?)",
                 (new_ms_id, new_note_id, row["start_col"], row["duration"], row["title"], row["color"]),
             )
-            for pma in con.execute("SELECT persona_id FROM persona_milestone_assignments WHERE milestone_id = ?", (row["id"],)).fetchall():
+            for pma in con.execute("SELECT persona_id FROM persona_time_slot_assignments WHERE time_slot_id = ?", (row["id"],)).fetchall():
                 con.execute(
-                    "INSERT OR IGNORE INTO persona_milestone_assignments (persona_id, milestone_id) VALUES (?, ?)",
+                    "INSERT OR IGNORE INTO persona_time_slot_assignments (persona_id, time_slot_id) VALUES (?, ?)",
                     (pma["persona_id"], new_ms_id),
                 )
 
-        if source_milestone_ids:
-            ph = ",".join("?" for _ in source_milestone_ids)
+        if source_time_slot_ids:
+            ph = ",".join("?" for _ in source_time_slot_ids)
             dep_rows = con.execute(
                 f"SELECT * FROM dependencies WHERE from_id IN ({ph}) OR to_id IN ({ph})",
-                source_milestone_ids + source_milestone_ids,
+                source_time_slot_ids + source_time_slot_ids,
             ).fetchall()
             for dep in dep_rows:
-                new_from_id = milestone_id_map.get(dep["from_id"], dep["from_id"])
-                new_to_id = milestone_id_map.get(dep["to_id"], dep["to_id"])
+                new_from_id = time_slot_id_map.get(dep["from_id"], dep["from_id"])
+                new_to_id = time_slot_id_map.get(dep["to_id"], dep["to_id"])
                 if new_from_id == new_to_id:
                     continue
                 con.execute(
@@ -2066,7 +2100,7 @@ def duplicate_note(note_id: str, user: dict = Depends(current_user)):
             )
 
         note = con.execute("SELECT * FROM notes WHERE id = ?", (new_note_id,)).fetchone()
-        milestones = con.execute("SELECT * FROM milestones WHERE note_id = ? ORDER BY start_col", (new_note_id,)).fetchall()
+        time_slots = con.execute("SELECT * FROM time_slots WHERE note_id = ? ORDER BY start_col", (new_note_id,)).fetchall()
         assignments = con.execute("SELECT * FROM assignments WHERE note_id = ?", (new_note_id,)).fetchall()
         deadlines = con.execute("SELECT * FROM deadlines WHERE note_id = ?", (new_note_id,)).fetchall()
         earliest_starts = con.execute("SELECT * FROM earliest_starts WHERE note_id = ?", (new_note_id,)).fetchall()
@@ -2074,15 +2108,15 @@ def duplicate_note(note_id: str, user: dict = Depends(current_user)):
         dependencies = con.execute(
             """
             SELECT * FROM dependencies
-            WHERE from_id IN (SELECT id FROM milestones WHERE note_id = ?)
-               OR to_id IN (SELECT id FROM milestones WHERE note_id = ?)
+            WHERE from_id IN (SELECT id FROM time_slots WHERE note_id = ?)
+               OR to_id IN (SELECT id FROM time_slots WHERE note_id = ?)
             """,
             (new_note_id, new_note_id),
         ).fetchall()
 
     return {
         "note": _note(note),
-        "milestones": [_ms(row) for row in milestones],
+        "timeSlots": [_time_slot(row) for row in time_slots],
         "dependencies": [_dep(row) for row in dependencies],
         "assignments": [_assign(row) for row in assignments],
         "deadlines": [_dl(row) for row in deadlines],
@@ -2094,11 +2128,11 @@ def duplicate_note(note_id: str, user: dict = Depends(current_user)):
 def delete_note(note_id: str, user: dict = Depends(current_user)):
     with _db() as con:
         assert_project_access(_project_id_for_note(con, note_id), user)
-        ms_rows = con.execute("SELECT id FROM milestones WHERE note_id = ?", (note_id,)).fetchall()
+        ms_rows = con.execute("SELECT id FROM time_slots WHERE note_id = ?", (note_id,)).fetchall()
         ms_ids = [r["id"] for r in ms_rows]
         if ms_ids:
             ph = ','.join('?' * len(ms_ids))
-            con.execute(f"DELETE FROM persona_milestone_assignments WHERE milestone_id IN ({ph})", ms_ids)
+            con.execute(f"DELETE FROM persona_time_slot_assignments WHERE time_slot_id IN ({ph})", ms_ids)
         con.execute("DELETE FROM persona_note_assignments WHERE note_id = ?", (note_id,))
         con.execute("DELETE FROM note_inheritance WHERE child_note_id = ? OR parent_note_id = ?", (note_id, note_id))
         con.execute("DELETE FROM notes WHERE id = ?", (note_id,))
@@ -2120,11 +2154,11 @@ def reorder_notes(data: OrderIn, user: dict = Depends(current_user)):
 
 
 # ── Note inheritance ──────────────────────────────────────────────────────────
-def _single_milestone_for_note(con, note_id: str) -> dict | None:
-    rows = con.execute("SELECT * FROM milestones WHERE note_id = ? ORDER BY start_col, rowid", (note_id,)).fetchall()
+def _single_time_slot_for_note(con, note_id: str) -> dict | None:
+    rows = con.execute("SELECT * FROM time_slots WHERE note_id = ? ORDER BY start_col, rowid", (note_id,)).fetchall()
     if len(rows) > 1:
-        raise HTTPException(422, {"message": "A note can only contain one milestone", "type": "note_milestone_limit", "noteId": note_id})
-    return _ms(rows[0]) if rows else None
+        raise HTTPException(422, {"message": "A note can only contain one time slot", "type": "note_time_slot_limit", "noteId": note_id})
+    return _time_slot(rows[0]) if rows else None
 
 def _assert_valid_note_inheritance(con, child_note_id: str, parent_note_id: str):
     if child_note_id == parent_note_id:
@@ -2143,15 +2177,15 @@ def _assert_valid_note_inheritance(con, child_note_id: str, parent_note_id: str)
         row = con.execute("SELECT parent_note_id FROM note_inheritance WHERE child_note_id = ?", (current,)).fetchone()
         current = row["parent_note_id"] if row else None
 
-    child_ms = _single_milestone_for_note(con, child_note_id)
-    parent_ms = _single_milestone_for_note(con, parent_note_id)
+    child_ms = _single_time_slot_for_note(con, child_note_id)
+    parent_ms = _single_time_slot_for_note(con, parent_note_id)
     if not child_ms or not parent_ms:
         raise HTTPException(422, {
-            "message": "Both child and parent notes need one milestone before inheritance can be assigned",
-            "type": "inheritance_missing_milestone",
+            "message": "Both child and parent notes need one time slot before inheritance can be assigned",
+            "type": "inheritance_missing_time_slot",
         })
-    child_scale = _planning_scale_for_milestone(child_ms)
-    parent_scale = _planning_scale_for_milestone(parent_ms)
+    child_scale = _planning_scale_for_time_slot(child_ms)
+    parent_scale = _planning_scale_for_time_slot(parent_ms)
     if not _is_parent_scale_for_child(parent_scale, child_scale):
         raise HTTPException(422, {
             "message": "Inherited parent note must be exactly one planning scale broader than the child note",
@@ -2163,9 +2197,9 @@ def _assert_valid_note_inheritance(con, child_note_id: str, parent_note_id: str)
     parent_end = parent_ms["startCol"] + parent_ms["duration"]
     if child_ms["startCol"] < parent_start or child_ms["startCol"] + child_ms["duration"] > parent_end:
         raise HTTPException(422, {
-            "message": "Child milestone must fit inside the parent milestone window",
+            "message": "Child time slot must fit inside the parent time slot window",
             "type": "inheritance_window",
-            "milestoneIds": [child_ms["id"], parent_ms["id"]],
+            "timeSlotIds": [child_ms["id"], parent_ms["id"]],
         })
 
 @app.get("/note-inheritance")
@@ -2380,7 +2414,7 @@ def delete_persona(persona_id: str, user: dict = Depends(current_user)):
         assert_project_access(row["project_id"], user)
         con.execute("DELETE FROM persona_assignments WHERE persona_id = ?", (persona_id,))
         con.execute("DELETE FROM persona_note_assignments WHERE persona_id = ?", (persona_id,))
-        con.execute("DELETE FROM persona_milestone_assignments WHERE persona_id = ?", (persona_id,))
+        con.execute("DELETE FROM persona_time_slot_assignments WHERE persona_id = ?", (persona_id,))
         con.execute("DELETE FROM category_leaders WHERE persona_id = ?", (persona_id,))
         con.execute("DELETE FROM personas WHERE id = ?", (persona_id,))
     return Response(status_code=204)
@@ -2400,8 +2434,8 @@ def list_persona_assignments(project_id: str = Query(default='default'), user: d
                 UNION
 
                 SELECT pma.persona_id, m.note_id
-                FROM persona_milestone_assignments pma
-                JOIN milestones m ON m.id = pma.milestone_id
+                FROM persona_time_slot_assignments pma
+                JOIN time_slots m ON m.id = pma.time_slot_id
                 JOIN notes n ON n.id = m.note_id
                 WHERE n.project_id = ?
             ),
@@ -2492,8 +2526,8 @@ def list_persona_note_assignments(project_id: str = Query(default='default'), us
                 UNION
 
                 SELECT pma.persona_id, m.note_id
-                FROM persona_milestone_assignments pma
-                JOIN milestones m ON m.id = pma.milestone_id
+                FROM persona_time_slot_assignments pma
+                JOIN time_slots m ON m.id = pma.time_slot_id
                 JOIN notes n ON n.id = m.note_id
                 WHERE n.project_id = ?
             )
@@ -2547,27 +2581,27 @@ def unassign_persona_from_note(persona_id: str, note_id: str, user: dict = Depen
     return Response(status_code=204)
 
 
-@app.get("/persona-milestone-assignments")
-def list_persona_milestone_assignments(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+@app.get("/persona-time-slot-assignments")
+def list_persona_time_slot_assignments(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     with _db() as con:
         rows = con.execute(
-            "SELECT pma.persona_id, pma.milestone_id FROM persona_milestone_assignments pma "
-            "JOIN milestones m ON m.id = pma.milestone_id "
+            "SELECT pma.persona_id, pma.time_slot_id FROM persona_time_slot_assignments pma "
+            "JOIN time_slots m ON m.id = pma.time_slot_id "
             "JOIN notes n ON n.id = m.note_id WHERE n.project_id = ?",
             (project_id,),
         ).fetchall()
-    return [{"personaId": r["persona_id"], "milestoneId": r["milestone_id"]} for r in rows]
+    return [{"personaId": r["persona_id"], "timeSlotId": r["time_slot_id"]} for r in rows]
 
-@app.put("/personas/{persona_id}/milestone-assign/{milestone_id}", status_code=204)
-def assign_persona_to_milestone(persona_id: str, milestone_id: str, user: dict = Depends(current_user)):
+@app.put("/personas/{persona_id}/time-slot-assign/{time_slot_id}", status_code=204)
+def assign_persona_to_time_slot(persona_id: str, time_slot_id: str, user: dict = Depends(current_user)):
     with _db() as con:
         ms_row = con.execute(
-            "SELECT n.project_id FROM milestones m JOIN notes n ON n.id = m.note_id WHERE m.id = ?",
-            (milestone_id,),
+            "SELECT n.project_id FROM time_slots m JOIN notes n ON n.id = m.note_id WHERE m.id = ?",
+            (time_slot_id,),
         ).fetchone()
         if not ms_row:
-            raise HTTPException(404, "Milestone not found")
+            raise HTTPException(404, "Time slot not found")
         assert_project_access(ms_row["project_id"], user)
         persona_row = con.execute("SELECT project_id FROM personas WHERE id = ?", (persona_id,)).fetchone()
         if not persona_row:
@@ -2575,24 +2609,24 @@ def assign_persona_to_milestone(persona_id: str, milestone_id: str, user: dict =
         if persona_row["project_id"] != ms_row["project_id"]:
             raise HTTPException(400, "Cannot assign persona across projects")
         con.execute(
-            "INSERT OR IGNORE INTO persona_milestone_assignments (persona_id, milestone_id) VALUES (?, ?)",
-            (persona_id, milestone_id),
+            "INSERT OR IGNORE INTO persona_time_slot_assignments (persona_id, time_slot_id) VALUES (?, ?)",
+            (persona_id, time_slot_id),
         )
     return Response(status_code=204)
 
-@app.delete("/personas/{persona_id}/milestone-assign/{milestone_id}", status_code=204)
-def unassign_persona_from_milestone(persona_id: str, milestone_id: str, user: dict = Depends(current_user)):
+@app.delete("/personas/{persona_id}/time-slot-assign/{time_slot_id}", status_code=204)
+def unassign_persona_from_time_slot(persona_id: str, time_slot_id: str, user: dict = Depends(current_user)):
     with _db() as con:
         ms_row = con.execute(
-            "SELECT n.project_id FROM milestones m JOIN notes n ON n.id = m.note_id WHERE m.id = ?",
-            (milestone_id,),
+            "SELECT n.project_id FROM time_slots m JOIN notes n ON n.id = m.note_id WHERE m.id = ?",
+            (time_slot_id,),
         ).fetchone()
         if not ms_row:
-            raise HTTPException(404, "Milestone not found")
+            raise HTTPException(404, "Time slot not found")
         assert_project_access(ms_row["project_id"], user)
         con.execute(
-            "DELETE FROM persona_milestone_assignments WHERE persona_id = ? AND milestone_id = ?",
-            (persona_id, milestone_id),
+            "DELETE FROM persona_time_slot_assignments WHERE persona_id = ? AND time_slot_id = ?",
+            (persona_id, time_slot_id),
         )
     return Response(status_code=204)
 
@@ -2946,24 +2980,24 @@ def redo_transaction(project_id: str = Query(default='default'), user: dict = De
         return {"ok": True, "transaction": transaction, "history": _history_summary(con, project_id)}
 
 
-# ── Milestones ────────────────────────────────────────────────────────────────
-@app.get("/milestones")
-def list_milestones(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+# ── Time Slots ───────────────────────────────────────────────────────────────
+@app.get("/time-slots")
+def list_time_slots(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     with _db() as con:
         rows = con.execute(
-            """SELECT * FROM milestones
+            """SELECT * FROM time_slots
             WHERE note_id IN (SELECT id FROM notes WHERE project_id = ?)
             ORDER BY start_col""",
             (project_id,)
         ).fetchall()
-    return [_ms(r) for r in rows]
+    return [_time_slot(r) for r in rows]
 
-@app.post("/milestones", status_code=201)
-def create_milestone(data: MilestoneIn, user: dict = Depends(current_user)):
+@app.post("/time-slots", status_code=201)
+def create_time_slot(data: TimeSlotIn, user: dict = Depends(current_user)):
     mid = data.id or str(uuid.uuid4())
-    duration = _milestone_duration_value(data.duration)
-    milestone = {
+    duration = _time_slot_duration_value(data.duration)
+    time_slot = {
         "id": mid,
         "noteId": data.noteId,
         "startCol": data.startCol,
@@ -2971,77 +3005,77 @@ def create_milestone(data: MilestoneIn, user: dict = Depends(current_user)):
         "title": data.title,
         "color": data.color,
     }
-    _assert_milestone_scale_edit_allowed(None, milestone)
+    _assert_time_slot_scale_edit_allowed(None, time_slot)
     with _db() as con:
         project_id = _project_id_for_note(con, data.noteId)
         assert_project_access(project_id, user)
-        _assert_final_state_valid(con, project_id, {"milestones": [], "dependencies": []}, {"milestones": [milestone], "dependencies": []})
+        _assert_final_state_valid(con, project_id, {"time_slots": [], "dependencies": []}, {"time_slots": [time_slot], "dependencies": []})
         con.execute(
-            "INSERT INTO milestones (id, note_id, start_col, duration, title, color) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO time_slots (id, note_id, start_col, duration, title, color) VALUES (?,?,?,?,?,?)",
             (mid, data.noteId, data.startCol, duration, data.title, data.color),
         )
-    return milestone
+    return time_slot
 
-# Registered before /{ms_id} so "batch" is not captured as a path param
-@app.put("/milestones/batch")
-def batch_update_milestones(data: MilestoneBatch, user: dict = Depends(current_user)):
+# Registered before /{time_slot_id} so "batch" is not captured as a path param
+@app.put("/time-slots/batch")
+def batch_update_time_slots(data: TimeSlotBatch, user: dict = Depends(current_user)):
     with _db() as con:
         for u in data.updates:
             mid = u.get("id")
             if not mid:
                 continue
-            project_id = _project_id_for_milestone(con, mid)
+            project_id = _project_id_for_time_slot(con, mid)
             assert_project_access(project_id, user)
-            row = con.execute("SELECT * FROM milestones WHERE id = ?", (mid,)).fetchone()
-            before = _ms(row)
+            row = con.execute("SELECT * FROM time_slots WHERE id = ?", (mid,)).fetchone()
+            before = _time_slot(row)
             after = {**before}
             fields, values = [], []
             if "startCol" in u:
                 after["startCol"] = int(u["startCol"])
                 fields.append("start_col = ?"); values.append(after["startCol"])
             if "duration" in u:
-                after["duration"] = _milestone_duration_value(u["duration"])
+                after["duration"] = _time_slot_duration_value(u["duration"])
                 fields.append("duration = ?");  values.append(after["duration"])
             if "color"    in u: fields.append("color = ?");     values.append(u["color"])
             if "title"    in u: fields.append("title = ?");     values.append(u["title"])
             if _schedule_fields_changed(before, after):
-                _assert_milestone_scale_edit_allowed(before, after)
-                _assert_final_state_valid(con, project_id, {"milestones": [before], "dependencies": []}, {"milestones": [after], "dependencies": []})
+                _assert_time_slot_scale_edit_allowed(before, after)
+                _assert_final_state_valid(con, project_id, {"time_slots": [before], "dependencies": []}, {"time_slots": [after], "dependencies": []})
             if fields:
-                con.execute(f"UPDATE milestones SET {', '.join(fields)} WHERE id = ?", (*values, mid))
+                con.execute(f"UPDATE time_slots SET {', '.join(fields)} WHERE id = ?", (*values, mid))
     return {"ok": True}
 
-@app.patch("/milestones/{ms_id}")
-def update_milestone(ms_id: str, data: MilestonePatch, user: dict = Depends(current_user)):
+@app.patch("/time-slots/{time_slot_id}")
+def update_time_slot(time_slot_id: str, data: TimeSlotPatch, user: dict = Depends(current_user)):
     with _db() as con:
-        project_id = _project_id_for_milestone(con, ms_id)
+        project_id = _project_id_for_time_slot(con, time_slot_id)
         assert_project_access(project_id, user)
-        row = con.execute("SELECT * FROM milestones WHERE id = ?", (ms_id,)).fetchone()
-        before = _ms(row)
+        row = con.execute("SELECT * FROM time_slots WHERE id = ?", (time_slot_id,)).fetchone()
+        before = _time_slot(row)
         after = {**before}
         fields, values = [], []
         if data.startCol is not None:
             after["startCol"] = data.startCol
             fields.append("start_col = ?"); values.append(data.startCol)
         if data.duration  is not None:
-            after["duration"] = _milestone_duration_value(data.duration)
+            after["duration"] = _time_slot_duration_value(data.duration)
             fields.append("duration = ?");  values.append(after["duration"])
         if data.title     is not None: fields.append("title = ?");     values.append(data.title)
         if data.color     is not None: fields.append("color = ?");     values.append(data.color)
         if _schedule_fields_changed(before, after):
-            _assert_milestone_scale_edit_allowed(before, after)
-            _assert_final_state_valid(con, project_id, {"milestones": [before], "dependencies": []}, {"milestones": [after], "dependencies": []})
+            _assert_time_slot_scale_edit_allowed(before, after)
+            _assert_final_state_valid(con, project_id, {"time_slots": [before], "dependencies": []}, {"time_slots": [after], "dependencies": []})
         if fields:
-            con.execute(f"UPDATE milestones SET {', '.join(fields)} WHERE id = ?", (*values, ms_id))
-        row = con.execute("SELECT * FROM milestones WHERE id = ?", (ms_id,)).fetchone()
-    return _ms(row)
+            con.execute(f"UPDATE time_slots SET {', '.join(fields)} WHERE id = ?", (*values, time_slot_id))
+        row = con.execute("SELECT * FROM time_slots WHERE id = ?", (time_slot_id,)).fetchone()
+    return _time_slot(row)
 
-@app.delete("/milestones/{ms_id}", status_code=204)
-def delete_milestone(ms_id: str, user: dict = Depends(current_user)):
+@app.delete("/time-slots/{time_slot_id}", status_code=204)
+def delete_time_slot(time_slot_id: str, user: dict = Depends(current_user)):
     with _db() as con:
-        assert_project_access(_project_id_for_milestone(con, ms_id), user)
-        con.execute("DELETE FROM persona_milestone_assignments WHERE milestone_id = ?", (ms_id,))
-        con.execute("DELETE FROM milestones WHERE id = ?", (ms_id,))
+        assert_project_access(_project_id_for_time_slot(con, time_slot_id), user)
+        con.execute("DELETE FROM persona_time_slot_assignments WHERE time_slot_id = ?", (time_slot_id,))
+        con.execute("DELETE FROM time_slots WHERE id = ?", (time_slot_id,))
 
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
@@ -3051,7 +3085,7 @@ def list_dependencies(project_id: str = Query(default='default'), user: dict = D
     with _db() as con:
         rows = con.execute(
             """SELECT * FROM dependencies WHERE from_id IN (
-                SELECT id FROM milestones WHERE note_id IN (SELECT id FROM notes WHERE project_id = ?)
+                SELECT id FROM time_slots WHERE note_id IN (SELECT id FROM notes WHERE project_id = ?)
             )""",
             (project_id,)
         ).fetchall()
@@ -3068,15 +3102,15 @@ def create_dependency(data: DependencyIn, user: dict = Depends(current_user)):
     did = data.id or str(uuid.uuid4())
     reason = data.reason or ''
     with _db() as con:
-        from_project_id = _project_id_for_milestone(con, data.fromId)
-        to_project_id = _project_id_for_milestone(con, data.toId)
+        from_project_id = _project_id_for_time_slot(con, data.fromId)
+        to_project_id = _project_id_for_time_slot(con, data.toId)
         if from_project_id != to_project_id:
             raise HTTPException(400, "Dependency endpoints must belong to the same project")
         assert_project_access(from_project_id, user)
-        milestones = _ms_by_id(con, {data.fromId, data.toId})
+        time_slots = _time_slots_by_id(con, {data.fromId, data.toId})
         scale_mismatch = _dependency_scale_mismatch(
             {"id": did, "fromId": data.fromId, "toId": data.toId},
-            milestones,
+            time_slots,
         )
         if scale_mismatch:
             raise HTTPException(422, scale_mismatch)
@@ -3122,26 +3156,26 @@ def set_deadline(note_id: str, data: DeadlineColIn, user: dict = Depends(current
     with _db() as con:
         assert_project_access(_project_id_for_note(con, note_id), user)
         blocking = con.execute(
-            "SELECT * FROM milestones WHERE note_id = ?",
+            "SELECT * FROM time_slots WHERE note_id = ?",
             (note_id,),
         ).fetchall()
-        ms_scales = {_planning_scale_for_milestone(_ms(row)) for row in blocking}
+        ms_scales = {_planning_scale_for_time_slot(_time_slot(row)) for row in blocking}
         if ms_scales and scale not in ms_scales:
             row_scale = next(iter(ms_scales))
             raise HTTPException(422, {
-                "message": f"This row contains {row_scale}-scale milestones. Switch to the {row_scale} view to set a deadline here.",
+                "message": f"This row contains {row_scale}-scale time slots. Switch to the {row_scale} view to set a deadline here.",
                 "type": "deadline_scale_mismatch",
             })
         for row in blocking:
-            milestone = _ms(row)
+            time_slot = _time_slot(row)
             if (
-                _planning_scale_for_milestone(milestone) == scale
-                and milestone["startCol"] + milestone["duration"] > data.col
+                _planning_scale_for_time_slot(time_slot) == scale
+                and time_slot["startCol"] + time_slot["duration"] > data.col
             ):
                 raise HTTPException(422, {
-                    "message": "Hard deadline would conflict with an existing milestone on the same planning scale",
+                    "message": "Hard deadline would conflict with an existing time slot on the same planning scale",
                     "type": "deadline",
-                    "id": milestone["id"],
+                    "id": time_slot["id"],
                 })
         existing = con.execute("SELECT id FROM deadlines WHERE note_id = ?", (note_id,)).fetchone()
         if existing:
@@ -3177,26 +3211,26 @@ def set_earliest_start(note_id: str, data: DeadlineColIn, user: dict = Depends(c
     with _db() as con:
         assert_project_access(_project_id_for_note(con, note_id), user)
         blocking = con.execute(
-            "SELECT * FROM milestones WHERE note_id = ?",
+            "SELECT * FROM time_slots WHERE note_id = ?",
             (note_id,),
         ).fetchall()
-        ms_scales = {_planning_scale_for_milestone(_ms(row)) for row in blocking}
+        ms_scales = {_planning_scale_for_time_slot(_time_slot(row)) for row in blocking}
         if ms_scales and scale not in ms_scales:
             row_scale = next(iter(ms_scales))
             raise HTTPException(422, {
-                "message": f"This row contains {row_scale}-scale milestones. Switch to the {row_scale} view to set an earliest start here.",
+                "message": f"This row contains {row_scale}-scale time slots. Switch to the {row_scale} view to set an earliest start here.",
                 "type": "earliest_start_scale_mismatch",
             })
         for row in blocking:
-            milestone = _ms(row)
+            time_slot = _time_slot(row)
             if (
-                _planning_scale_for_milestone(milestone) == scale
-                and milestone["startCol"] < data.col
+                _planning_scale_for_time_slot(time_slot) == scale
+                and time_slot["startCol"] < data.col
             ):
                 raise HTTPException(422, {
-                    "message": "Earliest start date would conflict with an existing milestone that starts before it",
+                    "message": "Earliest start date would conflict with an existing time slot that starts before it",
                     "type": "earliest_start",
-                    "id": milestone["id"],
+                    "id": time_slot["id"],
                 })
         existing = con.execute("SELECT id FROM earliest_starts WHERE note_id = ?", (note_id,)).fetchone()
         if existing:
@@ -3259,7 +3293,7 @@ def export_database(project_id: str = Query(...), user: dict = Depends(current_u
 
         if note_ids:
             note_ph = ','.join('?' for _ in note_ids)
-            milestones = con.execute(f"SELECT * FROM milestones WHERE note_id IN ({note_ph})", note_ids).fetchall()
+            time_slots = con.execute(f"SELECT * FROM time_slots WHERE note_id IN ({note_ph})", note_ids).fetchall()
             deadlines = con.execute(f"SELECT * FROM deadlines WHERE note_id IN ({note_ph})", note_ids).fetchall()
             earliest_starts = con.execute(f"SELECT * FROM earliest_starts WHERE note_id IN ({note_ph})", note_ids).fetchall()
             note_inheritance = con.execute(
@@ -3267,14 +3301,14 @@ def export_database(project_id: str = Query(...), user: dict = Depends(current_u
                 note_ids + note_ids,
             ).fetchall()
         else:
-            milestones = deadlines = earliest_starts = note_inheritance = []
+            time_slots = deadlines = earliest_starts = note_inheritance = []
 
-        milestone_ids = [row["id"] for row in milestones]
-        if milestone_ids:
-            ms_ph = ','.join('?' for _ in milestone_ids)
+        time_slot_ids = [row["id"] for row in time_slots]
+        if time_slot_ids:
+            ms_ph = ','.join('?' for _ in time_slot_ids)
             dependencies = con.execute(
                 f"SELECT * FROM dependencies WHERE from_id IN ({ms_ph}) OR to_id IN ({ms_ph})",
-                milestone_ids + milestone_ids,
+                time_slot_ids + time_slot_ids,
             ).fetchall()
         else:
             dependencies = []
@@ -3289,7 +3323,7 @@ def export_database(project_id: str = Query(...), user: dict = Depends(current_u
                 "dimensions":                 rows(dimensions),
                 "categories":                 rows(categories),
                 "assignments":                rows(assignments),
-                "milestones":                 rows(milestones),
+                "timeSlots":                  rows(time_slots),
                 "dependencies":               rows(dependencies),
                 "deadlines":                  rows(deadlines),
                 "earliest_starts":            rows(earliest_starts),

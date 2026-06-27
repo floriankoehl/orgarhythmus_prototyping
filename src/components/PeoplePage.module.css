@@ -233,34 +233,34 @@
   -webkit-box-orient: vertical;
 }
 
-.people2dMilestoneGrid {
+.people2dTimeSlotGrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
   gap: 12px;
   margin-top: 18px;
 }
 
-.people2dMilestone {
+.people2dTimeSlot {
   min-height: 150px;
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 12px;
-  background: color-mix(in srgb, var(--milestone-color), #fff 82%);
-  border: 2px solid color-mix(in srgb, var(--milestone-color), #fff 36%);
+  background: color-mix(in srgb, var(--timeSlot-color), #fff 82%);
+  border: 2px solid color-mix(in srgb, var(--timeSlot-color), #fff 36%);
   border-radius: 8px;
 }
 
-.people2dMilestone:hover {
-  border-color: var(--milestone-color);
+.people2dTimeSlot:hover {
+  border-color: var(--timeSlot-color);
 }
 
-.people2dMilestoneDate {
-  color: var(--milestone-color);
+.people2dTimeSlotDate {
+  color: var(--timeSlot-color);
   font: 800 12px Arial, sans-serif;
 }
 
-.people2dMilestoneTitle {
+.people2dTimeSlotTitle {
   color: #222;
   font: 800 14px Arial, sans-serif;
 }

@@ -55,19 +55,19 @@ function isCalendarMonthRange(startCol, duration) {
   return end > start && isCalendarMonthBoundary(start) && isCalendarMonthBoundary(end)
 }
 
-function milestoneScale(milestone) {
-  if (!milestone) return null
-  if (isCalendarMonthRange(milestone.startCol, milestone.duration)) return 'month'
-  const duration = Math.max(10, Number(milestone.duration) || 10)
+function timeSlotScale(timeSlot) {
+  if (!timeSlot) return null
+  if (isCalendarMonthRange(timeSlot.startCol, timeSlot.duration)) return 'month'
+  const duration = Math.max(10, Number(timeSlot.duration) || 10)
   if (duration >= 43200) return 'month'
   if (duration >= 1440) return 'day'
   return 'minute'
 }
 
-function formatWindow(milestone) {
-  if (!milestone) return 'No milestone'
-  const start = minuteToDate(milestone.startCol)
-  const end = minuteToDate(milestone.startCol + milestone.duration)
+function formatWindow(timeSlot) {
+  if (!timeSlot) return 'No time slot'
+  const start = minuteToDate(timeSlot.startCol)
+  const end = minuteToDate(timeSlot.startCol + timeSlot.duration)
   return `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`
 }
 
@@ -76,14 +76,14 @@ function noteTitle(note) {
 }
 
 export default function InheritancePage({ notes = [], isActive = false, onNoteOpen }) {
-  const [milestones, setMilestones] = useState([])
+  const [timeSlots, setTimeSlots] = useState([])
   const [inheritance, setInheritance] = useState([])
   const [mode, setMode] = useState('minute-day')
   const [error, setError] = useState('')
 
   const load = () => {
-    Promise.all([api.getMilestones(), api.getNoteInheritance()])
-      .then(([mss, links]) => { setMilestones(mss); setInheritance(links); setError('') })
+    Promise.all([api.getTimeSlots(), api.getNoteInheritance()])
+      .then(([mss, links]) => { setTimeSlots(mss); setInheritance(links); setError('') })
       .catch(err => setError(err.message || 'Could not load inheritance'))
   }
 
@@ -91,20 +91,20 @@ export default function InheritancePage({ notes = [], isActive = false, onNoteOp
     if (isActive) load()
   }, [isActive])
 
-  const milestoneByNote = useMemo(() => {
+  const timeSlotByNote = useMemo(() => {
     const map = new Map()
-    milestones.forEach(ms => {
+    timeSlots.forEach(ms => {
       if (!map.has(ms.noteId)) map.set(ms.noteId, ms)
     })
     return map
-  }, [milestones])
+  }, [timeSlots])
 
   const noteById = useMemo(() => new Map(notes.map(note => [note.id, note])), [notes])
   const parentByChild = useMemo(() => new Map(inheritance.map(link => [link.childNoteId, link.parentNoteId])), [inheritance])
 
   const [childScale, parentScale] = mode === 'minute-day' ? ['minute', 'day'] : ['day', 'month']
-  const parentNotes = notes.filter(note => milestoneScale(milestoneByNote.get(note.id)) === parentScale)
-  const childNotes = notes.filter(note => milestoneScale(milestoneByNote.get(note.id)) === childScale)
+  const parentNotes = notes.filter(note => timeSlotScale(timeSlotByNote.get(note.id)) === parentScale)
+  const childNotes = notes.filter(note => timeSlotScale(timeSlotByNote.get(note.id)) === childScale)
   const assignedChildren = childNotes.filter(note => parentByChild.has(note.id))
   const unassignedChildren = childNotes.filter(note => !parentByChild.has(note.id))
 
@@ -149,7 +149,7 @@ export default function InheritancePage({ notes = [], isActive = false, onNoteOp
           <div className={styles.panelTitle}>Parent {parentScale} notes</div>
           <div className={styles.parentGrid}>
             {parentNotes.map(parent => {
-              const parentMs = milestoneByNote.get(parent.id)
+              const parentMs = timeSlotByNote.get(parent.id)
               const children = assignedChildren.filter(child => parentByChild.get(child.id) === parent.id)
               return (
                 <article key={parent.id} className={styles.parentCard}>
@@ -177,7 +177,7 @@ export default function InheritancePage({ notes = [], isActive = false, onNoteOp
             {unassignedChildren.map(child => (
               <div key={child.id} className={styles.assignCard}>
                 <button className={styles.noteTitle} onClick={() => onNoteOpen?.(child.id)}>{noteTitle(child)}</button>
-                <div className={styles.window}>{formatWindow(milestoneByNote.get(child.id))}</div>
+                <div className={styles.window}>{formatWindow(timeSlotByNote.get(child.id))}</div>
                 <select defaultValue="" onChange={e => assign(child.id, e.target.value)}>
                   <option value="" disabled>Assign parent...</option>
                   {parentNotes.map(parent => (

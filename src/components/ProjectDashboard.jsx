@@ -4,7 +4,7 @@ import styles from './ProjectDashboard.module.css'
 
 const STAT_LABELS = {
   notes:        'Notes',
-  milestones:   'Milestones',
+  timeSlots:   'Time slots',
   dimensions:   'Dimensions',
   categories:   'Categories',
   dependencies: 'Dependencies',
