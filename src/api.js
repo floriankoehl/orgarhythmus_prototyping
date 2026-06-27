@@ -219,5 +219,5 @@ export const api = {
   // Note inheritance
   getNoteInheritance:    ()                  => req('GET',    '/note-inheritance'),
   setNoteInheritance:    (childId, parentId) => req('PUT',    `/notes/${childId}/inheritance`, { parentNoteId: parentId }),
-  removeNoteInheritance: (childId)           => req('DELETE', `/notes/${childId}/inheritance`),
+  removeNoteInheritance: (childId, parentId = null) => req('DELETE', `/notes/${childId}/inheritance${parentId ? `?parent_note_id=${encodeURIComponent(parentId)}` : ''}`),
 }

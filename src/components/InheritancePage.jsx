@@ -2,7 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import styles from './InheritancePage.module.css'
 
-const SCALE_ORDER = ['minute', 'day', 'month']
+const INHERITANCE_MODES = {
+  'minute-minute': ['minute', 'minute', 'Minutes to Minutes'],
+  'minute-day': ['minute', 'day', 'Minutes to Days'],
+  'day-day': ['day', 'day', 'Days to Days'],
+  'day-month': ['day', 'month', 'Days to Months'],
+  'month-month': ['month', 'month', 'Months to Months'],
+}
 
 function minuteToDate(minute) {
   const d = new Date()
@@ -99,30 +105,38 @@ export default function InheritancePage({ notes = [], isActive = false, onNoteOp
     return map
   }, [timeSlots])
 
-  const noteById = useMemo(() => new Map(notes.map(note => [note.id, note])), [notes])
-  const parentByChild = useMemo(() => new Map(inheritance.map(link => [link.childNoteId, link.parentNoteId])), [inheritance])
+  const parentsByChild = useMemo(() => {
+    const map = new Map()
+    inheritance.forEach(link => {
+      if (!map.has(link.childNoteId)) map.set(link.childNoteId, new Set())
+      map.get(link.childNoteId).add(link.parentNoteId)
+    })
+    return map
+  }, [inheritance])
 
-  const [childScale, parentScale] = mode === 'minute-day' ? ['minute', 'day'] : ['day', 'month']
+  const [childScale, parentScale] = INHERITANCE_MODES[mode] ?? INHERITANCE_MODES['minute-day']
   const parentNotes = notes.filter(note => timeSlotScale(timeSlotByNote.get(note.id)) === parentScale)
   const childNotes = notes.filter(note => timeSlotScale(timeSlotByNote.get(note.id)) === childScale)
-  const assignedChildren = childNotes.filter(note => parentByChild.has(note.id))
-  const unassignedChildren = childNotes.filter(note => !parentByChild.has(note.id))
+  const assignedChildren = childNotes.filter(note => parentsByChild.has(note.id))
 
   const assign = async (childId, parentId) => {
     if (!parentId) return
     try {
       const saved = await api.setNoteInheritance(childId, parentId)
-      setInheritance(prev => [...prev.filter(link => link.childNoteId !== childId), saved])
+      setInheritance(prev => [
+        ...prev.filter(link => !(link.childNoteId === saved.childNoteId && link.parentNoteId === saved.parentNoteId)),
+        saved,
+      ])
       setError('')
     } catch (err) {
       setError(err.message || 'Inheritance could not be assigned')
     }
   }
 
-  const remove = async (childId) => {
+  const remove = async (childId, parentId) => {
     try {
-      await api.removeNoteInheritance(childId)
-      setInheritance(prev => prev.filter(link => link.childNoteId !== childId))
+      await api.removeNoteInheritance(childId, parentId)
+      setInheritance(prev => prev.filter(link => !(link.childNoteId === childId && link.parentNoteId === parentId)))
       setError('')
     } catch (err) {
       setError(err.message || 'Inheritance could not be removed')
@@ -133,12 +147,11 @@ export default function InheritancePage({ notes = [], isActive = false, onNoteOp
     <div className={styles.page}>
       <div className={styles.toolbar}>
         <div className={styles.segmented}>
-          <button className={mode === 'minute-day' ? styles.active : ''} onClick={() => setMode('minute-day')}>
-            Minutes to Days
-          </button>
-          <button className={mode === 'day-month' ? styles.active : ''} onClick={() => setMode('day-month')}>
-            Days to Months
-          </button>
+          {Object.entries(INHERITANCE_MODES).map(([key, [, , label]]) => (
+            <button key={key} className={mode === key ? styles.active : ''} onClick={() => setMode(key)}>
+              {label}
+            </button>
+          ))}
         </div>
         <button className={styles.refreshBtn} onClick={load}>Refresh</button>
         {error && <div className={styles.error}>{error}</div>}
@@ -150,7 +163,7 @@ export default function InheritancePage({ notes = [], isActive = false, onNoteOp
           <div className={styles.parentGrid}>
             {parentNotes.map(parent => {
               const parentMs = timeSlotByNote.get(parent.id)
-              const children = assignedChildren.filter(child => parentByChild.get(child.id) === parent.id)
+              const children = assignedChildren.filter(child => parentsByChild.get(child.id)?.has(parent.id))
               return (
                 <article key={parent.id} className={styles.parentCard}>
                   <button className={styles.noteTitle} onClick={() => onNoteOpen?.(parent.id)}>{noteTitle(parent)}</button>
@@ -160,7 +173,7 @@ export default function InheritancePage({ notes = [], isActive = false, onNoteOp
                     {children.map(child => (
                       <div key={child.id} className={styles.childRow}>
                         <button onClick={() => onNoteOpen?.(child.id)}>{noteTitle(child)}</button>
-                        <button className={styles.removeBtn} onClick={() => remove(child.id)}>Remove</button>
+                        <button className={styles.removeBtn} onClick={() => remove(child.id, parent.id)}>Remove</button>
                       </div>
                     ))}
                   </div>
@@ -171,21 +184,24 @@ export default function InheritancePage({ notes = [], isActive = false, onNoteOp
         </section>
 
         <aside className={styles.panel}>
-          <div className={styles.panelTitle}>Unassigned {childScale} notes</div>
+          <div className={styles.panelTitle}>Child {childScale} notes</div>
           <div className={styles.unassignedList}>
-            {unassignedChildren.length === 0 && <div className={styles.empty}>Nothing to assign</div>}
-            {unassignedChildren.map(child => (
+            {childNotes.length === 0 && <div className={styles.empty}>Nothing to assign</div>}
+            {childNotes.map(child => {
+              const availableParents = parentNotes.filter(parent => parent.id !== child.id && !parentsByChild.get(child.id)?.has(parent.id))
+              return (
               <div key={child.id} className={styles.assignCard}>
                 <button className={styles.noteTitle} onClick={() => onNoteOpen?.(child.id)}>{noteTitle(child)}</button>
                 <div className={styles.window}>{formatWindow(timeSlotByNote.get(child.id))}</div>
                 <select defaultValue="" onChange={e => assign(child.id, e.target.value)}>
-                  <option value="" disabled>Assign parent...</option>
-                  {parentNotes.map(parent => (
+                  <option value="" disabled>{availableParents.length ? 'Assign parent...' : 'No more parents available'}</option>
+                  {availableParents.map(parent => (
                     <option key={parent.id} value={parent.id}>{noteTitle(parent)}</option>
                   ))}
                 </select>
               </div>
-            ))}
+              )
+            })}
           </div>
         </aside>
       </div>

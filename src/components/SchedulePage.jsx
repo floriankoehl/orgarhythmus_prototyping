@@ -12,9 +12,11 @@ const ROW_BUF      = 3
 const EXTEND_DELTA = 365  // extra columns added when scrolling to the right edge
 const DRAG_AUTOSCROLL_EDGE_PX = 72
 const DRAG_AUTOSCROLL_MAX_PX = 28
+const WARNING_PROMPT_TIMEOUT_MS = 20000
 
 const DEFAULT_SPACING = { colW: 110, rowH: 36, rowGap: 0, laneGap: 28 }
 const COL_WIDTH_MIN = 20
+const MINUTE_COL_WIDTH_MIN = 8
 const COL_WIDTH_MAX = 250
 const INIT_TOTAL_COLS = 60    // initial column count; grows to cover viewport + buffer on mount
 const EDGE_COLS       = 5     // columns from right edge before extending
@@ -98,6 +100,11 @@ function normalizeSchedulePerspectiveState(rawState = {}) {
     ?? state.scaleMode
     ?? state.visibilityMode
   )
+  const spacing = { ...DEFAULT_SPACING, ...(state.spacing ?? {}) }
+  spacing.colW = Math.max(
+    minColWidthForZoom(timeZoom),
+    Math.min(COL_WIDTH_MAX, Number(spacing.colW) || DEFAULT_SPACING.colW)
+  )
 
   return {
     ...state,
@@ -111,9 +118,11 @@ function normalizeSchedulePerspectiveState(rawState = {}) {
     hideCrossCatDeps: typeof state.hideCrossCatDeps === 'boolean' ? state.hideCrossCatDeps : false,
     showCrucialDepsOnly: typeof state.showCrucialDepsOnly === 'boolean' ? state.showCrucialDepsOnly : false,
     colorDependencyDirection: typeof state.colorDependencyDirection === 'boolean' ? state.colorDependencyDirection : false,
+    showRowScheduleMarker: typeof state.showRowScheduleMarker === 'boolean' ? state.showRowScheduleMarker : true,
+    showRowTimeSlotMeta: typeof state.showRowTimeSlotMeta === 'boolean' ? state.showRowTimeSlotMeta : true,
     timeSlotScaleFilter: visibilityMode,
     scaleVisibilityMode: visibilityMode,
-    spacing: { ...DEFAULT_SPACING, ...(state.spacing ?? {}) },
+    spacing,
     leftPanelWidth: typeof state.leftPanelWidth === 'number'
       ? Math.max(120, Math.min(600, state.leftPanelWidth))
       : 220,
@@ -137,6 +146,10 @@ function scaleLabelForZoom(timeZoom) {
 
 function planningScaleForZoom(timeZoom) {
   return durationScaleBucket(getZoomUnit(timeZoom))
+}
+
+function minColWidthForZoom(timeZoom) {
+  return normalizeTimeZoom(timeZoom) === 'minutes' ? MINUTE_COL_WIDTH_MIN : COL_WIDTH_MIN
 }
 
 function getDeadlineLevel(deadline) {
@@ -436,11 +449,35 @@ function zoomForConflictGap(minutes) {
   return 'minutes'
 }
 
+function lowerZoomForTimeSlot(timeSlot) {
+  const level = getTimeSlotLevel(timeSlot?.duration, timeSlot?.startCol)
+  const idx = ZOOM_ORDER.indexOf(level)
+  return idx > 0 ? ZOOM_ORDER[idx - 1] : null
+}
+
 function formatMinutesDuration(minutes) {
   const value = Math.max(MIN_TIME_SLOT_DURATION, Number(minutes) || MIN_TIME_SLOT_DURATION)
   if (value < 60) return `${value} min`
   if (value < 60 * 24) return `${(value / 60).toFixed(value % 60 === 0 ? 0 : 1)} h`
   return `${(value / (60 * 24)).toFixed(value % (60 * 24) === 0 ? 0 : 1)} d`
+}
+
+function compactTimeSlotDurationLabel(timeSlot) {
+  const value = Math.max(MIN_TIME_SLOT_DURATION, Number(timeSlot?.duration) || MIN_TIME_SLOT_DURATION)
+  if (timeSlotScaleBucket(timeSlot) === 'month' && isCalendarMonthRange(timeSlot?.startCol, value)) {
+    return `${calendarMonthSpanForRange(timeSlot.startCol, value)}mo`
+  }
+  if (value < 60) return `${value}m`
+  if (value < 60 * 24) return `${Number((value / 60).toFixed(value % 60 === 0 ? 0 : 1))}h`
+  if (value < 43200) return `${Number((value / (60 * 24)).toFixed(value % (60 * 24) === 0 ? 0 : 1))}d`
+  return `${Number((value / 43200).toFixed(value % 43200 === 0 ? 0 : 1))}mo`
+}
+
+function compactScaleLabel(timeSlot) {
+  const scale = timeSlotScaleBucket(timeSlot)
+  if (scale === 'minute') return 'min'
+  if (scale === 'month') return 'mo'
+  return 'day'
 }
 
 // Build axis band segments by grouping consecutive cols sharing the same key (date-based, for 'days')
@@ -748,6 +785,8 @@ function SpacingPanel({
   hideCrossCatDeps, onHideCrossCatDepsChange,
   showCrucialDepsOnly, onShowCrucialDepsOnlyChange,
   colorDependencyDirection, onColorDependencyDirectionChange,
+  showRowScheduleMarker, onShowRowScheduleMarkerChange,
+  showRowTimeSlotMeta, onShowRowTimeSlotMetaChange,
   timeSlotScaleFilter, onTimeSlotScaleFilterChange,
   canFilterToSelection, onFilterToSelectedNotes, onExpandEverything,
 }) {
@@ -766,7 +805,7 @@ function SpacingPanel({
 
   const set = (key, val) => onChange({ ...spacing, [key]: +val })
   const rows = [
-    ['colW',    'Column width', 20, 250, 'px'],
+    ['colW',    'Column width', minColWidthForZoom(timeZoom), 250, 'px'],
     ['rowH',    'Row height',   20,  80, 'px'],
     ['laneGap', 'Lane gap',      8,  80, 'px'],
   ]
@@ -851,6 +890,19 @@ function SpacingPanel({
           <label className={styles.depToggle} title="Show dependency labels">
             <input type="checkbox" checked={showDepLabels} onChange={e => onShowDepLabelsChange(e.target.checked)} />
             <span>Labels</span>
+          </label>
+        </div>
+      </div>
+      <div className={styles.axisModeRow}>
+        <span className={styles.spacingLabel}>Rows</span>
+        <div className={styles.depToggles}>
+          <label className={styles.depToggle} title="Show a small marker for notes that already have a time slot">
+            <input type="checkbox" checked={showRowScheduleMarker} onChange={e => onShowRowScheduleMarkerChange(e.target.checked)} />
+            <span>Scheduled marker</span>
+          </label>
+          <label className={styles.depToggle} title="Show each note row's time slot duration and planning scale">
+            <input type="checkbox" checked={showRowTimeSlotMeta} onChange={e => onShowRowTimeSlotMetaChange(e.target.checked)} />
+            <span>Duration scale</span>
           </label>
         </div>
       </div>
@@ -1271,6 +1323,8 @@ function GanttToolbar({
   showDeps, onShowDepsChange, hideCrossCatDeps, onHideCrossCatDepsChange,
   showCrucialDepsOnly, onShowCrucialDepsOnlyChange,
   colorDependencyDirection, onColorDependencyDirectionChange,
+  showRowScheduleMarker, onShowRowScheduleMarkerChange,
+  showRowTimeSlotMeta, onShowRowTimeSlotMetaChange,
   timeSlotScaleFilter, onTimeSlotScaleFilterChange,
   warningSettings, onWarningSettingsChange,
   canDeleteSelection, onDeleteSelection,
@@ -1392,6 +1446,8 @@ function GanttToolbar({
             hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={onHideCrossCatDepsChange}
             showCrucialDepsOnly={showCrucialDepsOnly} onShowCrucialDepsOnlyChange={onShowCrucialDepsOnlyChange}
             colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={onColorDependencyDirectionChange}
+            showRowScheduleMarker={showRowScheduleMarker} onShowRowScheduleMarkerChange={onShowRowScheduleMarkerChange}
+            showRowTimeSlotMeta={showRowTimeSlotMeta} onShowRowTimeSlotMetaChange={onShowRowTimeSlotMetaChange}
             timeSlotScaleFilter={timeSlotScaleFilter} onTimeSlotScaleFilterChange={onTimeSlotScaleFilterChange}
             canFilterToSelection={canFilterToSelection}
             onFilterToSelectedNotes={onFilterToSelectedNotes}
@@ -1599,6 +1655,12 @@ function PerspectiveMenu({ perspectives, activePerspectiveId, defaultPerspective
   const active = perspectives.find(p => p.id === activePerspectiveId)
   const canSaveActive = Boolean(active && !active.readOnly)
 
+  const saveActive = e => {
+    e?.preventDefault()
+    e?.stopPropagation()
+    if (canSaveActive) onUpdate(activePerspectiveId)
+  }
+
   useEffect(() => {
     if (!open) return
     const close = e => { if (!wrapRef.current?.contains(e.target)) onOpenChange(false) }
@@ -1659,7 +1721,7 @@ function PerspectiveMenu({ perspectives, activePerspectiveId, defaultPerspective
         className={styles.perspectiveToolbarSaveBtn}
         title={canSaveActive ? 'Update current perspective snapshot' : 'None cannot be saved'}
         disabled={!canSaveActive}
-        onClick={() => canSaveActive && onUpdate(active.id)}>
+        onClick={saveActive}>
         <SaveIcon />
       </button>
       <button
@@ -1998,6 +2060,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [showCrucialDepsOnly, setShowCrucialDepsOnly] = useState(false)
   const [colorDependencyDirection, setColorDependencyDirection] = useState(false)
   const [timeSlotScaleFilter, setTimeSlotScaleFilter] = useState(SCALE_VISIBILITY_MODES.ALL)
+  const [showRowScheduleMarker, setShowRowScheduleMarker] = useState(true)
+  const [showRowTimeSlotMeta, setShowRowTimeSlotMeta] = useState(true)
   const [reasonModal, setReasonModal] = useState(null)   // null | { depId }
   const [reasonDraft, setReasonDraft] = useState('')
   const reasonInputRef = useRef()
@@ -2080,7 +2144,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     warningPromptTimerRef.current = window.setTimeout(() => {
       setWarningPrompt(null)
       warningPromptTimerRef.current = null
-    }, 4500)
+    }, WARNING_PROMPT_TIMEOUT_MS)
   }, [])
 
   const activeCategories = useMemo(
@@ -2113,6 +2177,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         colorDependencyDirection: false,
         timeSlotScaleFilter: SCALE_VISIBILITY_MODES.ALL,
         scaleVisibilityMode: SCALE_VISIBILITY_MODES.ALL,
+        showRowScheduleMarker: true,
+        showRowTimeSlotMeta: true,
         leftPanelWidth: 220,
         group: { activeDimId: '', activeLaneFilterId: '' },
         collapsedCategories: [],
@@ -2404,6 +2470,110 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     showWarningPrompt({ title: 'Transaction rejected', message: detail })
   }, [showWarningPrompt])
 
+  const getDeadlineViolationContext = useCallback((timeSlotIds = []) => {
+    const affectedIds = new Set(timeSlotIds.filter(Boolean))
+    const resolveIds = new Set(affectedIds)
+    let inheritedCount = 0
+    let explicitCount = 0
+    let projectStartCount = 0
+
+    affectedIds.forEach(id => {
+      const timeSlot = timeSlotsRef.current.find(m => m.id === id)
+      const deadline = findApplicableDeadline(deadlinesRef.current, timeSlot)
+      if (!deadline) {
+        projectStartCount += 1
+        return
+      }
+      if (deadline.inherited) {
+        inheritedCount += 1
+        const parentTimeSlot = timeSlotsRef.current.find(m => m.noteId === deadline.parentNoteId)
+        if (parentTimeSlot) resolveIds.add(parentTimeSlot.id)
+      } else {
+        explicitCount += 1
+      }
+    })
+
+    return { affectedIds, resolveIds, inheritedCount, explicitCount, projectStartCount }
+  }, [])
+
+  const showDeadlineViolationPrompt = useCallback((timeSlotIds = [], fallbackMessage = '') => {
+    const { affectedIds, resolveIds, inheritedCount, explicitCount, projectStartCount } = getDeadlineViolationContext(timeSlotIds)
+    const ids = resolveIds.size ? resolveIds : affectedIds
+    if (ids.size) {
+      setPendingConflictTimeSlotIds(ids)
+      setPendingDependencyResolveIds(ids)
+      setBlinkingTimeSlotIds(ids)
+      window.setTimeout(() => setBlinkingTimeSlotIds(new Set()), 3000)
+    }
+
+    let title = 'Hard deadline'
+    let message = fallbackMessage || "This time slot cannot move before the project start or past its note's hard deadline."
+    if (inheritedCount > 0) {
+      title = 'Inherited hard deadline'
+      message = fallbackMessage || 'This time slot is bounded by its parent time slot. Resolve shows both the child and parent time slots.'
+    } else if (explicitCount > 0 && projectStartCount === 0) {
+      message = fallbackMessage || 'This time slot cannot move past its hard deadline. Resolve shows the affected time slot so you can adjust the deadline if needed.'
+    }
+
+    showWarningPrompt({
+      title,
+      message,
+      actions: ids.size ? 'resolve' : 'close',
+      timeSlotIds: ids,
+      replaceSelection: true,
+    })
+  }, [getDeadlineViolationContext, showWarningPrompt])
+
+  const getEarliestStartViolationContext = useCallback((timeSlotIds = []) => {
+    const affectedIds = new Set(timeSlotIds.filter(Boolean))
+    const resolveIds = new Set(affectedIds)
+    let inheritedCount = 0
+    let explicitCount = 0
+
+    affectedIds.forEach(id => {
+      const timeSlot = timeSlotsRef.current.find(m => m.id === id)
+      const earliestStart = findApplicableEarliestStart(earliestStartsRef.current, timeSlot)
+      if (!earliestStart) return
+      if (earliestStart.inherited) {
+        inheritedCount += 1
+        const parentTimeSlot = timeSlotsRef.current.find(m => m.noteId === earliestStart.parentNoteId)
+        if (parentTimeSlot) resolveIds.add(parentTimeSlot.id)
+      } else {
+        explicitCount += 1
+      }
+    })
+
+    return { affectedIds, resolveIds, inheritedCount, explicitCount }
+  }, [])
+
+  const showEarliestStartViolationPrompt = useCallback((timeSlotIds = [], fallbackMessage = '') => {
+    const { affectedIds, resolveIds, inheritedCount, explicitCount } = getEarliestStartViolationContext(timeSlotIds)
+    const ids = resolveIds.size ? resolveIds : affectedIds
+    if (ids.size) {
+      setPendingConflictTimeSlotIds(ids)
+      setPendingDependencyResolveIds(ids)
+      setBlinkingTimeSlotIds(ids)
+      window.setTimeout(() => setBlinkingTimeSlotIds(new Set()), 3000)
+    }
+
+    let title = 'Earliest start date'
+    let message = fallbackMessage || "This time slot cannot start before the row's earliest start date."
+    if (inheritedCount > 0) {
+      title = 'Inherited earliest start'
+      message = fallbackMessage || 'This time slot is bounded by its parent time slot. Resolve shows both the child and parent time slots.'
+    } else if (explicitCount > 0) {
+      message = fallbackMessage || 'This time slot cannot move before its earliest start date. Resolve shows the affected time slot so you can adjust the start boundary if needed.'
+    }
+
+    showWarningPrompt({
+      title,
+      message,
+      actions: ids.size ? 'resolve' : 'close',
+      timeSlotIds: ids,
+      replaceSelection: true,
+    })
+  }, [getEarliestStartViolationContext, showWarningPrompt])
+
   const commitTransaction = useCallback(async transaction => {
     const before = normalizeTransactionState(transaction.before)
     const after = normalizeTransactionState(transaction.after)
@@ -2419,18 +2589,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       const detail = err?.detail
       if (detail?.type === 'overlap' && Array.isArray(detail.timeSlotIds)) {
         showWarningPrompt({ title: 'Transaction rejected', message: detail.message, actions: 'close' })
-      } else if (['deadline', 'inheritance_deadline', 'earliest_start', 'inheritance_earliest_start'].includes(detail?.type)) {
-        const timeSlotIds = new Set([detail.id].filter(Boolean))
-        setPendingConflictTimeSlotIds(timeSlotIds)
-        setPendingDependencyResolveIds(timeSlotIds)
-        setBlinkingTimeSlotIds(timeSlotIds)
-        window.setTimeout(() => setBlinkingTimeSlotIds(new Set()), 3000)
-        showWarningPrompt({
-          title: detail.type.includes('earliest') ? 'Earliest start date' : 'Hard deadline',
-          message: detail.message,
-          actions: timeSlotIds.size ? 'resolve' : 'close',
-          timeSlotIds,
-        })
+      } else if (detail?.type === 'deadline' || detail?.type === 'inheritance_deadline') {
+        showDeadlineViolationPrompt([detail.id].filter(Boolean), detail.message)
+      } else if (detail?.type === 'earliest_start' || detail?.type === 'inheritance_earliest_start') {
+        showEarliestStartViolationPrompt([detail.id].filter(Boolean), detail.message)
       } else if (detail?.type === 'dependency' || detail?.type === 'scale_mismatch') {
         const depIds = detail.dependencyIds ?? []
         const attemptedTimeSlots = [
@@ -2458,7 +2620,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       }
       return false
     }
-  }, [applyTransactionState, refreshGanttTransactions, showTransactionFailure, showWarningPrompt])
+  }, [applyTransactionState, refreshGanttTransactions, showDeadlineViolationPrompt, showEarliestStartViolationPrompt, showTransactionFailure, showWarningPrompt])
 
   const undoGanttTransaction = useCallback(async () => {
     try {
@@ -2539,6 +2701,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }, [rowItems])
   const noteRowMapRef = useRef({})
   noteRowMapRef.current = noteRowMap
+  const timeSlotByNote = useMemo(() => new Map(timeSlots.map(m => [m.noteId, m])), [timeSlots])
+  const timeSlotByNoteRef = useRef(new Map())
+  timeSlotByNoteRef.current = timeSlotByNote
 
   useEffect(() => {
     if (selectedIds.size === 0) return
@@ -2654,7 +2819,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     try {
       const saved = await api.setNoteInheritance(childNoteId, parentNoteId)
       setNoteInheritance(prev => [
-        ...prev.filter(link => link.childNoteId !== saved.childNoteId),
+        ...prev.filter(link => !(link.childNoteId === saved.childNoteId && link.parentNoteId === saved.parentNoteId)),
         saved,
       ])
       setClickedNoteId(childNoteId)
@@ -2747,14 +2912,17 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setHiddenNotesByLane({})
   }, [])
 
-  const resolveDependencySelection = useCallback((timeSlotIds = null, resolveZoom = null) => {
+  const resolveDependencySelection = useCallback((timeSlotIds = null, resolveZoom = null, options = {}) => {
     const explicitIds = timeSlotIds ? new Set(timeSlotIds) : null
     const idsToResolve = explicitIds?.size > 0
       ? explicitIds
       : pendingDependencyResolveIds.size > 0
       ? pendingDependencyResolveIds
       : selectedIdsRef.current
-    const accumulatedIds = new Set([...selectedIdsRef.current, ...idsToResolve])
+    const shouldAccumulate = options.accumulate !== false
+    const accumulatedIds = shouldAccumulate
+      ? new Set([...selectedIdsRef.current, ...idsToResolve])
+      : new Set(idsToResolve)
     const noteIds = new Set()
     accumulatedIds.forEach(msId => {
       const timeSlot = timeSlotsRef.current.find(m => m.id === msId)
@@ -2762,7 +2930,13 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     })
     const snapshot = capturePerspectiveStateRef.current?.()
     if (snapshot) setDependencyResolveSnapshot(prev => prev ?? snapshot)
-    if (resolveZoom) setTimeZoom(normalizeTimeZoom(resolveZoom))
+    if (resolveZoom) {
+      const nextZoom = normalizeTimeZoom(resolveZoom)
+      timeZoomRef.current = nextZoom
+      setTimeZoom(nextZoom)
+      const minColW = minColWidthForZoom(nextZoom)
+      if (spacingRef.current.colW < minColW) setSpacing(prev => ({ ...prev, colW: minColW }))
+    }
     setSelectedDepIds(new Set())
     setSelectedIds(accumulatedIds)
     setActiveFilterIds([])
@@ -2957,20 +3131,32 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }, [showWarningPrompt])
 
   const reportDeadlineViolation = useCallback((timeSlotIds = []) => {
-    reportBoundaryViolation(
-      'Hard deadline',
-      "Time slots cannot move before today or past their note's hard deadline.",
-      timeSlotIds,
-    )
-  }, [reportBoundaryViolation])
+    showDeadlineViolationPrompt(timeSlotIds)
+  }, [showDeadlineViolationPrompt])
+
+  const getHardDeadlineContactIds = useCallback((timeSlotsToCheck = []) => {
+    return timeSlotsToCheck
+      .filter(timeSlot => {
+        const deadline = findApplicableDeadline(deadlinesRef.current, timeSlot)
+        if (!deadline) return false
+        return timeSlot.startCol + timeSlot.duration >= deadline.col
+      })
+      .map(timeSlot => timeSlot.id)
+  }, [])
 
   const reportEarliestStartViolation = useCallback((timeSlotIds = []) => {
-    reportBoundaryViolation(
-      'Earliest start date',
-      "Time slots cannot start before the row's earliest start date.",
-      timeSlotIds,
-    )
-  }, [reportBoundaryViolation])
+    showEarliestStartViolationPrompt(timeSlotIds)
+  }, [showEarliestStartViolationPrompt])
+
+  const getEarliestStartContactIds = useCallback((timeSlotsToCheck = []) => {
+    return timeSlotsToCheck
+      .filter(timeSlot => {
+        const earliestStart = findApplicableEarliestStart(earliestStartsRef.current, timeSlot)
+        if (!earliestStart) return false
+        return timeSlot.startCol <= earliestStart.col
+      })
+      .map(timeSlot => timeSlot.id)
+  }, [])
 
   const reportDependencyViolations = useCallback((violations, allTimeSlots = timeSlotsRef.current, allDependencies = dependenciesRef.current) => {
     const conflict = getCascadingDependencyConflict(allTimeSlots, allDependencies, violations)
@@ -3107,6 +3293,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (col < 0 || col >= totalColsRef.current) return
     const item = rowItemsRef.current.find(r => rawY >= r.top && rawY < r.top + r.height)
     if (!item || item.type !== 'note') { if (highlightRef.current) highlightRef.current.style.display = ''; return }
+    if (timeSlotByNoteRef.current.has(item.note.id)) {
+      hoveredCellRef.current = null
+      if (highlightRef.current) highlightRef.current.style.display = ''
+      return
+    }
     hoveredCellRef.current = { col, item }
     const h = highlightRef.current
     if (h) {
@@ -3126,6 +3317,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
   // ── Spacing change ─────────────────────────────────────────────────────────
   const handleSpacingChange = useCallback(next => {
+    next = {
+      ...next,
+      colW: Math.max(minColWidthForZoom(timeZoomRef.current), Math.min(COL_WIDTH_MAX, Number(next.colW) || DEFAULT_SPACING.colW)),
+    }
     const prev = spacingRef.current
     if (next.colW !== prev.colW && gridBodyRef.current) {
       const leftDay = scrollLeftRef.current / prev.colW
@@ -3154,7 +3349,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const factor = Math.exp(-e.deltaY * 0.002)
     const rawNextColW = Math.round(prev.colW * factor)
     const currentZoom = normalizeTimeZoom(timeZoomRef.current)
-    const nextColW = Math.max(COL_WIDTH_MIN, Math.min(COL_WIDTH_MAX, rawNextColW))
+    const nextColW = Math.max(minColWidthForZoom(currentZoom), Math.min(COL_WIDTH_MAX, rawNextColW))
     if (nextColW === prev.colW) return
 
     const anchorMinute = zoomColToMinute(scrollLeftRef.current / prev.colW, currentZoom)
@@ -3179,6 +3374,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const prevZoom = timeZoomRef.current
     if (nextZoom === prevZoom) return
     const sp = spacingRef.current
+    const nextColW = Math.max(minColWidthForZoom(nextZoom), sp.colW)
     const pinned = pinnedTimeSlotIdRef.current
       ? timeSlotsRef.current.find(m => m.id === pinnedTimeSlotIdRef.current)
       : null
@@ -3189,15 +3385,53 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const currentMinute = anchor
       ? anchor.startCol + anchor.duration / 2
       : zoomColToMinute(scrollLeftRef.current / sp.colW, prevZoom)
-    const anchorLeft = minuteToZoomColExact(currentMinute, nextZoom) * sp.colW
+    const anchorLeft = minuteToZoomColExact(currentMinute, nextZoom) * nextColW
     const nextScrollLeft = Math.max(0, Math.round(anchor ? anchorLeft - vpRef.current.w / 2 : anchorLeft))
-    const needed = Math.ceil((nextScrollLeft + vpRef.current.w) / sp.colW) + COL_BUF + EDGE_COLS + 1
+    const needed = Math.ceil((nextScrollLeft + vpRef.current.w) / nextColW) + COL_BUF + EDGE_COLS + 1
     if (needed > totalColsRef.current) {
       totalColsRef.current = needed
       setTotalCols(needed)
-      if (gridInnerRef.current) gridInnerRef.current.style.width = `${needed * sp.colW}px`
+      if (gridInnerRef.current) gridInnerRef.current.style.width = `${needed * nextColW}px`
     }
     setTimeZoom(nextZoom)
+    if (nextColW !== sp.colW) setSpacing(prev => ({ ...prev, colW: nextColW }))
+    requestAnimationFrame(() => {
+      if (gridBodyRef.current) gridBodyRef.current.scrollLeft = nextScrollLeft
+      scrollLeftRef.current = gridBodyRef.current?.scrollLeft ?? nextScrollLeft
+      setScrollLeft(scrollLeftRef.current)
+    })
+  }, [])
+
+  const focusTimeSlotByDoubleClick = useCallback(timeSlotId => {
+    const timeSlot = timeSlotsRef.current.find(m => m.id === timeSlotId)
+    if (!timeSlot) return
+    const slotZoom = getTimeSlotLevel(timeSlot.duration, timeSlot.startCol)
+    const slotZoomIdx = ZOOM_ORDER.indexOf(slotZoom)
+    const currentZoom = normalizeTimeZoom(timeZoomRef.current)
+    const currentZoomIdx = ZOOM_ORDER.indexOf(currentZoom)
+    const isInspectingOneScaleDown = slotZoomIdx > 0 && currentZoomIdx === slotZoomIdx - 1
+    const nextZoom = isInspectingOneScaleDown ? slotZoom : lowerZoomForTimeSlot(timeSlot)
+    if (!nextZoom) return
+
+    const viewportW = Math.max(1, vpRef.current.w || gridBodyRef.current?.clientWidth || 1)
+    const visual = getVisualRange(timeSlot, nextZoom, true)
+    const nextColW = isInspectingOneScaleDown
+      ? Math.max(minColWidthForZoom(nextZoom), Math.min(COL_WIDTH_MAX, spacingRef.current.colW))
+      : Math.max(
+          minColWidthForZoom(nextZoom),
+          Math.min(COL_WIDTH_MAX, Math.round(viewportW / Math.max(1, visual.duration)))
+        )
+    const nextScrollLeft = Math.max(0, Math.round(visual.startCol * nextColW))
+    const needed = Math.ceil((nextScrollLeft + viewportW) / nextColW) + COL_BUF + EDGE_COLS + 1
+    const widthCols = Math.max(totalColsRef.current, needed)
+
+    if (needed > totalColsRef.current) {
+      totalColsRef.current = needed
+      setTotalCols(needed)
+    }
+    if (gridInnerRef.current) gridInnerRef.current.style.width = `${widthCols * nextColW}px`
+    setTimeZoom(nextZoom)
+    setSpacing(prev => ({ ...prev, colW: nextColW }))
     requestAnimationFrame(() => {
       if (gridBodyRef.current) gridBodyRef.current.scrollLeft = nextScrollLeft
       scrollLeftRef.current = gridBodyRef.current?.scrollLeft ?? nextScrollLeft
@@ -3302,10 +3536,16 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (e.target.closest('[data-ms-id]')) return
     const cell = getNoteCellFromPointer(e)
     if (!cell || cell.type !== 'cell') return
+    const existingTimeSlot = timeSlotByNoteRef.current.get(cell.noteId)
+    if (existingTimeSlot) {
+      e.preventDefault()
+      focusTimeSlotByDoubleClick(existingTimeSlot.id)
+      return
+    }
     if (isNoteRowReadOnly(cell.noteId)) return
     e.preventDefault()
     handleCreateTimeSlot(cell.noteId, cell.col, cell.color)
-  }, [getNoteCellFromPointer, handleCreateTimeSlot, isNoteRowReadOnly])
+  }, [focusTimeSlotByDoubleClick, getNoteCellFromPointer, handleCreateTimeSlot, isNoteRowReadOnly])
 
   // ── Column insert / delete ─────────────────────────────────────────────────
   const handleInsertTimeUnit = useCallback(async col => {
@@ -3598,12 +3838,18 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         return
       }
       const movedTimeSlotIds = Object.keys(originals)
+      const movedTimeSlotIdSet = new Set(movedTimeSlotIds)
+      const movedNextTimeSlots = buildMovedTimeSlots(colDelta).filter(candidate => movedTimeSlotIdSet.has(candidate.id))
+      const deadlineContactIds = getHardDeadlineContactIds(movedNextTimeSlots)
+      const earliestStartContactIds = getEarliestStartContactIds(movedNextTimeSlots)
       if (hitBoundary) reportDeadlineViolation(movedTimeSlotIds)
+      else if (deadlineContactIds.length) reportDeadlineViolation(deadlineContactIds)
       if (hitEarliestBoundary) reportEarliestStartViolation(movedTimeSlotIds)
+      else if (earliestStartContactIds.length) reportEarliestStartViolation(earliestStartContactIds)
       const updates = []
       const next = timeSlotsRef.current.map(m => {
         if (!originals[m.id]) return m
-        const moved = buildMovedTimeSlots(colDelta).find(candidate => candidate.id === m.id)
+        const moved = movedNextTimeSlots.find(candidate => candidate.id === m.id)
         if (moved && (moved.startCol !== originals[m.id].startCol || moved.duration !== originals[m.id].duration)) {
           updates.push({ id: m.id, startCol: moved.startCol, duration: moved.duration })
         }
@@ -3755,8 +4001,12 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         resetToOriginal()
         return
       }
+      const deadlineContactIds = getHardDeadlineContactIds([{ ...ms, startCol: newStart, duration: newDur }])
+      const earliestStartContactIds = getEarliestStartContactIds([{ ...ms, startCol: newStart, duration: newDur }])
       if (dragState.hitBoundary) reportDeadlineViolation([timeSlotId])
+      else if (deadlineContactIds.length) reportDeadlineViolation(deadlineContactIds)
       if (dragState.hitEarliestBoundary) reportEarliestStartViolation([timeSlotId])
+      else if (earliestStartContactIds.length) reportEarliestStartViolation(earliestStartContactIds)
       const changed = newStart !== origStart || newDur !== origDur
       const nextAll = timeSlotsRef.current.map(m => m.id === timeSlotId ? { ...m, startCol: newStart, duration: newDur } : m)
       if (changed) {
@@ -4222,7 +4472,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }, [commitTransaction, deleteDraft])
 
   const handleWarningResolve = useCallback(() => {
-    resolveDependencySelection(warningPrompt?.timeSlotIds ?? null, warningPrompt?.resolveZoom ?? null)
+    resolveDependencySelection(warningPrompt?.timeSlotIds ?? null, warningPrompt?.resolveZoom ?? null, {
+      accumulate: !warningPrompt?.replaceSelection,
+    })
   }, [resolveDependencySelection, warningPrompt])
 
   useEffect(() => {
@@ -4316,7 +4568,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     colorDependencyDirection,
     timeSlotScaleFilter,
     scaleVisibilityMode: normalizeScaleVisibilityMode(timeSlotScaleFilter),
-    leftPanelWidth,
+    showRowScheduleMarker,
+    showRowTimeSlotMeta,
+    leftPanelWidth: leftPanelWidthRef.current,
     group: {
       activeDimId,
       activeLaneFilterId,
@@ -4340,7 +4594,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }), [
     activeDimId, activeFilterIds, activeLaneFilterId, activePerspectiveId, axisMode, colorDimId,
     colorDependencyDirection, hiddenCatIds, hiddenNotesByLane, hideCrossCatDeps,
-    leftPanelWidth, mode, timeSlotScaleFilter, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps, spacing, timeZoom, visibleNoteFilterIds,
+    mode, timeSlotScaleFilter, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps,
+    showRowScheduleMarker, showRowTimeSlotMeta, spacing, timeZoom, visibleNoteFilterIds,
   ])
   capturePerspectiveStateRef.current = capturePerspectiveState
 
@@ -4361,6 +4616,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setHideCrossCatDeps(state.hideCrossCatDeps)
     setShowCrucialDepsOnly(state.showCrucialDepsOnly)
     setColorDependencyDirection(state.colorDependencyDirection)
+    setShowRowScheduleMarker(state.showRowScheduleMarker)
+    setShowRowTimeSlotMeta(state.showRowTimeSlotMeta)
+    leftPanelWidthRef.current = state.leftPanelWidth
     setLeftPanelWidth(state.leftPanelWidth)
     setTimeSlotScaleFilter(state.timeSlotScaleFilter)
 
@@ -4410,6 +4668,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setHideCrossCatDeps(state.hideCrossCatDeps)
     setShowCrucialDepsOnly(state.showCrucialDepsOnly)
     setColorDependencyDirection(state.colorDependencyDirection)
+    setShowRowScheduleMarker(state.showRowScheduleMarker)
+    setShowRowTimeSlotMeta(state.showRowTimeSlotMeta)
+    leftPanelWidthRef.current = state.leftPanelWidth
     setLeftPanelWidth(state.leftPanelWidth)
     setTimeSlotScaleFilter(state.timeSlotScaleFilter)
 
@@ -4655,6 +4916,13 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const visibleDayCuts = timeZoom === 'minutes'
     ? visCols.filter(col => col > 0 && zoomColToMinute(col, timeZoom) % (60 * 24) === 0)
     : []
+  const visibleHourCuts = timeZoom === 'minutes'
+    ? visCols.filter(col => {
+        if (col <= 0) return false
+        const minute = zoomColToMinute(col, timeZoom)
+        return minute % 60 === 0 && minute % (60 * 24) !== 0
+      })
+    : []
   const visibleMonthCuts = timeZoom === 'days'
     ? visCols.filter(col => {
         if (col <= 0) return false
@@ -4720,6 +4988,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         showCrucialDepsOnly={showCrucialDepsOnly} onShowCrucialDepsOnlyChange={setShowCrucialDepsOnly}
         colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={setColorDependencyDirection}
         timeSlotScaleFilter={timeSlotScaleFilter} onTimeSlotScaleFilterChange={setTimeSlotScaleFilter}
+        showRowScheduleMarker={showRowScheduleMarker} onShowRowScheduleMarkerChange={setShowRowScheduleMarker}
+        showRowTimeSlotMeta={showRowTimeSlotMeta} onShowRowTimeSlotMetaChange={setShowRowTimeSlotMeta}
         warningSettings={warningSettings}
         onWarningSettingsChange={updateWarningSettings}
       />
@@ -4814,7 +5084,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                     </div>
                   )
                 }
-                if (item.type === 'note')
+                if (item.type === 'note') {
+                  const noteTimeSlot = timeSlotByNote.get(item.note.id)
                   return (
                     <div key={item.note.id}
                       className={[
@@ -4884,15 +5155,33 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                         onNoteOpen?.(item.note.id)
                       }}
                       style={{ top: item.top, height: item.height, borderLeftColor: item.cat?.color ?? 'transparent' }}>
+                      {showRowScheduleMarker && noteTimeSlot && (
+                        <span className={styles.noteScheduleDot} title="Scheduled" aria-hidden="true" />
+                      )}
                       <span
                         className={`${styles.noteTitle} ${paintCat ? styles.paintTarget : ''}`}
                         title={paintCat ? 'Apply selected category' : undefined}
                         onClick={paintCat ? undefined : e => {
                           e.stopPropagation()
                           setClickedNoteId(prev => prev === item.note.id ? null : item.note.id)
+                        }}
+                        onDoubleClick={e => {
+                          e.stopPropagation()
+                          if (paintCat) return
+                          onNoteOpen?.(item.note.id)
                         }}>
                         {item.note.title}
                       </span>
+                      {showRowTimeSlotMeta && noteTimeSlot && (
+                        <span
+                          className={[
+                            styles.noteTimeSlotBadge,
+                            noteTimeSlot.duration <= MIN_TIME_SLOT_DURATION && styles.noteTimeSlotBadgeMinimum,
+                          ].filter(Boolean).join(' ')}
+                          title={`${formatMinutesDuration(noteTimeSlot.duration)} ${timeSlotScaleBucket(noteTimeSlot)} time slot`}>
+                          {compactTimeSlotDurationLabel(noteTimeSlot)} · {compactScaleLabel(noteTimeSlot)}
+                        </span>
+                      )}
                       {!paintCat && (() => {
                         const c = getNoteColor(item.note.id)
                         return c ? <span className={styles.noteColorCorner} style={{ borderTopColor: c }} /> : null
@@ -4913,6 +5202,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                       )}
                     </div>
                   )
+                }
                 return (
                   <div key={`em-${idx}`}
                     className={`${styles.emptyRow} ${dragOverLaneCatId === (item.cat?.id ?? UNASSIGNED_LANE) ? styles.laneHdrDropTarget : ''}`}
@@ -4983,6 +5273,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                   const date = minuteToDate(zoomColToMinute(ci, timeZoom))
                   const isWeekend = timeZoom === 'days' && (() => { const dow = date.getDay(); return dow === 0 || dow === 6 })()
                   const isDayCut = timeZoom === 'minutes' && ci > 0 && zoomColToMinute(ci, timeZoom) % (60 * 24) === 0
+                  const isHourCut = timeZoom === 'minutes' && ci > 0 && zoomColToMinute(ci, timeZoom) % 60 === 0
                   const isMonthCut = timeZoom === 'days' && ci > 0 && (() => {
                     const prev = minuteToDate(zoomColToMinute(ci - 1, timeZoom))
                     return date.getMonth() !== prev.getMonth() || date.getFullYear() !== prev.getFullYear()
@@ -4993,6 +5284,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                         styles.dayHeader,
                         isToday && styles.dayHeaderToday,
                         isWeekend && !isToday && styles.dayHeaderWeekend,
+                        isHourCut && !isDayCut && styles.dayHeaderHourCut,
                         isDayCut && styles.dayHeaderDayCut,
                         isMonthCut && styles.dayHeaderMonthCut,
                       ].filter(Boolean).join(' ')}
@@ -5022,6 +5314,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
             {visibleDayCuts.map(ci => (
               <div key={`day-cut-${ci}`} className={`${styles.scaleCut} ${styles.dayCut}`} style={{ left: ci * colW }} />
             ))}
+            {visibleHourCuts.map(ci => (
+              <div key={`hour-cut-${ci}`} className={`${styles.scaleCut} ${styles.hourCut}`} style={{ left: ci * colW }} />
+            ))}
             {visibleMonthCuts.map(ci => (
               <div key={`month-cut-${ci}`} className={`${styles.scaleCut} ${styles.monthCut}`} style={{ left: ci * colW }} />
             ))}
@@ -5045,7 +5340,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                   }} />
               if (item.type === 'note')
                 return <div key={`gr-${item.note.id}`}
-                  className={`${styles.gridNoteRow} ${isNoteHighlighted(item.note.id) ? styles.gridNoteRowHighlight : ''}`}
+                  className={[
+                    styles.gridNoteRow,
+                    isNoteHighlighted(item.note.id) && styles.gridNoteRowHighlight,
+                  ].filter(Boolean).join(' ')}
                   style={{ top: HEADER_H + item.top, height: item.height }} />
               return null
             })}
@@ -5168,6 +5466,12 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                     e.stopPropagation()
                     paintNote(m.noteId)
                   } : undefined}
+                  onDoubleClick={e => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    if (paintCat) return
+                    focusTimeSlotByDoubleClick(m.id)
+                  }}
                   onContextMenu={e => {
                     e.preventDefault()
                     e.stopPropagation()
@@ -5326,8 +5630,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
             className={styles.dependencyResolveReturnBtn}
             onClick={returnToDependencyResolveSnapshot}
           >
-            <strong>Dependency resolving</strong>
-            <span>Return to previous view</span>
+            <strong>Resolve view</strong>
+            <span>{scaleLabelForZoom(timeZoom)} scale · Return to previous view</span>
           </button>
         )}
         <PerspectiveMenu

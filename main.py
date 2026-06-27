@@ -195,8 +195,9 @@ def _init_db():
         """)
         con.execute("""
             CREATE TABLE IF NOT EXISTS note_inheritance (
-                child_note_id  TEXT PRIMARY KEY,
-                parent_note_id TEXT NOT NULL
+                child_note_id  TEXT NOT NULL,
+                parent_note_id TEXT NOT NULL,
+                PRIMARY KEY (child_note_id, parent_note_id)
             )
         """)
         con.execute("""
@@ -326,10 +327,26 @@ def _migrate():
 
         con.execute("""
             CREATE TABLE IF NOT EXISTS note_inheritance (
-                child_note_id  TEXT PRIMARY KEY,
-                parent_note_id TEXT NOT NULL
+                child_note_id  TEXT NOT NULL,
+                parent_note_id TEXT NOT NULL,
+                PRIMARY KEY (child_note_id, parent_note_id)
             )
         """)
+        inheritance_pk = [r["name"] for r in con.execute("PRAGMA table_info(note_inheritance)").fetchall() if r["pk"]]
+        if inheritance_pk == ["child_note_id"]:
+            con.execute("ALTER TABLE note_inheritance RENAME TO note_inheritance_old")
+            con.execute("""
+                CREATE TABLE note_inheritance (
+                    child_note_id  TEXT NOT NULL,
+                    parent_note_id TEXT NOT NULL,
+                    PRIMARY KEY (child_note_id, parent_note_id)
+                )
+            """)
+            con.execute("""
+                INSERT OR IGNORE INTO note_inheritance (child_note_id, parent_note_id)
+                SELECT child_note_id, parent_note_id FROM note_inheritance_old
+            """)
+            con.execute("DROP TABLE note_inheritance_old")
 
         deadline_cols = [r[1] for r in con.execute("PRAGMA table_info(deadlines)").fetchall()]
         if "scale" not in deadline_cols:
@@ -1032,7 +1049,9 @@ def _planning_scale_index(scale: str) -> int:
     return {"minute": 0, "day": 1, "month": 2}.get(scale, -1)
 
 def _is_parent_scale_for_child(parent_scale: str, child_scale: str) -> bool:
-    return _planning_scale_index(parent_scale) == _planning_scale_index(child_scale) + 1
+    parent_idx = _planning_scale_index(parent_scale)
+    child_idx = _planning_scale_index(child_scale)
+    return parent_idx == child_idx or parent_idx == child_idx + 1
 
 def _normalize_planning_scale(scale: str | None, col: int | None = None) -> str:
     if scale in ("minutes", "minute"):
@@ -1395,7 +1414,7 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
         parent_scale = _planning_scale_for_time_slot(parent_ms)
         if not _is_parent_scale_for_child(parent_scale, child_scale):
             raise HTTPException(422, {
-                "message": "Inherited parent note must be exactly one planning scale broader than the child note",
+                "message": "Inherited parent note must be on the same planning scale or exactly one planning scale broader than the child note",
                 "type": "inheritance_scale_mismatch",
                 "noteId": item["childNoteId"],
                 "parentNoteId": item["parentNoteId"],
@@ -2092,10 +2111,10 @@ def duplicate_note(note_id: str, user: dict = Depends(current_user)):
                 (str(uuid.uuid4()), new_note_id, earliest_start["col"], earliest_start["scale"]),
             )
 
-        inheritance = con.execute("SELECT parent_note_id FROM note_inheritance WHERE child_note_id = ?", (note_id,)).fetchone()
-        if inheritance:
+        inheritance_rows = con.execute("SELECT parent_note_id FROM note_inheritance WHERE child_note_id = ?", (note_id,)).fetchall()
+        for inheritance in inheritance_rows:
             con.execute(
-                "INSERT INTO note_inheritance (child_note_id, parent_note_id) VALUES (?, ?)",
+                "INSERT OR IGNORE INTO note_inheritance (child_note_id, parent_note_id) VALUES (?, ?)",
                 (new_note_id, inheritance["parent_note_id"]),
             )
 
@@ -2168,14 +2187,15 @@ def _assert_valid_note_inheritance(con, child_note_id: str, parent_note_id: str)
     if child_project != parent_project:
         raise HTTPException(400, "Cannot inherit across projects")
 
-    current = parent_note_id
+    stack = [parent_note_id]
     seen = {child_note_id}
-    while current:
+    while stack:
+        current = stack.pop()
         if current in seen:
             raise HTTPException(422, {"message": "Inheritance cannot create a cycle", "type": "inheritance_cycle"})
         seen.add(current)
-        row = con.execute("SELECT parent_note_id FROM note_inheritance WHERE child_note_id = ?", (current,)).fetchone()
-        current = row["parent_note_id"] if row else None
+        rows = con.execute("SELECT parent_note_id FROM note_inheritance WHERE child_note_id = ?", (current,)).fetchall()
+        stack.extend(row["parent_note_id"] for row in rows)
 
     child_ms = _single_time_slot_for_note(con, child_note_id)
     parent_ms = _single_time_slot_for_note(con, parent_note_id)
@@ -2188,7 +2208,7 @@ def _assert_valid_note_inheritance(con, child_note_id: str, parent_note_id: str)
     parent_scale = _planning_scale_for_time_slot(parent_ms)
     if not _is_parent_scale_for_child(parent_scale, child_scale):
         raise HTTPException(422, {
-            "message": "Inherited parent note must be exactly one planning scale broader than the child note",
+            "message": "Inherited parent note must be on the same planning scale or exactly one planning scale broader than the child note",
             "type": "inheritance_scale_mismatch",
             "childScale": child_scale,
             "parentScale": parent_scale,
@@ -2224,17 +2244,26 @@ def set_note_inheritance(child_note_id: str, data: NoteInheritanceIn, user: dict
         assert_project_access(_project_id_for_note(con, child_note_id), user)
         _assert_valid_note_inheritance(con, child_note_id, data.parentNoteId)
         con.execute(
-            "INSERT OR REPLACE INTO note_inheritance (child_note_id, parent_note_id) VALUES (?, ?)",
+            "INSERT OR IGNORE INTO note_inheritance (child_note_id, parent_note_id) VALUES (?, ?)",
             (child_note_id, data.parentNoteId),
         )
-        row = con.execute("SELECT * FROM note_inheritance WHERE child_note_id = ?", (child_note_id,)).fetchone()
+        row = con.execute(
+            "SELECT * FROM note_inheritance WHERE child_note_id = ? AND parent_note_id = ?",
+            (child_note_id, data.parentNoteId),
+        ).fetchone()
     return _inheritance(row)
 
 @app.delete("/notes/{child_note_id}/inheritance", status_code=204)
-def remove_note_inheritance(child_note_id: str, user: dict = Depends(current_user)):
+def remove_note_inheritance(child_note_id: str, parent_note_id: Optional[str] = Query(default=None), user: dict = Depends(current_user)):
     with _db() as con:
         assert_project_access(_project_id_for_note(con, child_note_id), user)
-        con.execute("DELETE FROM note_inheritance WHERE child_note_id = ?", (child_note_id,))
+        if parent_note_id:
+            con.execute(
+                "DELETE FROM note_inheritance WHERE child_note_id = ? AND parent_note_id = ?",
+                (child_note_id, parent_note_id),
+            )
+        else:
+            con.execute("DELETE FROM note_inheritance WHERE child_note_id = ?", (child_note_id,))
 
 
 # ── Dimensions ────────────────────────────────────────────────────────────────
