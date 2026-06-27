@@ -480,6 +480,19 @@ function compactScaleLabel(timeSlot) {
   return 'day'
 }
 
+function noteDescriptionText(note) {
+  return String(note?.html ?? '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 // Build axis band segments by grouping consecutive cols sharing the same key (date-based, for 'days')
 function buildAxisSegments(cols, getDate, getKey, getLabel) {
   const segments = []
@@ -1057,7 +1070,8 @@ function WarningSettingsPanel({
 function ContextMenu({
   menu, onClose, onCreate, onInsertTimeUnit, onDeleteTimeUnit, onSetDeadline, onRemoveDeadline,
   onSetEarliestStart, onRemoveEarliestStart,
-  onCopyNote, onDuplicateNote, onStartInheritancePick,
+  onCreateNoteInLane,
+  onCopyNote, onDuplicateNote, onStartInheritancePick, onSeeInheritance,
   onDeleteTimeSlot, onToggleTimeSlotPin, pinnedTimeSlotId, onEditDepReason, onDeleteDep,
 }) {
   if (!menu) return null
@@ -1082,6 +1096,12 @@ function ContextMenu({
             onClick={() => { onStartInheritancePick(menu.noteId, 'parent'); onClose() }}>
             Make parent of...
           </button>
+          {menu.hasTimeSlot && (
+            <button className={styles.ctxItem}
+              onClick={() => { onSeeInheritance(menu.noteId); onClose() }}>
+              See inheritance
+            </button>
+          )}
           {menu.isReadOnly ? (
             <div className={styles.ctxReadOnly}>
               Switch to {menu.readOnlyLabel} view to edit this row
@@ -1131,6 +1151,12 @@ function ContextMenu({
               onClick={() => { onStartInheritancePick(menu.noteId, 'parent'); onClose() }}>
               Make parent of...
             </button>
+            {menu.hasTimeSlot && (
+              <button className={styles.ctxItem}
+                onClick={() => { onSeeInheritance(menu.noteId); onClose() }}>
+                See inheritance
+              </button>
+            )}
           </>
         )}
         {menu.type === 'header' && (<>
@@ -1141,6 +1167,12 @@ function ContextMenu({
             Remove this {menu.unitLabel || 'unit'}
           </button>
         </>)}
+        {menu.type === 'lane' && (
+          <button className={styles.ctxItem}
+            onClick={() => { onCreateNoteInLane(menu.categoryId); onClose() }}>
+            Create note in {menu.categoryName}
+          </button>
+        )}
         {menu.type === 'timeSlot' && (<>
           <button className={styles.ctxItem}
             onClick={() => { onStartInheritancePick(menu.noteId, 'child'); onClose() }}>
@@ -1149,6 +1181,10 @@ function ContextMenu({
           <button className={styles.ctxItem}
             onClick={() => { onStartInheritancePick(menu.noteId, 'parent'); onClose() }}>
             Make note parent of...
+          </button>
+          <button className={styles.ctxItem}
+            onClick={() => { onSeeInheritance(menu.noteId); onClose() }}>
+            See inheritance
           </button>
           <button className={styles.ctxItem}
             onClick={() => { onToggleTimeSlotPin(menu.timeSlotId); onClose() }}>
@@ -1171,6 +1207,108 @@ function ContextMenu({
         </>)}
       </div>
     </>,
+    document.body
+  )
+}
+
+function InheritanceInspectorModal({
+  noteId, notes, timeSlots, noteInheritance, assignments, dimensions, categories, onUnlink, onClose,
+}) {
+  const noteById = useMemo(() => new Map(notes.map(note => [note.id, note])), [notes])
+  const timeSlotByNote = useMemo(() => new Map(timeSlots.map(timeSlot => [timeSlot.noteId, timeSlot])), [timeSlots])
+  const categoriesById = useMemo(() => new Map(categories.map(cat => [cat.id, cat])), [categories])
+  const currentNote = noteById.get(noteId)
+  const parentLinks = noteInheritance.filter(link => link.childNoteId === noteId)
+  const childLinks = noteInheritance.filter(link => link.parentNoteId === noteId)
+
+  const noteCategories = targetNoteId => dimensions
+    .map(dim => {
+      const catId = assignments[targetNoteId]?.[dim.id]
+      const cat = catId ? categoriesById.get(catId) : null
+      return cat ? { dim, cat } : null
+    })
+    .filter(Boolean)
+
+  const renderRelation = (link, direction) => {
+    const relatedNoteId = direction === 'parent' ? link.parentNoteId : link.childNoteId
+    const relatedNote = noteById.get(relatedNoteId)
+    const relatedTimeSlot = timeSlotByNote.get(relatedNoteId)
+    const cats = noteCategories(relatedNoteId)
+    const description = noteDescriptionText(relatedNote)
+    return (
+      <details key={`${direction}:${link.childNoteId}:${link.parentNoteId}`} className={styles.inheritanceRelation}>
+        <summary className={styles.inheritanceSummary}>
+          <span className={styles.inheritanceRelationKind}>{direction === 'parent' ? 'Parent' : 'Child'}</span>
+          <span className={styles.inheritanceRelationTitle} title={description || relatedNote?.title || 'Untitled note'}>
+            {relatedNote?.title || 'Untitled note'}
+          </span>
+          {relatedTimeSlot && (
+            <span className={[
+              styles.inheritanceSlotBadge,
+              relatedTimeSlot.duration <= MIN_TIME_SLOT_DURATION && styles.inheritanceSlotBadgeMinimum,
+            ].filter(Boolean).join(' ')}>
+              {compactTimeSlotDurationLabel(relatedTimeSlot)} · {compactScaleLabel(relatedTimeSlot)}
+            </span>
+          )}
+        </summary>
+        <div className={styles.inheritanceDetails}>
+          <div className={styles.inheritanceDetailRow}>
+            <span className={styles.inheritanceDetailLabel}>Time slot</span>
+            <span>{relatedTimeSlot ? `${formatMinutesDuration(relatedTimeSlot.duration)} · ${timeSlotScaleBucket(relatedTimeSlot)}` : 'No time slot'}</span>
+          </div>
+          <div className={styles.inheritanceCategoryList}>
+            {cats.length ? cats.map(({ dim, cat }) => (
+              <span
+                key={`${dim.id}:${cat.id}`}
+                className={styles.inheritanceCategoryChip}
+                title={cat.description || `${dim.name}: ${cat.name}`}>
+                <span className={styles.inheritanceCategoryDot} style={{ background: cat.color }} />
+                <span className={styles.inheritanceCategoryDim}>{dim.name}</span>
+                <span>{cat.name}</span>
+              </span>
+            )) : (
+              <span className={styles.inheritanceEmptyText}>No assigned categories</span>
+            )}
+          </div>
+          <button
+            type="button"
+            className={styles.inheritanceUnlinkBtn}
+            onClick={() => onUnlink(link.childNoteId, link.parentNoteId)}>
+            Remove inheritance
+          </button>
+        </div>
+      </details>
+    )
+  }
+
+  return createPortal(
+    <div className={styles.modalBackdrop} onMouseDown={onClose}>
+      <div className={`${styles.modal} ${styles.inheritanceInspectorModal}`} onMouseDown={e => e.stopPropagation()}>
+        <div className={styles.inheritanceInspectorHeader}>
+          <div>
+            <div className={styles.inheritanceInspectorEyebrow}>Inheritance</div>
+            <div className={styles.inheritanceInspectorTitle} title={noteDescriptionText(currentNote) || currentNote?.title || 'Untitled note'}>
+              {currentNote?.title || 'Untitled note'}
+            </div>
+          </div>
+          <button type="button" className={styles.spacingClose} onClick={onClose}>✕</button>
+        </div>
+        <div className={styles.inheritanceInspectorContent}>
+          <section className={styles.inheritanceSection}>
+            <div className={styles.inheritanceSectionTitle}>Parents</div>
+            {parentLinks.length ? parentLinks.map(link => renderRelation(link, 'parent')) : (
+              <div className={styles.inheritanceEmptyText}>No parent notes</div>
+            )}
+          </section>
+          <section className={styles.inheritanceSection}>
+            <div className={styles.inheritanceSectionTitle}>Children</div>
+            {childLinks.length ? childLinks.map(link => renderRelation(link, 'child')) : (
+              <div className={styles.inheritanceEmptyText}>No child notes</div>
+            )}
+          </section>
+        </div>
+      </div>
+    </div>,
     document.body
   )
 }
@@ -2364,6 +2502,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [selectedDepIds, setSelectedDepIds] = useState(new Set())
   const [pinnedTimeSlotId, setPinnedTimeSlotId] = useState(null)
   const [contextMenu,  setContextMenu]  = useState(null)
+  const [inheritanceInspectorNoteId, setInheritanceInspectorNoteId] = useState(null)
   const [clickedNoteId, setClickedNoteId] = useState(null)
   const [copiedNoteId, setCopiedNoteId] = useState(null)
   const [inheritancePick, setInheritancePick] = useState(null)
@@ -2789,6 +2928,32 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     }
   }, [onNoteCreated, onNotesChanged, refreshScheduleData, showWarningPrompt])
 
+  const createNoteInLane = useCallback(async categoryId => {
+    if (!activeDimId) return
+    const targetCatId = categoryId === UNASSIGNED_LANE ? null : categoryId
+    try {
+      const note = await api.createNote({
+        id: newClientId('note'),
+        title: 'Untitled',
+        html: '',
+        collapsed: false,
+      })
+      if (targetCatId) await api.assign(note.id, activeDimId, targetCatId)
+      setClickedNoteId(note.id)
+      if (!onNotesChanged) onNoteCreated?.(note)
+      await onNotesChanged?.()
+      await refreshScheduleData()
+      requestAnimationFrame(() => onNoteOpen?.(note.id))
+    } catch (err) {
+      console.error(err)
+      showWarningPrompt({
+        title: 'Create note failed',
+        message: err?.message || 'The note could not be created for this category.',
+        actions: 'close',
+      })
+    }
+  }, [activeDimId, onNoteCreated, onNoteOpen, onNotesChanged, refreshScheduleData, showWarningPrompt])
+
   const pasteCopiedNote = useCallback(async () => {
     if (!copiedNoteId) return
     await duplicateNoteInSchedule(copiedNoteId)
@@ -2839,6 +3004,21 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }, [clearWarningPrompt, refreshScheduleData, showWarningPrompt])
 
   completeInheritancePickRef.current = completeInheritancePick
+
+  const removeInheritanceLink = useCallback(async (childNoteId, parentNoteId) => {
+    try {
+      await api.removeNoteInheritance(childNoteId, parentNoteId)
+      setNoteInheritance(prev => prev.filter(link => !(link.childNoteId === childNoteId && link.parentNoteId === parentNoteId)))
+      await refreshScheduleData()
+    } catch (err) {
+      console.error(err)
+      showWarningPrompt({
+        title: 'Inheritance not removed',
+        message: err?.message || 'Could not remove this inheritance relationship.',
+        actions: 'close',
+      })
+    }
+  }, [refreshScheduleData, showWarningPrompt])
 
   const applyNoteVisibilityFilter = useCallback(noteIds => {
     if (noteIds.size === 0) return
@@ -3480,14 +3660,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
     const hasDeadline = deadlines.some(d => d.noteId === cell.noteId)
     const hasEarliestStart = earliestStarts.some(e => e.noteId === cell.noteId)
-    const readOnly = isNoteRowReadOnly(cell.noteId)
-    const rowMs = readOnly ? timeSlotsRef.current.find(m => m.noteId === cell.noteId) : null
+    const rowMs = timeSlotsRef.current.find(m => m.noteId === cell.noteId)
+    const readOnly = !!rowMs && !isTimeSlotEditableAtZoom(rowMs.duration, timeZoomRef.current, rowMs.startCol)
     const readOnlyLabel = rowMs ? scaleLabelForZoom(getTimeSlotLevel(rowMs.duration, rowMs.startCol)) : null
     setClickedNoteId(cell.noteId)
     setContextMenu({ type: 'cell', x: e.clientX, y: e.clientY, col: cell.col,
       noteId: cell.noteId, noteTitle: cell.noteTitle, color: cell.color, hasDeadline, hasEarliestStart,
-      isReadOnly: readOnly, readOnlyLabel })
-  }, [deadlines, earliestStarts, getNoteCellFromPointer, isNoteRowReadOnly])
+      isReadOnly: readOnly, readOnlyLabel, hasTimeSlot: !!rowMs })
+  }, [deadlines, earliestStarts, getNoteCellFromPointer])
 
   // ── TimeSlot CRUD ─────────────────────────────────────────────────────────
   const handleCreateTimeSlot = useCallback(async (noteId, startCol, color) => {
@@ -5052,6 +5232,18 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                         setDragOverCatReorderId(null)
                         if (catId && item.cat) reorderCategoryInGantt(catId, item.cat.id)
                         else if (noteId) moveNoteToLane(noteId, item.cat?.id ?? null)
+                      }}
+                      onContextMenu={e => {
+                        if (!activeDimId || activeLaneFilter) return
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setContextMenu({
+                          type: 'lane',
+                          x: e.clientX,
+                          y: e.clientY,
+                          categoryId: item.cat?.id ?? UNASSIGNED_LANE,
+                          categoryName: item.cat?.name ?? 'Unassigned',
+                        })
                       }}>
                       <span
                         className={styles.laneHdrName}
@@ -5147,7 +5339,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                         e.preventDefault()
                         e.stopPropagation()
                         setClickedNoteId(item.note.id)
-                        setContextMenu({ type: 'note', x: e.clientX, y: e.clientY, noteId: item.note.id, noteTitle: item.note.title })
+                        setContextMenu({
+                          type: 'note',
+                          x: e.clientX,
+                          y: e.clientY,
+                          noteId: item.note.id,
+                          noteTitle: item.note.title,
+                          hasTimeSlot: timeSlotByNote.has(item.note.id),
+                        })
                       }}
                       onDoubleClick={e => {
                         e.stopPropagation()
@@ -5672,17 +5871,40 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         onRemoveDeadline={handleRemoveDeadline}
         onSetEarliestStart={handleSetEarliestStart}
         onRemoveEarliestStart={handleRemoveEarliestStart}
+        onCreateNoteInLane={createNoteInLane}
         onCopyNote={copyNoteToScheduleClipboard}
         onDuplicateNote={duplicateNoteInSchedule}
         onStartInheritancePick={startInheritancePick}
+        onSeeInheritance={setInheritanceInspectorNoteId}
         onDeleteTimeSlot={handleDeleteTimeSlotRequest}
         onToggleTimeSlotPin={handleToggleTimeSlotPin}
         pinnedTimeSlotId={pinnedTimeSlotId}
         onEditDepReason={handleEditDepReason}
         onDeleteDep={handleDeleteDepRequest} />
 
+      {inheritanceInspectorNoteId && (
+        <InheritanceInspectorModal
+          noteId={inheritanceInspectorNoteId}
+          notes={notes}
+          timeSlots={timeSlots}
+          noteInheritance={noteInheritance}
+          assignments={assignments}
+          dimensions={dimensions}
+          categories={categories}
+          onUnlink={removeInheritanceLink}
+          onClose={() => setInheritanceInspectorNoteId(null)}
+        />
+      )}
+
       {warningPrompt && (
         <div className={styles.warningPrompt} role="alertdialog" aria-modal="true">
+          <button
+            type="button"
+            className={styles.warningPromptClose}
+            aria-label="Close warning"
+            onClick={clearWarningPrompt}>
+            ×
+          </button>
           <div className={styles.warningPromptTitle}>{warningPrompt.title ?? 'Dependency warning'}</div>
           <div className={styles.warningPromptText}>
             {warningPrompt.message ??

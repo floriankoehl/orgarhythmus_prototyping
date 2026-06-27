@@ -1132,11 +1132,35 @@
   bottom: 72px;
   z-index: 3000;
   width: 300px;
-  padding: 14px;
+  padding: 14px 34px 14px 14px;
   background: #fff;
   border: 1px solid #f3c365;
   border-radius: 8px;
   box-shadow: 0 8px 28px rgba(0,0,0,0.18);
+}
+
+.warningPromptClose {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: #9a6a13;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.warningPromptClose:hover {
+  color: #6f4300;
+  background: #fff3d8;
 }
 
 .warningPromptTitle {
@@ -2096,6 +2120,186 @@
 .ctxItemDanger { color: #dc2626; }
 .ctxItemDanger:hover { background: #fef2f2; color: #dc2626; }
 .ctxReadOnly { padding: 7px 14px; font-size: 12px; color: #999; font-style: italic; }
+
+.inheritanceInspectorModal {
+  width: min(520px, calc(100vw - 32px));
+  padding: 0;
+  overflow: hidden;
+}
+
+.inheritanceInspectorHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid #ececec;
+}
+
+.inheritanceInspectorEyebrow {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.inheritanceInspectorTitle {
+  margin-top: 3px;
+  color: #1f2937;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.inheritanceInspectorContent {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: min(62vh, 520px);
+  padding: 14px 18px 18px;
+  overflow-y: auto;
+}
+
+.inheritanceSection {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.inheritanceSectionTitle {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.inheritanceRelation {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.inheritanceSummary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+.inheritanceRelationKind {
+  flex: 0 0 auto;
+  width: 44px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.inheritanceRelationTitle {
+  flex: 1;
+  min-width: 0;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inheritanceSlotBadge {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid rgba(100, 116, 139, 0.22);
+  border-radius: 4px;
+  color: #475569;
+  background: #f8fafc;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.inheritanceSlotBadgeMinimum {
+  color: #92400e;
+  background: #fff7ed;
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.inheritanceDetails {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 0 10px 10px 62px;
+}
+
+.inheritanceDetailRow {
+  display: flex;
+  gap: 8px;
+  color: #475569;
+  font-size: 11px;
+}
+
+.inheritanceDetailLabel {
+  flex: 0 0 auto;
+  color: #94a3b8;
+  font-weight: 800;
+}
+
+.inheritanceCategoryList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.inheritanceCategoryChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 3px 6px;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  color: #334155;
+  background: #f8fafc;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.inheritanceCategoryDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.inheritanceCategoryDim {
+  color: #64748b;
+}
+
+.inheritanceUnlinkBtn {
+  align-self: flex-start;
+  padding: 5px 8px;
+  border: 1px solid #fecaca;
+  border-radius: 5px;
+  color: #b91c1c;
+  background: #fff7f7;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.inheritanceUnlinkBtn:hover {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.inheritanceEmptyText {
+  color: #94a3b8;
+  font-size: 11px;
+  font-style: italic;
+}
 
 /* ── Violation highlight ─────────────────────────────────────────────────── */
 .timeSlotViolation {
