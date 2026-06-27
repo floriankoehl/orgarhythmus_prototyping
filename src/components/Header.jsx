@@ -10,7 +10,6 @@ const PAGES = [
   { name: 'Notes', view: 1 },
   { name: 'Classification', view: 2 },
   { name: 'Schedule', view: 3 },
-  { name: 'Inheritance', view: 4 },
   { name: 'People', view: 5 },
 ]
 

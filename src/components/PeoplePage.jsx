@@ -28,22 +28,6 @@ CHAR_KEYS.forEach(k => useGLTF.preload(`/models/character-${k}.glb`))
 
 const TARGET_HEIGHT = 1.7
 
-function peopleColToDate(col) {
-  const d = new Date()
-  d.setHours(0, 0, 0, 0)
-  d.setDate(d.getDate() + Math.max(0, Number(col) || 0))
-  return d
-}
-
-function formatTimeSlotDate(ms) {
-  const start = Math.max(0, Number(ms.startCol) || 0)
-  const duration = Math.max(1, Number(ms.duration) || 1)
-  const startLabel = peopleColToDate(start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  if (duration <= 1) return startLabel
-  const endLabel = peopleColToDate(start + duration - 1).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  return `${startLabel} - ${endLabel}`
-}
-
 // ── Cursor sync (must live inside Canvas) ────────────────────────────────────
 function CursorManager({ dragging }) {
   const { gl } = useThree()
@@ -423,13 +407,6 @@ function computeIslandLayout(cats, locked = false) {
 const NOTE_W = 4.05
 const NOTE_D = 2.62
 const NOTE_H = 0.10
-const NOTE_TIME_SLOT_SIZE = 0.68
-const NOTE_TIME_SLOT_H = 0.026
-const NOTE_TIME_SLOT_GAP = 0.16
-const NOTE_TIME_SLOT_HIT_PAD = 0.12
-const NOTE_TIME_SLOT_SURFACE_Y = NOTE_H + 0.024
-const NOTE_TIME_SLOT_CENTER_Y = NOTE_TIME_SLOT_SURFACE_Y + NOTE_TIME_SLOT_H / 2
-const NOTE_TIME_SLOT_TOP_Y = NOTE_TIME_SLOT_SURFACE_Y + NOTE_TIME_SLOT_H
 const NOTE_SLOT_W = NOTE_W + 0.48
 const NOTE_SLOT_D = NOTE_D + 0.62
 const MINI_TARGET_HEIGHT = 1.04
@@ -438,25 +415,7 @@ const PLATEAU_W = 13.6
 const PLATEAU_D = 3.8
 const PLATEAU_H = 0.72
 
-function layoutTimeSlotsOnNote(timeSlots) {
-  const sorted = [...timeSlots].sort((a, b) => (a.startCol ?? 0) - (b.startCol ?? 0))
-  if (sorted.length === 0) return []
-  const cols = Math.max(1, Math.floor((NOTE_W - 0.32 + NOTE_TIME_SLOT_GAP) / (NOTE_TIME_SLOT_SIZE + NOTE_TIME_SLOT_GAP)))
-  const usedW = (Math.min(cols, sorted.length) - 1) * (NOTE_TIME_SLOT_SIZE + NOTE_TIME_SLOT_GAP)
-  const rowCount = Math.ceil(sorted.length / cols)
-  const usedD = (rowCount - 1) * (NOTE_TIME_SLOT_SIZE + NOTE_TIME_SLOT_GAP)
-  return sorted.map((ms, i) => {
-    const col = i % cols
-    const row = Math.floor(i / cols)
-    return {
-      timeSlot: ms,
-      x: -usedW / 2 + col * (NOTE_TIME_SLOT_SIZE + NOTE_TIME_SLOT_GAP),
-      z: -usedD / 2 + row * (NOTE_TIME_SLOT_SIZE + NOTE_TIME_SLOT_GAP) + 0.22,
-      w: NOTE_TIME_SLOT_SIZE,
-      d: NOTE_TIME_SLOT_SIZE,
-    }
-  })
-}
+
 
 function LeaderPlateau({ islandPos, color, highlighted = false }) {
   const centerZ = islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D / 2
@@ -501,24 +460,18 @@ function computeLeaderPositions(islandPos, leaders) {
   }))
 }
 
-function NoteCard({ position, title, color = '#888', highlighted = false, focused = false, dimmed = false, timeSlots = [], highlightedTimeSlotId = null, onDoubleClick }) {
+function NoteCard({ position, title, color = '#888', highlighted = false, focused = false, dimmed = false }) {
   const [hovered, setHovered] = useState(false)
   const active = highlighted || hovered || focused
   const opacity = dimmed ? 0.38 : 1
-  const timeSlotLayout = layoutTimeSlotsOnNote(timeSlots)
-  const handleDoubleClick = e => {
-    e.stopPropagation()
-    onDoubleClick?.()
-  }
   return (
-    <group position={position} onDoubleClick={handleDoubleClick}>
+    <group position={position}>
       <RoundedBox
         castShadow
         args={[NOTE_W, NOTE_H, NOTE_D]}
         radius={0.03}
         smoothness={4}
         position={[0, NOTE_H / 2, 0]}
-        onDoubleClick={handleDoubleClick}
       >
         <meshStandardMaterial
           color={active ? '#eef4ff' : '#ffffff'}
@@ -531,7 +484,7 @@ function NoteCard({ position, title, color = '#888', highlighted = false, focuse
         />
       </RoundedBox>
       {/* Thin colored accent strip on front face */}
-      <mesh position={[0, NOTE_H * 0.5, NOTE_D / 2 + 0.001]} onDoubleClick={handleDoubleClick}>
+      <mesh position={[0, NOTE_H * 0.5, NOTE_D / 2 + 0.001]}>
         <planeGeometry args={[NOTE_W, NOTE_H]} />
         <meshBasicMaterial color={color} transparent opacity={dimmed ? 0.25 : active ? 0.75 : 0.55} depthWrite={false} />
       </mesh>
@@ -545,58 +498,10 @@ function NoteCard({ position, title, color = '#888', highlighted = false, focuse
         maxWidth={NOTE_W - 0.20}
         onPointerOver={() => setHovered(true)}
         onPointerOut={() => setHovered(false)}
-        onDoubleClick={handleDoubleClick}
         fillOpacity={dimmed ? 0.38 : 1}
       >
         {title}
       </Text>
-      {focused && (
-        <group position={[0, NOTE_TIME_SLOT_SURFACE_Y, 0]}>
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
-            <planeGeometry args={[NOTE_W - 0.14, NOTE_D - 0.14]} />
-            <meshBasicMaterial color={color} transparent opacity={0.08} depthWrite={false} />
-          </mesh>
-          {timeSlotLayout.length === 0 ? (
-            <Text
-              position={[0, 0.012, NOTE_D * 0.18]}
-              rotation={[-Math.PI / 2, 0, 0]}
-              fontSize={0.095}
-              color="#777"
-              anchorX="center"
-              anchorY="middle"
-              maxWidth={NOTE_W - 0.22}
-            >
-              No time slots yet
-            </Text>
-          ) : timeSlotLayout.map(({ timeSlot: ms, x, z, w, d }) => {
-            const timeSlotHighlighted = highlightedTimeSlotId === ms.id
-            return (
-              <group key={ms.id} position={[x, 0, z]}>
-                <RoundedBox args={[w, NOTE_TIME_SLOT_H, d]} radius={0.035} smoothness={4} position={[0, NOTE_TIME_SLOT_H / 2, 0]}>
-                  <meshStandardMaterial
-                    color={timeSlotHighlighted ? '#ffffff' : ms.color || color}
-                    roughness={0.56}
-                    metalness={0}
-                    emissive={ms.color || color}
-                    emissiveIntensity={timeSlotHighlighted ? 0.34 : 0.08}
-                  />
-                </RoundedBox>
-                <Text
-                  position={[0, NOTE_TIME_SLOT_H + 0.012, 0]}
-                  rotation={[-Math.PI / 2, 0, 0]}
-                  fontSize={0.095}
-                  color={timeSlotHighlighted ? (ms.color || color) : '#fff'}
-                  anchorX="center"
-                  anchorY="middle"
-                  maxWidth={w - 0.06}
-                >
-                  {formatTimeSlotDate(ms)}
-                </Text>
-              </group>
-            )
-          })}
-        </group>
-      )}
     </group>
   )
 }
@@ -735,12 +640,9 @@ function Scene({
   assignmentRevision = 0,
   notes = [],
   noteAssignments = [],
-  timeSlots = [],
   personaNoteAssignments = [],
-  personaTimeSlotAssignments = [],
   categoryLeaders = [],
   focusedCategoryId = null,
-  focusedNoteId = null,
   viewResetRevision = 0,
   layoutLocked = true,
   sourceDragPersonaId = null,
@@ -750,17 +652,14 @@ function Scene({
   onUnassign,
   onMoveAssignment,
   onFocusCategory,
-  onFocusNote,
   onSelect,
   onAssignPersonaToNote,
-  onAssignPersonaToTimeSlot,
   onAssignLeader,
   selected,
 }) {
   const [dragId, setDragId]       = useState(null)
   const [posOverrides, setPosOverrides] = useState({})
   const [hoveredNoteId, setHoveredNoteId] = useState(null)
-  const [hoveredTimeSlotId, setHoveredTimeSlotId] = useState(null)
   const [hoveringPlateau, setHoveringPlateau] = useState(false)
   const [notePageIndex, setNotePageIndex] = useState(0)
   const dragIdRef      = useRef(null)
@@ -768,12 +667,9 @@ function Scene({
   const posOverridesRef = useRef({})
   const dragMovedRef   = useRef(false)
   const focusedNotesRef = useRef([])
-  const timeSlotTargetsRef = useRef([])
   const focusedIslandRef = useRef(null)
   const focusedCategoryIdRef = useRef(focusedCategoryId)
-  const focusedNoteIdRef = useRef(focusedNoteId)
   useEffect(() => { focusedCategoryIdRef.current = focusedCategoryId }, [focusedCategoryId])
-  useEffect(() => { focusedNoteIdRef.current = focusedNoteId }, [focusedNoteId])
   useEffect(() => { setNotePageIndex(0) }, [focusedCategoryId])
 
   const islands = computeIslandLayout(activeCats, layoutLocked)
@@ -792,27 +688,19 @@ function Scene({
           // Check plateau drop first
           const fi = focusedIslandRef.current
           if (fi) {
-            if (focusedNoteIdRef.current) {
-              const targetTimeSlot = timeSlotTargetsRef.current.find(target =>
-                Math.abs(pos[0] - target.x) <= target.w / 2 &&
-                Math.abs(pos[2] - target.z) <= target.d / 2
-              )
-              if (targetTimeSlot) onAssignPersonaToTimeSlot?.(id, targetTimeSlot.id)
+            const plateauCZ = fi.islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D / 2
+            const onPlateau =
+              Math.abs(pos[0] - fi.islandPos[0]) <= PLATEAU_W / 2 &&
+              Math.abs(pos[2] - plateauCZ) <= PLATEAU_D / 2
+            if (onPlateau) {
+              onAssignLeader?.(id, focusedCategoryIdRef.current)
             } else {
-              const plateauCZ = fi.islandPos[2] - ISLAND_RENDER_D / 2 + PLATEAU_D / 2
-              const onPlateau =
-                Math.abs(pos[0] - fi.islandPos[0]) <= PLATEAU_W / 2 &&
-                Math.abs(pos[2] - plateauCZ) <= PLATEAU_D / 2
-              if (onPlateau) {
-                onAssignLeader?.(id, focusedCategoryIdRef.current)
-              } else {
-                // Then check note drop
-                const targetNote = focusedNotesRef.current.find(note =>
-                  Math.abs(pos[0] - note.notePos[0]) <= NOTE_W / 2 &&
-                  Math.abs(pos[2] - note.notePos[2]) <= NOTE_D / 2
-                )
-                if (targetNote) onAssignPersonaToNote?.(id, targetNote.id)
-              }
+              // Then check note drop
+              const targetNote = focusedNotesRef.current.find(note =>
+                Math.abs(pos[0] - note.notePos[0]) <= NOTE_W / 2 &&
+                Math.abs(pos[2] - note.notePos[2]) <= NOTE_D / 2
+              )
+              if (targetNote) onAssignPersonaToNote?.(id, targetNote.id)
             }
           }
         } else {
@@ -848,11 +736,10 @@ function Scene({
     dragIdRef.current = null
     dragAssignmentRef.current = null
     setHoveredNoteId(null)
-    setHoveredTimeSlotId(null)
     setHoveringPlateau(false)
     setDragId(null)
     onSourceDragEnd?.()
-  }, [activeDimensionId, islands, layoutLocked, onAssign, onAssignLeader, onAssignPersonaToTimeSlot, onAssignPersonaToNote, onMoveAssignment, onPositionUpdate, onSourceDragEnd, onUnassign, sourceDragPersonaId])
+  }, [activeDimensionId, islands, layoutLocked, onAssign, onAssignLeader, onAssignPersonaToNote, onMoveAssignment, onPositionUpdate, onSourceDragEnd, onUnassign, sourceDragPersonaId])
 
   useEffect(() => {
     window.addEventListener('pointerup', stopDrag)
@@ -884,20 +771,10 @@ function Scene({
     if (id === null) return
     e.stopPropagation()
     dragMovedRef.current = true
-    const newPos = [e.point.x, focusedNoteIdRef.current ? ISLAND_H + NOTE_H + 0.03 : ISLAND_H, e.point.z]
+    const newPos = [e.point.x, ISLAND_H, e.point.z]
     posOverridesRef.current = { ...posOverridesRef.current, [id]: newPos }
     setPosOverrides(prev => ({ ...prev, [id]: newPos }))
     if (focusedCategoryIdRef.current) {
-      if (focusedNoteIdRef.current) {
-        const hm = timeSlotTargetsRef.current.find(target =>
-          Math.abs(e.point.x - target.x) <= target.w / 2 &&
-          Math.abs(e.point.z - target.z) <= target.d / 2
-        )
-        setHoveredTimeSlotId(hm?.id ?? null)
-        setHoveredNoteId(null)
-        setHoveringPlateau(false)
-        return
-      }
       const fi = focusedIslandRef.current
       let onPlat = false
       if (fi) {
@@ -948,21 +825,6 @@ function Scene({
   const { notes: focusedNotesOnIsland, pageCount: notesPageCount } = focusedIsland
     ? computeNotesOnIsland(focusedIsland.islandPos, focusedNotes, notePageIndex)
     : { notes: [], pageCount: 1 }
-  const focusedNoteOnIsland = focusedNoteId
-    ? focusedNotesOnIsland.find(note => note.id === focusedNoteId) ?? null
-    : null
-  const focusedNoteTimeSlots = focusedNoteId
-    ? timeSlots.filter(ms => ms.noteId === focusedNoteId)
-    : []
-  const focusedTimeSlotTargets = focusedNoteOnIsland
-    ? layoutTimeSlotsOnNote(focusedNoteTimeSlots).map(target => ({
-        id: target.timeSlot.id,
-        x: focusedNoteOnIsland.notePos[0] + target.x,
-        z: focusedNoteOnIsland.notePos[2] + target.z,
-        w: target.w + NOTE_TIME_SLOT_HIT_PAD,
-        d: target.d + NOTE_TIME_SLOT_HIT_PAD,
-      }))
-    : []
 
   const leaderIdsInFocused = new Set(
     categoryLeaders.filter(l => l.categoryId === focusedCategoryId).map(l => l.personaId)
@@ -991,7 +853,6 @@ function Scene({
 
   // Keep refs in sync so stopDrag/handleDragMove always see latest state
   focusedNotesRef.current = focusedNotesOnIsland
-  timeSlotTargetsRef.current = focusedTimeSlotTargets
   focusedIslandRef.current = focusedIsland ?? null
 
   // Map noteId → [persona, …] for rendering tiny figures on each note
@@ -1001,14 +862,6 @@ function Scene({
     if (!p) return
     if (!notePersonaMap[a.noteId]) notePersonaMap[a.noteId] = []
     notePersonaMap[a.noteId].push(p)
-  })
-
-  const timeSlotPersonaMap = {}
-  personaTimeSlotAssignments.forEach(a => {
-    const p = personas.find(px => px.id === a.personaId)
-    if (!p) return
-    if (!timeSlotPersonaMap[a.timeSlotId]) timeSlotPersonaMap[a.timeSlotId] = []
-    timeSlotPersonaMap[a.timeSlotId].push(p)
   })
 
   return (
@@ -1022,8 +875,8 @@ function Scene({
       <CursorManager dragging={activeDragId !== null} />
       <CameraDirector
         locked={layoutLocked}
-        focusTarget={focusedNoteOnIsland?.notePos ?? focusedIsland?.islandPos ?? null}
-        focusLevel={focusedNoteOnIsland ? 'note' : 'category'}
+        focusTarget={focusedIsland?.islandPos ?? null}
+        focusLevel='category'
         resetRevision={viewResetRevision}
       />
 
@@ -1085,8 +938,8 @@ function Scene({
           name={activeDragPersona.name}
           color={keyColor(activeDragPersona.modelKey)}
           phaseId={99}
-          targetHeight={focusedNoteId ? 0.38 : focusedCategoryId ? MINI_TARGET_HEIGHT : TARGET_HEIGHT}
-          showName={!focusedCategoryId && !focusedNoteId}
+          targetHeight={focusedCategoryId ? MINI_TARGET_HEIGHT : TARGET_HEIGHT}
+          showName={!focusedCategoryId}
           selected
           dragging
           onPointerDown={e => e.stopPropagation()}
@@ -1115,7 +968,6 @@ function Scene({
       {focusedNotesOnIsland.map(note => {
         const notePersonas = notePersonaMap[note.id] || []
         const spacing = 0.45
-        const noteFocused = focusedNoteId === note.id
         return (
           <group key={note.id}>
             <NoteCard
@@ -1123,11 +975,7 @@ function Scene({
               title={note.title}
               color={focusedIsland?.color || '#888'}
               highlighted={hoveredNoteId === note.id}
-              focused={noteFocused}
-              dimmed={Boolean(focusedNoteId && !noteFocused)}
-              timeSlots={noteFocused ? focusedNoteTimeSlots : []}
-              highlightedTimeSlotId={hoveredTimeSlotId}
-              onDoubleClick={() => onFocusNote?.(note.id)}
+              dimmed={false}
             />
             {notePersonas.map((persona, i) => (
               <PersonAvatar
@@ -1167,34 +1015,6 @@ function Scene({
           onGo={setNotePageIndex}
         />
       )}
-
-      {focusedNoteOnIsland && focusedTimeSlotTargets.flatMap(target => {
-        const assigned = timeSlotPersonaMap[target.id] || []
-        const spacing = 0.15
-        return assigned.map((persona, i) => (
-          <PersonAvatar
-            key={`ms:${target.id}:${persona.id}`}
-            modelKey={persona.modelKey}
-            position={[
-              target.x - (assigned.length - 1) * spacing / 2 + i * spacing,
-              focusedNoteOnIsland.notePos[1] + NOTE_TIME_SLOT_TOP_Y + 0.035,
-              target.z,
-            ]}
-            name={persona.name}
-            color={keyColor(persona.modelKey)}
-            phaseId={i + 520}
-            targetHeight={0.24}
-            showName={false}
-            selected={selected === persona.id}
-            dragging={false}
-            onPointerDown={e => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation()
-              onSelect?.(selected === persona.id ? null : persona.id)
-            }}
-          />
-        ))
-      })}
 
       {focusedIsland && (
         <LeaderPlateau
@@ -1249,7 +1069,7 @@ function Scene({
         enabled={!layoutLocked && activeDragId === null}
         minPolarAngle={0.2}
         maxPolarAngle={Math.PI / 2.1}
-        minDistance={focusedNoteId ? 1.15 : 6}
+        minDistance={6}
         maxDistance={60}
         target={layoutLocked ? [0, 0, 0] : [0, 0, 0]}
       />
@@ -1557,15 +1377,6 @@ function uniqueBy(items, keyFn) {
   })
 }
 
-function deriveEffectivePersonaNoteAssignments(directNoteAssignments, timeSlotAssignments, timeSlots) {
-  const timeSlotNoteById = new Map(timeSlots.map(ms => [ms.id, ms.noteId]))
-  return uniqueBy([
-    ...directNoteAssignments,
-    ...timeSlotAssignments
-      .map(a => ({ personaId: a.personaId, noteId: timeSlotNoteById.get(a.timeSlotId) }))
-      .filter(a => a.noteId),
-  ], a => `${a.personaId}:${a.noteId}`)
-}
 
 function deriveEffectivePersonaAssignments(directAssignments, effectiveNoteAssignments, noteAssignments) {
   const noteCategoryLinks = new Map()
@@ -1591,21 +1402,15 @@ function People2DView({
   personaAssignments = [],
   notes = [],
   noteAssignments = [],
-  timeSlots = [],
   personaNoteAssignments = [],
-  personaTimeSlotAssignments = [],
   categoryLeaders = [],
   focusedCategory,
-  focusedNote,
   onFocusCategory,
-  onFocusNote,
   onClearCategory,
-  onClearNote,
   onAssign,
   onUnassign,
   onMoveAssignment,
   onAssignPersonaToNote,
-  onAssignPersonaToTimeSlot,
   onAssignLeader,
   onSelect,
   selected,
@@ -1662,12 +1467,6 @@ function People2DView({
     const payload = readDragPayload(e)
     if (payload?.personaId) onAssignPersonaToNote?.(payload.personaId, noteId)
   }
-  const handleTimeSlotDrop = (timeSlotId, e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    const payload = readDragPayload(e)
-    if (payload?.personaId) onAssignPersonaToTimeSlot?.(payload.personaId, timeSlotId)
-  }
 
   const categoryPersonas = catId => personaAssignments
     .filter(a => a.dimensionId === activeDimension?.id && a.categoryId === catId)
@@ -1675,10 +1474,6 @@ function People2DView({
     .filter(Boolean)
   const notePersonas = noteId => personaNoteAssignments
     .filter(a => a.noteId === noteId)
-    .map(a => personas.find(p => p.id === a.personaId))
-    .filter(Boolean)
-  const timeSlotPersonas = timeSlotId => personaTimeSlotAssignments
-    .filter(a => a.timeSlotId === timeSlotId)
     .map(a => personas.find(p => p.id === a.personaId))
     .filter(Boolean)
   const leaderPersonas = focusedCategory
@@ -1696,11 +1491,6 @@ function People2DView({
       .filter(a => a.dimensionId === activeDimension.id && a.categoryId === focusedCategory.id)
       .map(a => notes.find(n => n.id === a.noteId))
       .filter(Boolean)
-    : []
-  const focusedTimeSlots = focusedNote
-    ? timeSlots
-      .filter(ms => ms.noteId === focusedNote.id)
-      .sort((a, b) => (a.startCol ?? 0) - (b.startCol ?? 0))
     : []
 
   return (
@@ -1744,7 +1534,7 @@ function People2DView({
         </div>
       )}
 
-      {focusedCategory && !focusedNote && (
+      {focusedCategory && (
         <div className={styles.people2dFocus}>
           <section
             className={styles.people2dLeaderLane}
@@ -1792,7 +1582,6 @@ function People2DView({
                   key={note.id}
                   className={styles.people2dNote}
                   style={{ '--cat-color': focusedCategory.color || '#888' }}
-                  onDoubleClick={() => onFocusNote?.(note.id)}
                   onDragOver={allowDrop}
                   onDrop={e => handleNoteDrop(note.id, e)}
                 >
@@ -1819,44 +1608,6 @@ function People2DView({
           </div>
         </div>
       )}
-
-      {focusedCategory && focusedNote && (
-        <div className={styles.people2dNoteFocus} style={{ '--cat-color': focusedCategory.color || '#888' }}>
-          <section className={styles.people2dFocusedNote}>
-            <h2>{focusedNote.title || 'Untitled'}</h2>
-            <p>{focusedNote.description || ''}</p>
-            <div className={styles.people2dTimeSlotGrid}>
-              {focusedTimeSlots.map(ms => {
-                const assigned = timeSlotPersonas(ms.id)
-                return (
-                  <section
-                    key={ms.id}
-                    className={styles.people2dTimeSlot}
-                    style={{ '--timeSlot-color': ms.color || focusedCategory.color || '#888' }}
-                    onDragOver={allowDrop}
-                    onDrop={e => handleTimeSlotDrop(ms.id, e)}
-                  >
-                    <div className={styles.people2dTimeSlotDate}>{formatTimeSlotDate(ms)}</div>
-                    <div className={styles.people2dTimeSlotTitle}>{ms.title || 'Time slot'}</div>
-                    <div className={styles.people2dPersonaCloud}>
-                      {assigned.map(persona => (
-                        <button
-                          key={persona.id}
-                          className={styles.people2dPersonaButton}
-                          onClick={() => onSelect?.(selected === persona.id ? null : persona.id)}
-                        >
-                          <PersonaMini persona={persona} size={22} />
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                )
-              })}
-              {focusedTimeSlots.length === 0 && <div className={styles.people2dBlank}>No time slots yet.</div>}
-            </div>
-          </section>
-        </div>
-      )}
     </main>
   )
 }
@@ -1869,9 +1620,7 @@ export default function PeoplePage() {
   const [personas, setPersonas]         = useState([])
   const [notes, setNotes]               = useState([])
   const [noteAssignments, setNoteAssignments] = useState([])
-  const [timeSlots, setTimeSlots]     = useState([])
   const [personaNoteAssignments, setPersonaNoteAssignments] = useState([])
-  const [personaTimeSlotAssignments, setPersonaTimeSlotAssignments] = useState([])
   const [categoryLeaders, setCategoryLeaders] = useState([])
   const [personaAssignments, setPersonaAssignments] = useState([])
   const personaAssignmentsRef = useRef([])
@@ -1880,10 +1629,9 @@ export default function PeoplePage() {
   const [showAddPanel, setShowAddPanel] = useState(false)
   const [editPersonaId, setEditPersonaId] = useState(null)
   const [layoutLocked, setLayoutLocked] = useState(false)
-  const [viewMode, setViewMode] = useState('3d')
+  const [viewMode, setViewMode] = useState('2d')
   const [sourceDragPersonaId, setSourceDragPersonaId] = useState(null)
   const [focusedCategoryId, setFocusedCategoryId] = useState(null)
-  const [focusedNoteId, setFocusedNoteId] = useState(null)
   const [viewResetRevision, setViewResetRevision] = useState(0)
 
   const replacePersonaAssignments = useCallback((nextAssignments, { immediate = false, revise = true } = {}) => {
@@ -1897,8 +1645,8 @@ export default function PeoplePage() {
   }, [])
 
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getDirectPersonaAssignments(), api.getNotes(), api.getAssignments(), api.getTimeSlots(), api.getDirectPersonaNoteAssignments(), api.getPersonaTimeSlotAssignments(), api.getCategoryLeaders()])
-      .then(([dims, cats, pers, personaAsns, notesList, noteAsns, ms, pnAsns, pmAsns, leaders]) => {
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getDirectPersonaAssignments(), api.getNotes(), api.getAssignments(), api.getDirectPersonaNoteAssignments(), api.getCategoryLeaders()])
+      .then(([dims, cats, pers, personaAsns, notesList, noteAsns, pnAsns, leaders]) => {
         setDimensions(dims)
         setCategories(cats)
         setDimIndex(0)
@@ -1906,9 +1654,7 @@ export default function PeoplePage() {
         replacePersonaAssignments(personaAsns, { revise: true })
         setNotes(notesList)
         setNoteAssignments(noteAsns)
-        setTimeSlots(ms)
         setPersonaNoteAssignments(pnAsns)
-        setPersonaTimeSlotAssignments(pmAsns)
         setCategoryLeaders(leaders)
       })
       .catch(console.error)
@@ -1926,51 +1672,26 @@ export default function PeoplePage() {
     ? activeCats.find(c => c.id === focusedCategoryId) ?? null
     : null
 
-  const effectivePersonaNoteAssignments = useMemo(
-    () => deriveEffectivePersonaNoteAssignments(personaNoteAssignments, personaTimeSlotAssignments, timeSlots),
-    [personaNoteAssignments, personaTimeSlotAssignments, timeSlots],
-  )
   const effectivePersonaAssignments = useMemo(
-    () => deriveEffectivePersonaAssignments(personaAssignments, effectivePersonaNoteAssignments, noteAssignments),
-    [personaAssignments, effectivePersonaNoteAssignments, noteAssignments],
+    () => deriveEffectivePersonaAssignments(personaAssignments, personaNoteAssignments, noteAssignments),
+    [personaAssignments, personaNoteAssignments, noteAssignments],
   )
 
   useEffect(() => {
     if (!focusedCategoryId) return
     if (!activeCats.some(c => c.id === focusedCategoryId)) {
       setFocusedCategoryId(null)
-      setFocusedNoteId(null)
       setViewResetRevision(v => v + 1)
     }
   }, [activeCats, focusedCategoryId])
 
-  useEffect(() => {
-    if (!focusedNoteId) return
-    if (!focusedCategoryId || !activeDimension) {
-      setFocusedNoteId(null)
-      return
-    }
-    const stillInFocusedCategory = noteAssignments.some(a =>
-      a.noteId === focusedNoteId &&
-      a.dimensionId === activeDimension.id &&
-      a.categoryId === focusedCategoryId
-    )
-    if (!stillInFocusedCategory) setFocusedNoteId(null)
-  }, [activeDimension, focusedCategoryId, focusedNoteId, noteAssignments])
-
   const clearCategoryFocus = () => {
     setFocusedCategoryId(null)
-    setFocusedNoteId(null)
     setViewResetRevision(v => v + 1)
   }
 
   const handleFocusCategory = catId => {
     setFocusedCategoryId(catId)
-    setFocusedNoteId(null)
-  }
-
-  const clearNoteFocus = () => {
-    setFocusedNoteId(null)
   }
 
   const handlePositionUpdate = async (id, x, z) => {
@@ -2073,27 +1794,6 @@ export default function PeoplePage() {
     }
   }
 
-  const handleAssignPersonaToTimeSlot = async (personaId, timeSlotId) => {
-    if (personaTimeSlotAssignments.some(a => a.personaId === personaId && a.timeSlotId === timeSlotId)) return
-    setPersonaTimeSlotAssignments(prev => [...prev, { personaId, timeSlotId }])
-    try {
-      await api.assignPersonaToTimeSlot(personaId, timeSlotId)
-    } catch (e) {
-      console.error(e)
-      setPersonaTimeSlotAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.timeSlotId === timeSlotId)))
-    }
-  }
-
-  const handleUnassignPersonaFromTimeSlot = async (personaId, timeSlotId) => {
-    setPersonaTimeSlotAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.timeSlotId === timeSlotId)))
-    try {
-      await api.unassignPersonaFromTimeSlot(personaId, timeSlotId)
-    } catch (e) {
-      console.error(e)
-      setPersonaTimeSlotAssignments(prev => [...prev, { personaId, timeSlotId }])
-    }
-  }
-
   const handleUnassignPersonaFromNote = async (personaId, noteId) => {
     setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.noteId === noteId)))
     try {
@@ -2123,11 +1823,9 @@ export default function PeoplePage() {
     const previousPersonas = personas
     const previousAssignments = personaAssignments
     const previousNoteAssignments = personaNoteAssignments
-    const previousTimeSlotAssignments = personaTimeSlotAssignments
     setPersonas(prev => prev.filter(p => p.id !== id))
     replacePersonaAssignments(personaAssignmentsRef.current.filter(a => a.personaId !== id))
     setPersonaNoteAssignments(prev => prev.filter(a => a.personaId !== id))
-    setPersonaTimeSlotAssignments(prev => prev.filter(a => a.personaId !== id))
     setSelected(null)
     setEditPersonaId(null)
     try {
@@ -2136,13 +1834,11 @@ export default function PeoplePage() {
       setPersonas(previousPersonas)
       replacePersonaAssignments(previousAssignments)
       setPersonaNoteAssignments(previousNoteAssignments)
-      setPersonaTimeSlotAssignments(previousTimeSlotAssignments)
       throw e
     }
   }
 
   const selectedPersona = personas.find(p => p.id === selected) ?? null
-  const focusedNote = focusedNoteId ? notes.find(n => n.id === focusedNoteId) ?? null : null
   const selectedAssignments = selectedPersona && activeDimension
     ? effectivePersonaAssignments
       .filter(a => a.personaId === selectedPersona.id && a.dimensionId === activeDimension.id)
@@ -2150,16 +1846,10 @@ export default function PeoplePage() {
       .filter(a => a.category)
     : []
   const selectedNoteAssignments = selectedPersona && focusedCategoryId
-    ? effectivePersonaNoteAssignments
+    ? personaNoteAssignments
       .filter(a => a.personaId === selectedPersona.id)
       .map(a => ({ ...a, note: notes.find(n => n.id === a.noteId) }))
       .filter(a => a.note)
-    : []
-  const selectedTimeSlotAssignments = selectedPersona && focusedNoteId
-    ? personaTimeSlotAssignments
-      .filter(a => a.personaId === selectedPersona.id)
-      .map(a => ({ ...a, timeSlot: timeSlots.find(m => m.id === a.timeSlotId) }))
-      .filter(a => a.timeSlot)
     : []
   const isSelectedLeader = selectedPersona && focusedCategoryId
     ? categoryLeaders.some(l => l.personaId === selectedPersona.id && l.categoryId === focusedCategoryId)
@@ -2209,12 +1899,9 @@ export default function PeoplePage() {
             assignmentRevision={assignmentRevision}
             notes={notes}
             noteAssignments={noteAssignments}
-            timeSlots={timeSlots}
-            personaNoteAssignments={effectivePersonaNoteAssignments}
-            personaTimeSlotAssignments={personaTimeSlotAssignments}
+            personaNoteAssignments={personaNoteAssignments}
             categoryLeaders={categoryLeaders}
             focusedCategoryId={focusedCategoryId}
-            focusedNoteId={focusedNoteId}
             viewResetRevision={viewResetRevision}
             layoutLocked={layoutLocked}
             sourceDragPersonaId={sourceDragPersonaId}
@@ -2224,10 +1911,8 @@ export default function PeoplePage() {
             onUnassign={handleUnassignPersona}
             onMoveAssignment={handleMovePersonaAssignment}
             onFocusCategory={handleFocusCategory}
-            onFocusNote={setFocusedNoteId}
             onSelect={setSelected}
             onAssignPersonaToNote={handleAssignPersonaToNote}
-            onAssignPersonaToTimeSlot={handleAssignPersonaToTimeSlot}
             onAssignLeader={handleAssignLeader}
             selected={selected}
           />
@@ -2240,21 +1925,15 @@ export default function PeoplePage() {
           personaAssignments={effectivePersonaAssignments}
           notes={notes}
           noteAssignments={noteAssignments}
-          timeSlots={timeSlots}
-          personaNoteAssignments={effectivePersonaNoteAssignments}
-          personaTimeSlotAssignments={personaTimeSlotAssignments}
+          personaNoteAssignments={personaNoteAssignments}
           categoryLeaders={categoryLeaders}
           focusedCategory={focusedCategory}
-          focusedNote={focusedNote}
           onFocusCategory={handleFocusCategory}
-          onFocusNote={setFocusedNoteId}
           onClearCategory={clearCategoryFocus}
-          onClearNote={clearNoteFocus}
           onAssign={handleAssignPersona}
           onUnassign={handleUnassignPersona}
           onMoveAssignment={handleMovePersonaAssignment}
           onAssignPersonaToNote={handleAssignPersonaToNote}
-          onAssignPersonaToTimeSlot={handleAssignPersonaToTimeSlot}
           onAssignLeader={handleAssignLeader}
           onSelect={setSelected}
           selected={selected}
@@ -2288,17 +1967,8 @@ export default function PeoplePage() {
             style={{ background: focusedCategory.color || '#aaa' }}
           />
           <span className={styles.categoryFocusName}>
-            {focusedNote ? `${focusedCategory.name} / ${focusedNote.title || 'Untitled'}` : focusedCategory.name}
+            {focusedCategory.name}
           </span>
-          {focusedNote && (
-            <button
-              className={styles.categoryFocusClear}
-              onClick={clearNoteFocus}
-              title="Back to category"
-            >
-              Category
-            </button>
-          )}
           <button
             className={styles.categoryFocusClear}
             onClick={clearCategoryFocus}
@@ -2335,7 +2005,7 @@ export default function PeoplePage() {
           <div>
             <div className={styles.personaPanelTitle}>People</div>
             <div className={styles.personaPanelSub}>
-              {focusedNote ? 'Drag to a time slot' : focusedCategory ? 'Drag to a note' : 'Drag to a category'}
+              {focusedCategory ? 'Drag to a note' : 'Drag to a category'}
             </div>
           </div>
           <button
@@ -2406,7 +2076,7 @@ export default function PeoplePage() {
             />
             <span className={styles.selectionName}>{selectedPersona.name}</span>
           </div>
-          {(selectedAssignments.length > 0 || selectedNoteAssignments.length > 0 || selectedTimeSlotAssignments.length > 0 || isSelectedLeader) && (
+          {(selectedAssignments.length > 0 || selectedNoteAssignments.length > 0 || isSelectedLeader) && (
             <div className={styles.assignmentChips}>
               {isSelectedLeader && (
                 <button
@@ -2440,18 +2110,6 @@ export default function PeoplePage() {
                   title={`Remove from note "${note.title}"`}
                 >
                   {note.title || 'Untitled'}
-                  <span>×</span>
-                </button>
-              ))}
-              {selectedTimeSlotAssignments.map(({ timeSlot, timeSlotId }) => (
-                <button
-                  key={timeSlotId}
-                  className={styles.assignmentChip}
-                  style={{ borderColor: timeSlot.color || focusedCategory?.color || '#888', color: timeSlot.color || focusedCategory?.color || '#888' }}
-                  onClick={() => handleUnassignPersonaFromTimeSlot(selectedPersona.id, timeSlotId)}
-                  title={`Remove from time slot "${timeSlot.title || formatTimeSlotDate(timeSlot)}"`}
-                >
-                  {timeSlot.title || formatTimeSlotDate(timeSlot)}
                   <span>×</span>
                 </button>
               ))}
