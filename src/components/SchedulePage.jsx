@@ -4,7 +4,7 @@ import styles from './SchedulePage.module.css'
 import { api, projectsApi } from '../api'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const HEADER_H     = 52
+const HEADER_H     = 64
 const LANE_HDR_H   = 30
 const MILESTONE_H  = 20   // block height in px
 const COL_BUF      = 8
@@ -23,21 +23,23 @@ const SCHEDULE_DEFAULT_PERSPECTIVE_KEY = 'schedule.defaultPerspectiveId'
 
 const TIME_ZOOM_LEVELS = [
   { value: 'minutes', label: '15 min', short: '15m', unit: 15 },
-  { value: 'hours', label: 'Hours', short: 'h', unit: 60 },
   { value: 'days', label: 'Days', short: 'd', unit: 60 * 24 },
-  { value: 'weeks', label: 'Weeks', short: 'wk', unit: 60 * 24 * 7 },
   { value: 'months', label: 'Months', short: 'mo', unit: 60 * 24 * 30 },
 ]
 const TIME_ZOOM_BY_VALUE = Object.fromEntries(TIME_ZOOM_LEVELS.map(level => [level.value, level]))
 const DEFAULT_TIME_ZOOM = 'days'
 const ZOOM_ORDER = TIME_ZOOM_LEVELS.map(l => l.value)
 
+function normalizeTimeZoom(value) {
+  if (value === 'hours') return 'minutes'
+  if (value === 'weeks') return 'days'
+  return TIME_ZOOM_BY_VALUE[value] ? value : DEFAULT_TIME_ZOOM
+}
+
 function getMilestoneLevel(duration) {
   const d = Math.max(0, Number(duration) || 0)
   if (d >= 60 * 24 * 30) return 'months'
-  if (d >= 60 * 24 * 7)  return 'weeks'
   if (d >= 60 * 24)      return 'days'
-  if (d >= 60)           return 'hours'
   return 'minutes'
 }
 
@@ -48,7 +50,7 @@ function isMilestoneVisibleAtZoom(duration, timeZoom, scaleFilter) {
   if (scaleFilter === 'strict') return msIdx === currentIdx
   return Math.abs(msIdx - currentIdx) <= 1
 }
-const MIN_MILESTONE_DURATION = 15
+const MIN_MILESTONE_DURATION = 10
 const DEFAULT_WARNING_SETTINGS = {
   resizeWarnOrderThreshold: 2,
   resizeBlockOrderThreshold: 2,
@@ -91,7 +93,7 @@ function isoWeekInfo(date) {
 }
 
 function getZoomUnit(timeZoom) {
-  return TIME_ZOOM_BY_VALUE[timeZoom]?.unit ?? TIME_ZOOM_BY_VALUE[DEFAULT_TIME_ZOOM].unit
+  return TIME_ZOOM_BY_VALUE[normalizeTimeZoom(timeZoom)].unit
 }
 
 function zoomColToMinute(col, timeZoom) {
@@ -116,15 +118,9 @@ function getVisualRange(item, timeZoom) {
 
 function minuteToLabel(minute, timeZoom) {
   const date = minuteToDate(minute)
-  switch (timeZoom) {
+  switch (normalizeTimeZoom(timeZoom)) {
     case 'minutes':
       return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-    case 'hours':
-      return date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit' })
-    case 'weeks': {
-      const { week, year } = isoWeekInfo(date)
-      return `KW ${week} ${year}`
-    }
     case 'months':
       return `${MONTH_ABR[date.getMonth()]} ${date.getFullYear()}`
     default:
@@ -136,6 +132,22 @@ function zoomColToLabel(col, timeZoom) {
   return minuteToLabel(zoomColToMinute(col, timeZoom), timeZoom)
 }
 
+function axisColumnLabel(col, timeZoom) {
+  const date = minuteToDate(zoomColToMinute(col, timeZoom))
+  if (timeZoom === 'minutes') return date.getMinutes()
+  if (timeZoom === 'days') return date.getDate()
+  if (timeZoom === 'months') return MONTH_ABR[date.getMonth()]
+  return zoomColToLabel(col, timeZoom)
+}
+
+function dayBandLabel(date) {
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function hourBandLabel(date) {
+  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+}
+
 function durationOrderMagnitudeChange(originalDuration, nextDuration) {
   const original = Math.max(MIN_MILESTONE_DURATION, Number(originalDuration) || MIN_MILESTONE_DURATION)
   const next = Math.max(MIN_MILESTONE_DURATION, Number(nextDuration) || MIN_MILESTONE_DURATION)
@@ -145,31 +157,23 @@ function durationOrderMagnitudeChange(originalDuration, nextDuration) {
 
 function durationScaleBucket(duration) {
   const value = Math.max(MIN_MILESTONE_DURATION, Number(duration) || MIN_MILESTONE_DURATION)
-  if (value < 60) return 'minute'
-  if (value < 1440) return 'hour'
-  if (value < 10080) return 'day'
-  if (value < 43200) return 'week'
+  if (value < 1440) return 'minute'
+  if (value < 43200) return 'day'
   return 'month'
 }
 
 function durationScaleBucketIndex(bucket) {
-  return ['minute', 'hour', 'day', 'week', 'month'].indexOf(bucket)
+  return ['minute', 'day', 'month'].indexOf(bucket)
 }
 
 function areDurationLevelsCompatible(durationA, durationB) {
-  const levelA = durationScaleBucket(durationA)
-  const levelB = durationScaleBucket(durationB)
-  if (levelA === levelB) return true
-  const fine = new Set(['minute', 'hour'])
-  return fine.has(levelA) && fine.has(levelB)
+  return durationScaleBucket(durationA) === durationScaleBucket(durationB)
 }
 
 function zoomForConflictGap(minutes) {
   const gap = Math.abs(Number(minutes) || 0)
   if (gap >= 43200) return 'months'
-  if (gap >= 10080) return 'weeks'
   if (gap >= 1440) return 'days'
-  if (gap >= 60) return 'hours'
   return 'minutes'
 }
 
@@ -237,7 +241,13 @@ function computeViolations(msList, deps) {
   const violations = new Set()
   deps.forEach(dep => {
     const from = msMap[dep.fromId]; const to = msMap[dep.toId]
-    if (from && to && from.startCol + from.duration > to.startCol) violations.add(to.id)
+    if (!from || !to) return
+    if (!areDurationLevelsCompatible(from.duration, to.duration)) {
+      violations.add(from.id)
+      violations.add(to.id)
+      return
+    }
+    if (from.startCol + from.duration > to.startCol) violations.add(to.id)
   })
   // Cascade: if B violates, check if B also causes downstream violations
   const queue = [...violations]
@@ -259,8 +269,10 @@ function getDependencyViolations(msList, deps) {
     .map(dep => {
       const from = msMap[dep.fromId]
       const to = msMap[dep.toId]
-      if (!from || !to || from.startCol + from.duration <= to.startCol) return null
-      return { dep, from, to }
+      if (!from || !to) return null
+      if (!areDurationLevelsCompatible(from.duration, to.duration)) return { dep, from, to, type: 'scale_mismatch' }
+      if (from.startCol + from.duration <= to.startCol) return null
+      return { dep, from, to, type: 'dependency' }
     })
     .filter(Boolean)
 }
@@ -292,7 +304,14 @@ function getCascadingDependencyConflict(msList, deps, initialViolations = null) 
     queue.push(violation.to.id)
   }
 
-  seedViolations.forEach(addViolation)
+  seedViolations.filter(v => v.type !== 'scale_mismatch').forEach(addViolation)
+  seedViolations.filter(v => v.type === 'scale_mismatch').forEach(violation => {
+    if (!violation || violationIds.has(violation.dep.id)) return
+    violationIds.add(violation.dep.id)
+    violations.push(violation)
+    milestoneIds.add(violation.from.id)
+    milestoneIds.add(violation.to.id)
+  })
 
   while (queue.length) {
     const fromId = queue.shift()
@@ -678,7 +697,7 @@ function WarningSettingsPanel({
             checked={settings.resizeScaleCrossingWarningEnabled}
             onChange={e => onSettingsChange({ ...settings, resizeScaleCrossingWarningEnabled: e.target.checked })}
           />
-          <span>Warn when resize crosses minute/hour/day/week/month scale</span>
+          <span>Warn when resize crosses minute/day/month scale</span>
         </label>
         <label className={styles.warningSettingsRow}>
           <span>Warn at</span>
@@ -2450,9 +2469,13 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     window.setTimeout(() => setBlinkingMilestoneIds(new Set()), 3000)
     showWarningPrompt({
       title: 'Dependency violation',
-      message: conflict.violations.length === 1
-        ? 'A predecessor milestone must finish before its successor starts.'
-        : `${conflict.violations.length} dependency constraints were violated.`,
+      message: conflict.violations.some(v => v.type === 'scale_mismatch')
+        ? conflict.violations.length === 1
+          ? 'Dependency scale mismatch. Dependencies can only link milestones on the same planning scale.'
+          : `${conflict.violations.length} dependency constraints were violated, including scale mismatch.`
+        : conflict.violations.length === 1
+          ? 'A predecessor milestone must finish before its successor starts.'
+          : `${conflict.violations.length} dependency constraints were violated.`,
       actions: 'dependency',
       dependencyIds: depIds,
       milestoneIds,
@@ -2602,7 +2625,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }, [])
 
   const handleTimeZoomChange = useCallback(nextZoom => {
-    if (!TIME_ZOOM_BY_VALUE[nextZoom]) return
+    nextZoom = normalizeTimeZoom(nextZoom)
     const prevZoom = timeZoomRef.current
     if (nextZoom === prevZoom) return
     const sp = spacingRef.current
@@ -2674,7 +2697,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   // ── Milestone CRUD ─────────────────────────────────────────────────────────
   const handleCreateMilestone = useCallback(async (noteId, startCol, color) => {
     clearWarningPrompt()
-    const duration = Math.max(MIN_MILESTONE_DURATION, getZoomUnit(timeZoomRef.current))
+    const duration = timeZoomRef.current === 'minutes'
+      ? MIN_MILESTONE_DURATION
+      : Math.max(MIN_MILESTONE_DURATION, getZoomUnit(timeZoomRef.current))
     const ms = { id: newClientId('ms'), noteId, startCol, duration, title: '', color: color || '#1a73e8' }
     const dl = deadlinesRef.current.find(d => d.noteId === noteId)
     if (startCol < 0 || (dl && startCol + duration > dl.col)) {
@@ -3156,8 +3181,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const toMs   = milestonesRef.current.find(m => m.id === toId)
     if (fromMs && toMs && !areDurationLevelsCompatible(fromMs.duration, toMs.duration)) {
       showWarningPrompt({
-        title: 'Incompatible time scales',
-        message: `Dependencies can only link milestones at compatible time scales. ${durationScaleBucket(fromMs.duration)}-level and ${durationScaleBucket(toMs.duration)}-level milestones cannot be linked.`,
+        title: 'Scale mismatch',
+        message: `Dependencies can only link milestones on the same planning scale. ${durationScaleBucket(fromMs.duration)}-scale and ${durationScaleBucket(toMs.duration)}-scale milestones cannot be linked.`,
         actions: 'close',
       })
       return
@@ -3526,7 +3551,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     restoringColorRef.current = nextColorDimId !== colorDimId
 
     if (state.spacing) setSpacing({ ...DEFAULT_SPACING, ...state.spacing })
-    if (TIME_ZOOM_BY_VALUE[state.timeZoom]) setTimeZoom(state.timeZoom)
+    if (state.timeZoom) setTimeZoom(normalizeTimeZoom(state.timeZoom))
     if (state.axisMode) setAxisMode(state.axisMode)
     if (typeof state.showDepLabels === 'boolean') setShowDepLabels(state.showDepLabels)
     if (typeof state.showDeps === 'boolean') setShowDeps(state.showDeps)
@@ -3574,7 +3599,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     restoringColorRef.current = nextColorDimId !== colorDimId
 
     if (state.spacing) setSpacing({ ...DEFAULT_SPACING, ...state.spacing })
-    if (TIME_ZOOM_BY_VALUE[state.timeZoom]) setTimeZoom(state.timeZoom)
+    if (state.timeZoom) setTimeZoom(normalizeTimeZoom(state.timeZoom))
     if (state.axisMode) setAxisMode(state.axisMode)
     if (typeof state.showDepLabels === 'boolean') setShowDepLabels(state.showDepLabels)
     if (typeof state.showDeps === 'boolean') setShowDeps(state.showDeps)
@@ -3778,17 +3803,28 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const startCol = Math.max(0,         Math.floor(scrollLeft / colW) - COL_BUF)
   const endCol   = Math.min(totalCols, Math.ceil((scrollLeft + vpSize.w) / colW) + COL_BUF)
   const visCols  = Array.from({ length: Math.max(0, endCol - startCol) }, (_, i) => startCol + i)
-  const visibleMonthSegments = ['minutes', 'hours', 'days', 'weeks'].includes(timeZoom) ? buildAxisSegments(
+  const visibleMonthSegments = timeZoom === 'minutes' ? buildAxisSegments(
+    visCols,
+    col => minuteToDate(zoomColToMinute(col, timeZoom)),
+    date => `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`,
+    dayBandLabel
+  ) : timeZoom === 'months' ? buildAxisSegments(
+    visCols,
+    col => minuteToDate(zoomColToMinute(col, timeZoom)),
+    date => `${date.getFullYear()}`,
+    date => `${date.getFullYear()}`
+  ) : timeZoom === 'days' ? buildAxisSegments(
     visCols,
     col => minuteToDate(zoomColToMinute(col, timeZoom)),
     date => `${date.getFullYear()}-${date.getMonth()}`,
     date => `${MONTH_ABR[date.getMonth()]} ${date.getFullYear()}`
-  ) : timeZoom === 'months' ? buildColSegments(
-    visCols,
-    col => Math.floor(col / 12),
-    col => `Year ${Math.floor(col / 12) + 1}`
   ) : null
-  const visibleWeekSegments = ['minutes', 'hours', 'days'].includes(timeZoom) ? buildAxisSegments(
+  const visibleWeekSegments = timeZoom === 'minutes' ? buildAxisSegments(
+    visCols,
+    col => minuteToDate(zoomColToMinute(col, timeZoom)),
+    date => `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}-${date.getHours()}`,
+    hourBandLabel
+  ) : timeZoom === 'days' ? buildAxisSegments(
     visCols,
     col => minuteToDate(zoomColToMinute(col, timeZoom)),
     date => {
@@ -3796,11 +3832,19 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       return `${year}-${week}`
     },
     date => `KW ${isoWeekInfo(date).week}`
-  ) : timeZoom === 'weeks' ? buildColSegments(
-    visCols,
-    col => Math.floor(col / 4),
-    col => `Mo ${Math.floor(col / 4) + 1}`
   ) : null
+  const visibleDayCuts = timeZoom === 'minutes'
+    ? visCols.filter(col => col > 0 && zoomColToMinute(col, timeZoom) % (60 * 24) === 0)
+    : []
+  const visibleMonthCuts = timeZoom === 'days'
+    ? visCols.filter(col => {
+        if (col <= 0) return false
+        const date = minuteToDate(zoomColToMinute(col, timeZoom))
+        const prev = minuteToDate(zoomColToMinute(col - 1, timeZoom))
+        return date.getMonth() !== prev.getMonth() || date.getFullYear() !== prev.getFullYear()
+      })
+    : []
+  const axisLabelVertical = timeZoom === 'months' && colW < 58
 
   const bufH    = ROW_BUF * rowH
   const visItems = rowItems.filter(r => r.top + r.height >= scrollTop - bufH && r.top <= scrollTop + vpSize.h + bufH)
@@ -4106,12 +4150,23 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                   const isToday = ci === 0
                   const date = minuteToDate(zoomColToMinute(ci, timeZoom))
                   const isWeekend = timeZoom === 'days' && (() => { const dow = date.getDay(); return dow === 0 || dow === 6 })()
+                  const isDayCut = timeZoom === 'minutes' && ci > 0 && zoomColToMinute(ci, timeZoom) % (60 * 24) === 0
+                  const isMonthCut = timeZoom === 'days' && ci > 0 && (() => {
+                    const prev = minuteToDate(zoomColToMinute(ci - 1, timeZoom))
+                    return date.getMonth() !== prev.getMonth() || date.getFullYear() !== prev.getFullYear()
+                  })()
                   return (
                     <div key={ci}
-                      className={[styles.dayHeader, isToday && styles.dayHeaderToday, isWeekend && !isToday && styles.dayHeaderWeekend].filter(Boolean).join(' ')}
+                      className={[
+                        styles.dayHeader,
+                        isToday && styles.dayHeaderToday,
+                        isWeekend && !isToday && styles.dayHeaderWeekend,
+                        isDayCut && styles.dayHeaderDayCut,
+                        isMonthCut && styles.dayHeaderMonthCut,
+                      ].filter(Boolean).join(' ')}
                       style={{ left: ci * colW, width: colW }}>
-                      <span className={[styles.dayNum, isToday && styles.dayNumToday].filter(Boolean).join(' ')}>
-                        {timeZoom === 'days' ? date.getDate() : zoomColToLabel(ci, timeZoom)}
+                      <span className={[styles.dayNum, axisLabelVertical && styles.dayNumVertical, isToday && styles.dayNumToday].filter(Boolean).join(' ')}>
+                        {axisColumnLabel(ci, timeZoom)}
                       </span>
                     </div>
                   )
@@ -4132,6 +4187,12 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
             {/* Today + weekend column tints */}
             <div className={styles.todayCol} style={{ left: 0, width: colW }} />
+            {visibleDayCuts.map(ci => (
+              <div key={`day-cut-${ci}`} className={`${styles.scaleCut} ${styles.dayCut}`} style={{ left: ci * colW }} />
+            ))}
+            {visibleMonthCuts.map(ci => (
+              <div key={`month-cut-${ci}`} className={`${styles.scaleCut} ${styles.monthCut}`} style={{ left: ci * colW }} />
+            ))}
             {timeZoom === 'days' && visCols.map(ci => {
               const dow = minuteToDate(zoomColToMinute(ci, timeZoom)).getDay()
               return (dow === 0 || dow === 6)

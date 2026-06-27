@@ -17,7 +17,9 @@ from pydantic import BaseModel, Field
 
 DB_PATH = "notes.db"
 LEGACY_DB_PATH = "goals.db"
-MIN_MILESTONE_DURATION = 15
+MIN_MILESTONE_DURATION = 10
+DAY_MINUTES = 60 * 24
+MONTH_MINUTES = DAY_MINUTES * 30
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_MINUTES = 30
 REFRESH_TOKEN_DAYS = 30
@@ -886,6 +888,32 @@ def _milestone_duration_value(value) -> int:
         raise HTTPException(422, f"Milestone duration must be at least {MIN_MILESTONE_DURATION} minutes")
     return duration
 
+def _planning_scale_for_duration(duration) -> str:
+    value = max(MIN_MILESTONE_DURATION, int(duration or MIN_MILESTONE_DURATION))
+    if value >= MONTH_MINUTES:
+        return "month"
+    if value >= DAY_MINUTES:
+        return "day"
+    return "minute"
+
+def _dependency_scale_mismatch(dep: dict, milestones: dict[str, dict]) -> dict | None:
+    from_ms = milestones.get(dep["fromId"])
+    to_ms = milestones.get(dep["toId"])
+    if not from_ms or not to_ms:
+        return None
+    from_scale = _planning_scale_for_duration(from_ms["duration"])
+    to_scale = _planning_scale_for_duration(to_ms["duration"])
+    if from_scale == to_scale:
+        return None
+    return {
+        "message": "Dependency scale mismatch",
+        "type": "scale_mismatch",
+        "dependencyIds": [dep["id"]],
+        "milestoneIds": [dep["fromId"], dep["toId"]],
+        "fromScale": from_scale,
+        "toScale": to_scale,
+    }
+
 def _milestone_from_api(data: dict) -> dict:
     return {
         "id": data["id"],
@@ -1066,6 +1094,9 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
         pair = (dep["fromId"], dep["toId"])
         if pair in pairs:
             raise HTTPException(409, {"message": "Dependency already exists", "id": dep["id"]})
+        scale_mismatch = _dependency_scale_mismatch(dep, final_ms)
+        if scale_mismatch:
+            raise HTTPException(422, scale_mismatch)
         if final_ms[dep["fromId"]]["startCol"] + final_ms[dep["fromId"]]["duration"] > final_ms[dep["toId"]]["startCol"]:
             raise HTTPException(422, {
                 "message": "A predecessor milestone must finish before its successor starts",
@@ -1093,6 +1124,18 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
     for node in list(adjacency):
         if visit(node):
             raise HTTPException(422, {"message": "Dependency cycle detected"})
+
+def _is_pure_dependency_removal(before: dict, after: dict) -> bool:
+    if before["milestones"] or after["milestones"]:
+        return False
+
+    before_deps = {d["id"]: d for d in before["dependencies"]}
+    after_deps = {d["id"]: d for d in after["dependencies"]}
+    if not before_deps or not (before_deps.keys() - after_deps.keys()):
+        return False
+    if not after_deps.keys() <= before_deps.keys():
+        return False
+    return all(_json_equal(before_deps[dep_id], dep) for dep_id, dep in after_deps.items())
 
 def _apply_transaction_rows(con, before: dict, after: dict):
     before_ms = {m["id"]: m for m in before["milestones"]}
@@ -1221,7 +1264,8 @@ def _apply_transaction(con, project_id: str, transaction: TransactionPayload, re
     after = _normalize_tx_state(tx.get("after") or {})
     _assert_transaction_project_scope(con, project_id, before, after)
     _assert_before_matches(con, before, after)
-    _assert_final_state_valid(con, project_id, before, after)
+    if not _is_pure_dependency_removal(before, after):
+        _assert_final_state_valid(con, project_id, before, after)
     _apply_transaction_rows(con, before, after)
     if record_history:
         tx["before"] = before
@@ -1261,13 +1305,12 @@ def _dependency_violations_for_project(con, project_id: str) -> list[dict]:
     for row in rows:
         from_end = int(row["from_start"]) + int(row["from_duration"])
         to_start = int(row["to_start"])
-        if from_end <= to_start:
-            continue
-        violations.append({
-            "type": "dependency",
+        to_end = int(row["to_start"]) + int(row["to_duration"])
+        from_scale = _planning_scale_for_duration(row["from_duration"])
+        to_scale = _planning_scale_for_duration(row["to_duration"])
+        base = {
             "dependencyId": row["dep_id"],
             "reason": row["reason"] or "",
-            "message": "A predecessor milestone must finish before its successor starts",
             "from": {
                 "milestoneId": row["from_id"],
                 "milestoneTitle": row["from_title"] or "",
@@ -1276,6 +1319,7 @@ def _dependency_violations_for_project(con, project_id: str) -> list[dict]:
                 "startCol": row["from_start"],
                 "duration": row["from_duration"],
                 "endCol": from_end,
+                "scale": from_scale,
             },
             "to": {
                 "milestoneId": row["to_id"],
@@ -1284,10 +1328,25 @@ def _dependency_violations_for_project(con, project_id: str) -> list[dict]:
                 "noteTitle": row["to_note_title"],
                 "startCol": row["to_start"],
                 "duration": row["to_duration"],
-                "endCol": int(row["to_start"]) + int(row["to_duration"]),
+                "endCol": to_end,
+                "scale": to_scale,
             },
-            "overlapMinutes": from_end - to_start,
-        })
+        }
+        if from_scale != to_scale:
+            violations.append({
+                **base,
+                "type": "scale_mismatch",
+                "message": "Dependency scale mismatch",
+                "fromScale": from_scale,
+                "toScale": to_scale,
+            })
+        if from_end > to_start:
+            violations.append({
+                **base,
+                "type": "dependency",
+                "message": "A predecessor milestone must finish before its successor starts",
+                "overlapMinutes": from_end - to_start,
+            })
     return violations
 
 
@@ -2472,6 +2531,13 @@ def create_dependency(data: DependencyIn, user: dict = Depends(current_user)):
         if from_project_id != to_project_id:
             raise HTTPException(400, "Dependency endpoints must belong to the same project")
         assert_project_access(from_project_id, user)
+        milestones = _ms_by_id(con, {data.fromId, data.toId})
+        scale_mismatch = _dependency_scale_mismatch(
+            {"id": did, "fromId": data.fromId, "toId": data.toId},
+            milestones,
+        )
+        if scale_mismatch:
+            raise HTTPException(422, scale_mismatch)
         try:
             con.execute("INSERT INTO dependencies (id, from_id, to_id, reason) VALUES (?, ?, ?, ?)",
                         (did, data.fromId, data.toId, reason))
