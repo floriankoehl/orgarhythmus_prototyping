@@ -1996,6 +1996,7 @@
 .ctxItem:hover { background: #f5f5f5; color: #1a73e8; }
 .ctxItemDanger { color: #dc2626; }
 .ctxItemDanger:hover { background: #fef2f2; color: #dc2626; }
+.ctxReadOnly { padding: 7px 14px; font-size: 12px; color: #999; font-style: italic; }
 
 /* ── Violation highlight ─────────────────────────────────────────────────── */
 .milestoneViolation {
@@ -2144,6 +2145,22 @@
   line-height: 1.5;
 }
 .reasonInput:focus { border-color: #1a73e8; box-shadow: 0 0 0 2px rgba(26,115,232,0.15); }
+
+/* ── Earliest start marker ───────────────────────────────────────────────── */
+.earliestStartHatch {
+  position: absolute;
+  pointer-events: none;
+  border-right: 2.5px solid #f59e0b;
+  background-color: rgba(15, 23, 42, 0.12);
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent,
+    transparent 3px,
+    rgba(15, 23, 42, 0.04) 3px,
+    rgba(15, 23, 42, 0.04) 6px
+  );
+  z-index: 2;
+}
 
 /* ── Hard deadline marker ────────────────────────────────────────────────── */
 .deadlineCol {

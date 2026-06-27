@@ -209,4 +209,9 @@ export const api = {
   getDeadlines:   ()               => req('GET',    '/deadlines'),
   setDeadline:    (noteId, col, scale) => req('PUT', `/deadlines/${noteId}`, { col, scale }),
   removeDeadline: (noteId)         => req('DELETE', `/deadlines/${noteId}`),
+
+  // Earliest starts
+  getEarliestStarts:   ()               => req('GET',    '/earliest-starts'),
+  setEarliestStart:    (noteId, col, scale) => req('PUT', `/earliest-starts/${noteId}`, { col, scale }),
+  removeEarliestStart: (noteId)         => req('DELETE', `/earliest-starts/${noteId}`),
 }

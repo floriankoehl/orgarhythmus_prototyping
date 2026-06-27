@@ -97,6 +97,32 @@ function deadlineAppliesToMilestone(deadline, milestone) {
   return deadline && milestone && deadlineScaleBucket(deadline) === milestoneScaleBucket(milestone)
 }
 
+function getEarliestStartLevel(es) {
+  const scale = es?.scale
+  if (scale === 'minute' || scale === 'minutes') return 'minutes'
+  if (scale === 'day' || scale === 'days') return 'days'
+  if (scale === 'month' || scale === 'months') return 'months'
+  const col = Number(es?.col) || 0
+  if (col % (60 * 24 * 30) === 0) return 'months'
+  if (col % (60 * 24) === 0) return 'days'
+  return 'minutes'
+}
+
+function earliestStartScaleBucket(es) {
+  return durationScaleBucket(getZoomUnit(getEarliestStartLevel(es)))
+}
+
+function isEarliestStartVisibleAtZoom(es, timeZoom, scaleMode = SCALE_VISIBILITY_MODES.HIERARCHY) {
+  if (normalizeScaleVisibilityMode(scaleMode) === SCALE_VISIBILITY_MODES.ALL) return true
+  const esIdx = ZOOM_ORDER.indexOf(getEarliestStartLevel(es))
+  const currentIdx = ZOOM_ORDER.indexOf(normalizeTimeZoom(timeZoom))
+  return esIdx >= currentIdx
+}
+
+function earliestStartAppliesToMilestone(es, milestone) {
+  return es && milestone && earliestStartScaleBucket(es) === milestoneScaleBucket(milestone)
+}
+
 function noteMilestoneScaleConflict(milestones, noteId, duration, startCol = null) {
   const newScale = durationScaleBucket(duration, startCol)
   return milestones.find(m => m.noteId === noteId && milestoneScaleBucket(m) !== newScale) ?? null
@@ -910,6 +936,7 @@ function WarningSettingsPanel({
 // ── Context menu ──────────────────────────────────────────────────────────────
 function ContextMenu({
   menu, onClose, onCreate, onInsertTimeUnit, onDeleteTimeUnit, onSetDeadline, onRemoveDeadline,
+  onSetEarliestStart, onRemoveEarliestStart,
   onDeleteMilestone, onToggleMilestonePin, pinnedMilestoneId, onEditDepReason, onDeleteDep,
 }) {
   if (!menu) return null
@@ -917,7 +944,11 @@ function ContextMenu({
     <>
       <div style={{ position: 'fixed', inset: 0, zIndex: 998 }} onMouseDown={onClose} />
       <div className={styles.ctxMenu} style={{ left: menu.x, top: menu.y }}>
-        {menu.type === 'cell' && (<>
+        {menu.type === 'cell' && (menu.isReadOnly ? (
+          <div className={styles.ctxReadOnly}>
+            Switch to {menu.readOnlyLabel} view to edit this row
+          </div>
+        ) : (<>
           <button className={styles.ctxItem}
             onClick={() => { onCreate(menu.noteId, menu.col, menu.color); onClose() }}>
             Add milestone — {menu.noteTitle}
@@ -932,7 +963,17 @@ function ContextMenu({
                 Set hard deadline here
               </button>
           }
-        </>)}
+          {menu.hasEarliestStart
+            ? <button className={styles.ctxItem}
+                onClick={() => { onRemoveEarliestStart(menu.noteId); onClose() }}>
+                Remove earliest start date
+              </button>
+            : <button className={styles.ctxItem}
+                onClick={() => { onSetEarliestStart(menu.noteId, menu.col); onClose() }}>
+                Set earliest start date here
+              </button>
+          }
+        </>))}
         {menu.type === 'header' && (<>
           <button className={styles.ctxItem} onClick={() => { onInsertTimeUnit(menu.col); onClose() }}>
             Insert {menu.unitLabel || 'unit'} before
@@ -1659,6 +1700,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [milestones,   setMilestones]   = useState([])
   const [dependencies, setDependencies] = useState([])
   const [deadlines,    setDeadlines]    = useState([])
+  const [earliestStarts, setEarliestStarts] = useState([])
   const [transactionHistory, setTransactionHistory] = useState({ undo: [], redo: [] })
   const [savedFilters, setSavedFilters] = useState([])
   const [perspectives, setPerspectives] = useState([])
@@ -1688,9 +1730,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (!isActive) return
     Promise.all([
       api.getDimensions(), api.getAllCategories(), api.getAssignments(),
-      api.getMilestones(), api.getDependencies(), api.getDeadlines(), api.getFilters(), api.getSchedulePerspectives(),
+      api.getMilestones(), api.getDependencies(), api.getDeadlines(), api.getEarliestStarts(), api.getFilters(), api.getSchedulePerspectives(),
       api.getTransactionHistory(),
-    ]).then(([dims, cats, assigns, mss, deps, dls, filters, loadedPerspectives, history]) => {
+    ]).then(([dims, cats, assigns, mss, deps, dls, ess, filters, loadedPerspectives, history]) => {
       setDimensions(dims); setCategories(cats)
       setSavedFilters(filters)
       setPerspectives(loadedPerspectives.map(normalizePerspective))
@@ -1698,6 +1740,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       setMilestones(mss)
       setDependencies(deps)
       setDeadlines(dls)
+      setEarliestStarts(ess)
       setTransactionHistory(history)
     }).catch(console.error)
   }, [isActive])
@@ -2047,6 +2090,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const depPathElsRef   = useRef(new Map())      // dependency id -> SVG path element
   const dependenciesRef = useRef([])
   const deadlinesRef    = useRef([])
+  const earliestStartsRef = useRef([])
   const modeRef         = useRef('milestone')
   const milestoneScaleFilterRef = useRef(SCALE_VISIBILITY_MODES.HIERARCHY)
 
@@ -2055,8 +2099,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   timeZoomRef.current      = timeZoom
   totalColsRef.current     = totalCols
   dependenciesRef.current  = dependencies
-  deadlinesRef.current     = deadlines
-  modeRef.current          = mode
+  deadlinesRef.current       = deadlines
+  earliestStartsRef.current  = earliestStarts
+  modeRef.current            = mode
   milestoneScaleFilterRef.current = normalizeScaleVisibilityMode(milestoneScaleFilter)
 
   const visualRangeFor = useCallback(item => getRenderedVisualRange(item, timeZoomRef.current, milestoneScaleFilterRef.current), [])
@@ -2581,6 +2626,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     })
   }, [showWarningPrompt])
 
+  const reportEarliestStartViolation = useCallback(() => {
+    showWarningPrompt({
+      title: 'Earliest start date',
+      message: "Milestones cannot start before the row's earliest start date.",
+      actions: 'close',
+    })
+  }, [showWarningPrompt])
+
   const reportDependencyViolations = useCallback((violations, allMilestones = milestonesRef.current, allDependencies = dependenciesRef.current) => {
     const conflict = getCascadingDependencyConflict(allMilestones, allDependencies, violations)
     const depIds = conflict.depIds
@@ -2828,6 +2881,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     return { type: 'cell', col, visualCol, noteId: item.note.id, noteTitle: item.note.title, color }
   }, [visualColToMinute])
 
+  const isNoteRowReadOnly = useCallback((noteId) => {
+    const ms = milestonesRef.current.find(m => m.noteId === noteId)
+    return !!ms && !isMilestoneEditableAtZoom(ms.duration, timeZoomRef.current, ms.startCol)
+  }, [])
+
   const handleContextMenu = useCallback(e => {
     e.preventDefault()
     const cell = getNoteCellFromPointer(e)
@@ -2841,8 +2899,13 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (e.target.closest('[data-ms-id]')) return  // right-click on milestone — skip for now
 
     const hasDeadline = deadlinesRef.current.some(d => d.noteId === cell.noteId)
+    const hasEarliestStart = earliestStartsRef.current.some(e => e.noteId === cell.noteId)
+    const readOnly = isNoteRowReadOnly(cell.noteId)
+    const rowMs = readOnly ? milestonesRef.current.find(m => m.noteId === cell.noteId) : null
+    const readOnlyLabel = rowMs ? scaleLabelForZoom(getMilestoneLevel(rowMs.duration, rowMs.startCol)) : null
     setContextMenu({ type: 'cell', x: e.clientX, y: e.clientY, col: cell.col,
-      noteId: cell.noteId, noteTitle: cell.noteTitle, color: cell.color, hasDeadline })
+      noteId: cell.noteId, noteTitle: cell.noteTitle, color: cell.color, hasDeadline, hasEarliestStart,
+      isReadOnly: readOnly, readOnlyLabel })
   }, [getNoteCellFromPointer])
 
   // ── Milestone CRUD ─────────────────────────────────────────────────────────
@@ -2860,6 +2923,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       return
     }
     const dl = deadlinesRef.current.find(d => d.noteId === noteId)
+    const es = earliestStartsRef.current.find(e => e.noteId === noteId)
+    if (earliestStartAppliesToMilestone(es, ms) && startCol < es.col) {
+      reportEarliestStartViolation()
+      return
+    }
     if (startCol < 0 || (deadlineAppliesToMilestone(dl, ms) && startCol + duration > dl.col)) {
       reportDeadlineViolation()
       return
@@ -2883,9 +2951,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (e.target.closest('[data-ms-id]')) return
     const cell = getNoteCellFromPointer(e)
     if (!cell || cell.type !== 'cell') return
+    if (isNoteRowReadOnly(cell.noteId)) return
     e.preventDefault()
     handleCreateMilestone(cell.noteId, cell.col, cell.color)
-  }, [getNoteCellFromPointer, handleCreateMilestone])
+  }, [getNoteCellFromPointer, handleCreateMilestone, isNoteRowReadOnly])
 
   // ── Column insert / delete ─────────────────────────────────────────────────
   const handleInsertTimeUnit = useCallback(async col => {
@@ -2990,24 +3059,34 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const getBounds = () => {
       let minDelta = -Infinity
       let maxDelta = Infinity
+      let minDeltaFromEarliest = -Infinity
       Object.entries(originals).forEach(([id, orig]) => {
+        const ms = milestonesRef.current.find(m => m.id === id)
+        const dl = deadlinesRef.current.find(d => d.noteId === ms?.noteId)
+        const es = earliestStartsRef.current.find(e => e.noteId === ms?.noteId)
         if (isMonthMove) {
           const startVisual = minuteToZoomCol(orig.startCol, 'months')
           const span = calendarMonthSpanForRange(orig.startCol, orig.duration)
           minDelta = Math.max(minDelta, -startVisual)
-          const ms = milestonesRef.current.find(m => m.id === id)
-          const dl = deadlinesRef.current.find(d => d.noteId === ms?.noteId)
           if (deadlineAppliesToMilestone(dl, ms)) {
             maxDelta = Math.min(maxDelta, minuteToZoomCol(dl.col, 'months') - span - startVisual)
+          }
+          if (earliestStartAppliesToMilestone(es, ms)) {
+            const esD = minuteToZoomCol(es.col, 'months') - startVisual
+            minDelta = Math.max(minDelta, esD)
+            minDeltaFromEarliest = Math.max(minDeltaFromEarliest, esD)
           }
           return
         }
         minDelta = Math.max(minDelta, -orig.startCol)
-        const ms = milestonesRef.current.find(m => m.id === id)
-        const dl = deadlinesRef.current.find(d => d.noteId === ms?.noteId)
         if (deadlineAppliesToMilestone(dl, ms)) maxDelta = Math.min(maxDelta, dl.col - orig.duration - orig.startCol)
+        if (earliestStartAppliesToMilestone(es, ms)) {
+          const esD = es.col - orig.startCol
+          minDelta = Math.max(minDelta, esD)
+          minDeltaFromEarliest = Math.max(minDeltaFromEarliest, esD)
+        }
       })
-      return { minDelta, maxDelta }
+      return { minDelta, maxDelta, minDeltaFromEarliest }
     }
 
     const getSnappedColDelta = clientX => {
@@ -3019,9 +3098,20 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       let colDelta = isMonthMove
         ? requestedVisual - firstVisualStart
         : (requestedVisual - firstVisualStart) * getZoomUnit(timeZoomRef.current)
-      const { minDelta, maxDelta } = getBounds()
+      const { minDelta, maxDelta, minDeltaFromEarliest } = getBounds()
       const clamped = Math.max(minDelta, Math.min(maxDelta, colDelta))
-      if (dragRef.current && clamped !== colDelta) dragRef.current.hitBoundary = true
+      if (dragRef.current && clamped !== colDelta) {
+        if (colDelta > maxDelta) {
+          dragRef.current.hitBoundary = true
+        } else {
+          // Left boundary hit — earliest start or today
+          if (minDeltaFromEarliest > -Infinity && colDelta < minDeltaFromEarliest) {
+            dragRef.current.hitEarliestBoundary = true
+          } else {
+            dragRef.current.hitBoundary = true
+          }
+        }
+      }
       return clamped
     }
 
@@ -3050,6 +3140,13 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
             : minuteToZoomCol(Math.max(0, dl.col - orig.duration), timeZoomRef.current)
           dx = Math.min(dx, (maxVisual - origVisual.startCol) * sp.colW)
         }
+        const es = earliestStartsRef.current.find(e => e.noteId === ms?.noteId)
+        if (earliestStartAppliesToMilestone(es, ms)) {
+          const esMinVisual = isMonthMove
+            ? minuteToZoomCol(es.col, 'months')
+            : minuteToZoomCol(es.col, timeZoomRef.current)
+          dx = Math.max(dx, (esMinVisual - origVisual.startCol) * sp.colW)
+        }
       })
       return dx
     }
@@ -3075,7 +3172,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       document.removeEventListener('mouseup', onUp)
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
-      const { hasMoved, hitBoundary } = dragRef.current || {}
+      const { hasMoved, hitBoundary, hitEarliestBoundary } = dragRef.current || {}
       dragRef.current = null
       const resetToOriginal = () => {
         Object.entries(originals).forEach(([id, orig]) => {
@@ -3095,6 +3192,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         return
       }
       if (hitBoundary) reportDeadlineViolation()
+      if (hitEarliestBoundary) reportEarliestStartViolation()
       const updates = []
       const next = milestonesRef.current.map(m => {
         if (!originals[m.id]) return m
@@ -3167,6 +3265,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       const dx = clientX - startMouseX
       const dl = deadlinesRef.current.find(d => d.noteId === ms.noteId)
       const maxRight = deadlineAppliesToMilestone(dl, ms) ? dl.col : Infinity
+      const esResize = earliestStartsRef.current.find(e => e.noteId === ms.noteId)
       const isMonthResize = normalizeTimeZoom(timeZoomRef.current) === 'months'
       if (side === 'left') {
         const origVisualStart = minuteToZoomCol(origStart, timeZoomRef.current)
@@ -3174,8 +3273,12 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         const requested = isMonthResize ? zoomColToMinute(requestedVisual, 'months') : requestedVisual * getZoomUnit(timeZoomRef.current)
         const minRightVisual = minuteEndToZoomCol(origRight, timeZoomRef.current) - 1
         const maxLeft = isMonthResize ? zoomColToMinute(minRightVisual, 'months') : origRight - MIN_MILESTONE_DURATION
-        const leftCol = Math.min(maxLeft, Math.max(0, requested))
-        if (dragRef.current && leftCol !== requested) dragRef.current.hitBoundary = true
+        const esMinLeft = earliestStartAppliesToMilestone(esResize, ms) ? esResize.col : 0
+        const leftCol = Math.min(maxLeft, Math.max(esMinLeft, requested))
+        if (dragRef.current && leftCol !== requested) {
+          if (esMinLeft > 0 && requested < esMinLeft) dragRef.current.hitEarliestBoundary = true
+          else dragRef.current.hitBoundary = true
+        }
         return { startCol: leftCol, duration: origRight - leftCol }
       }
       const origVisualRight = minuteEndToZoomCol(origRight, timeZoomRef.current)
@@ -3244,6 +3347,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         return
       }
       if (dragState.hitBoundary) reportDeadlineViolation()
+      if (dragState.hitEarliestBoundary) reportEarliestStartViolation()
       const changed = newStart !== origStart || newDur !== origDur
       const nextAll = milestonesRef.current.map(m => m.id === milestoneId ? { ...m, startCol: newStart, duration: newDur } : m)
       if (changed) {
@@ -3571,6 +3675,25 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     try {
       await api.removeDeadline(noteId)
       setDeadlines(prev => prev.filter(d => d.noteId !== noteId))
+    } catch (err) { console.error(err) }
+  }, [])
+
+  const handleSetEarliestStart = useCallback(async (noteId, col) => {
+    try {
+      const scale = planningScaleForZoom(timeZoomRef.current)
+      const alignedCol = zoomColToMinute(minuteToZoomCol(col, timeZoomRef.current), timeZoomRef.current)
+      const es = await api.setEarliestStart(noteId, alignedCol, scale)
+      setEarliestStarts(prev => { const next = prev.filter(e => e.noteId !== noteId); return [...next, es] })
+    } catch (err) {
+      console.error(err)
+      showWarningPrompt({ title: 'Earliest start date', message: err.message || 'Earliest start date could not be set for this planning scale.', actions: 'close' })
+    }
+  }, [showWarningPrompt])
+
+  const handleRemoveEarliestStart = useCallback(async noteId => {
+    try {
+      await api.removeEarliestStart(noteId)
+      setEarliestStarts(prev => prev.filter(e => e.noteId !== noteId))
     } catch (err) { console.error(err) }
   }, [])
 
@@ -4447,6 +4570,20 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
               return null
             })}
 
+            {/* Earliest start markers */}
+            {earliestStarts.map(es => {
+              const row = noteRowMap[es.noteId]; if (!row) return null
+              if (!isEarliestStartVisibleAtZoom(es, timeZoom, scaleVisibilityMode)) return null
+              const visualCol = proportionalMilestones
+                ? minuteToZoomColExact(es.col, timeZoom)
+                : minuteToZoomCol(es.col, timeZoom)
+              const hatchWidth = Math.max(0, visualCol) * colW
+              return hatchWidth > 0 ? (
+                <div key={`es-${es.noteId}`} className={styles.earliestStartHatch}
+                  style={{ left: 0, top: HEADER_H + row.top, width: hatchWidth, height: row.height }} />
+              ) : null
+            })}
+
             {/* Hard deadline markers */}
             {deadlines.map(dl => {
               const row = noteRowMap[dl.noteId]; if (!row) return null
@@ -4718,6 +4855,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         onDeleteTimeUnit={handleDeleteTimeUnit}
         onSetDeadline={handleSetDeadline}
         onRemoveDeadline={handleRemoveDeadline}
+        onSetEarliestStart={handleSetEarliestStart}
+        onRemoveEarliestStart={handleRemoveEarliestStart}
         onDeleteMilestone={handleDeleteMilestoneRequest}
         onToggleMilestonePin={handleToggleMilestonePin}
         pinnedMilestoneId={pinnedMilestoneId}

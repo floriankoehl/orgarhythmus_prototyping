@@ -186,6 +186,14 @@ def _init_db():
             )
         """)
         con.execute("""
+            CREATE TABLE IF NOT EXISTS earliest_starts (
+                id      TEXT PRIMARY KEY,
+                note_id TEXT NOT NULL UNIQUE,
+                col     INTEGER NOT NULL,
+                scale   TEXT NOT NULL DEFAULT 'day'
+            )
+        """)
+        con.execute("""
             CREATE TABLE IF NOT EXISTS saved_filters (
                 id              TEXT PRIMARY KEY,
                 project_id      TEXT NOT NULL DEFAULT 'default',
@@ -771,6 +779,10 @@ def _dl(row) -> dict:
     d = dict(row)
     return {"id": d["id"], "noteId": d["note_id"], "col": d["col"], "scale": _normalize_planning_scale(d.get("scale"), d["col"])}
 
+def _es(row) -> dict:
+    d = dict(row)
+    return {"id": d["id"], "noteId": d["note_id"], "col": d["col"], "scale": _normalize_planning_scale(d.get("scale"), d["col"])}
+
 def _filter(row) -> dict:
     d = dict(row)
     try:
@@ -916,16 +928,6 @@ def _planning_scale_for_duration(duration) -> str:
 
 def _timeline_start_date() -> datetime:
     return datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-
-def _add_calendar_months(date: datetime, months: int) -> datetime:
-    year = date.year + (date.month - 1 + months) // 12
-    month = (date.month - 1 + months) % 12 + 1
-    if month == 12:
-        next_month = datetime(year + 1, 1, 1)
-    else:
-        next_month = datetime(year, month + 1, 1)
-    last_day = (next_month - timedelta(days=1)).day
-    return date.replace(year=year, month=month, day=min(date.day, last_day))
 
 def _calendar_month_boundary_minute(col: int) -> int:
     today = _timeline_start_date()
@@ -1259,6 +1261,26 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
             and milestone["startCol"] + milestone["duration"] > deadline["col"]
         ):
             raise HTTPException(422, {"message": "Milestone exceeds hard deadline", "type": "deadline", "id": milestone["id"]})
+
+    earliest_starts = {
+        row["note_id"]: {"col": row["col"], "scale": _normalize_planning_scale(row["scale"], row["col"])}
+        for row in con.execute(
+            """
+            SELECT es.note_id, es.col, es.scale FROM earliest_starts es
+            JOIN notes n ON n.id = es.note_id
+            WHERE n.project_id = ?
+            """,
+            (project_id,),
+        ).fetchall()
+    }
+    for milestone in final_ms.values():
+        es = earliest_starts.get(milestone["noteId"])
+        if (
+            es is not None
+            and _planning_scale_for_milestone(milestone) == es["scale"]
+            and milestone["startCol"] < es["col"]
+        ):
+            raise HTTPException(422, {"message": "Milestone violates earliest start date", "type": "earliest_start", "id": milestone["id"]})
 
     pairs = set()
     adjacency = {}
@@ -1782,6 +1804,7 @@ def delete_project(project_id: str, user: dict = Depends(current_user)):
                 con.execute(f"DELETE FROM persona_milestone_assignments WHERE milestone_id IN ({mph})", ms_ids)
                 con.execute(f"DELETE FROM milestones WHERE id IN ({mph})", ms_ids)
             con.execute(f"DELETE FROM deadlines WHERE note_id IN ({ph})", note_ids)
+            con.execute(f"DELETE FROM earliest_starts WHERE note_id IN ({ph})", note_ids)
             con.execute(f"DELETE FROM assignments WHERE note_id IN ({ph})", note_ids)
             con.execute(f"DELETE FROM notes WHERE id IN ({ph})", note_ids)
         # Cascade: dimensions → categories → assignments
@@ -2805,6 +2828,13 @@ def set_deadline(note_id: str, data: DeadlineColIn, user: dict = Depends(current
             "SELECT * FROM milestones WHERE note_id = ?",
             (note_id,),
         ).fetchall()
+        ms_scales = {_planning_scale_for_milestone(_ms(row)) for row in blocking}
+        if ms_scales and scale not in ms_scales:
+            row_scale = next(iter(ms_scales))
+            raise HTTPException(422, {
+                "message": f"This row contains {row_scale}-scale milestones. Switch to the {row_scale} view to set a deadline here.",
+                "type": "deadline_scale_mismatch",
+            })
         for row in blocking:
             milestone = _ms(row)
             if (
@@ -2830,6 +2860,61 @@ def remove_deadline(note_id: str, user: dict = Depends(current_user)):
     with _db() as con:
         assert_project_access(_project_id_for_note(con, note_id), user)
         con.execute("DELETE FROM deadlines WHERE note_id = ?", (note_id,))
+
+
+# ── Earliest starts ────────────────────────────────────────────────────────────
+@app.get("/earliest-starts")
+def list_earliest_starts(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    with _db() as con:
+        rows = con.execute(
+            "SELECT * FROM earliest_starts WHERE note_id IN (SELECT id FROM notes WHERE project_id = ?)",
+            (project_id,)
+        ).fetchall()
+    return [_es(r) for r in rows]
+
+@app.put("/earliest-starts/{note_id}")
+def set_earliest_start(note_id: str, data: DeadlineColIn, user: dict = Depends(current_user)):
+    scale = _normalize_planning_scale(data.scale, data.col)
+    _assert_scale_aligned_col(data.col, scale, "Earliest start")
+    with _db() as con:
+        assert_project_access(_project_id_for_note(con, note_id), user)
+        blocking = con.execute(
+            "SELECT * FROM milestones WHERE note_id = ?",
+            (note_id,),
+        ).fetchall()
+        ms_scales = {_planning_scale_for_milestone(_ms(row)) for row in blocking}
+        if ms_scales and scale not in ms_scales:
+            row_scale = next(iter(ms_scales))
+            raise HTTPException(422, {
+                "message": f"This row contains {row_scale}-scale milestones. Switch to the {row_scale} view to set an earliest start here.",
+                "type": "earliest_start_scale_mismatch",
+            })
+        for row in blocking:
+            milestone = _ms(row)
+            if (
+                _planning_scale_for_milestone(milestone) == scale
+                and milestone["startCol"] < data.col
+            ):
+                raise HTTPException(422, {
+                    "message": "Earliest start date would conflict with an existing milestone that starts before it",
+                    "type": "earliest_start",
+                    "id": milestone["id"],
+                })
+        existing = con.execute("SELECT id FROM earliest_starts WHERE note_id = ?", (note_id,)).fetchone()
+        if existing:
+            con.execute("UPDATE earliest_starts SET col = ?, scale = ? WHERE note_id = ?", (data.col, scale, note_id))
+        else:
+            eid = str(uuid.uuid4())
+            con.execute("INSERT INTO earliest_starts (id, note_id, col, scale) VALUES (?, ?, ?, ?)", (eid, note_id, data.col, scale))
+        row = con.execute("SELECT * FROM earliest_starts WHERE note_id = ?", (note_id,)).fetchone()
+    return _es(row)
+
+@app.delete("/earliest-starts/{note_id}", status_code=204)
+def remove_earliest_start(note_id: str, user: dict = Depends(current_user)):
+    with _db() as con:
+        assert_project_access(_project_id_for_note(con, note_id), user)
+        con.execute("DELETE FROM earliest_starts WHERE note_id = ?", (note_id,))
 
 
 # ── Project export ─────────────────────────────────────────────────────────────
