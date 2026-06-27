@@ -165,7 +165,12 @@ export default function ProjectsPage({ onOpenProject, currentUser, onLogout }) {
       </div>
 
       <div className={styles.content}>
-        <h1 className={styles.title}>Projects</h1>
+        <div className={styles.contentHeader}>
+          <h1 className={styles.title}>Projects</h1>
+          <button className={styles.createBtn} type="button" onClick={() => setCreating(true)}>
+            Create project
+          </button>
+        </div>
         {loading ? (
           <div className={styles.empty}>Loading…</div>
         ) : projects.length === 0 ? (

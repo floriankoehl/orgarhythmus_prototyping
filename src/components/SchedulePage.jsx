@@ -29,6 +29,10 @@ const TIME_ZOOM_LEVELS = [
 const TIME_ZOOM_BY_VALUE = Object.fromEntries(TIME_ZOOM_LEVELS.map(level => [level.value, level]))
 const DEFAULT_TIME_ZOOM = 'days'
 const ZOOM_ORDER = TIME_ZOOM_LEVELS.map(l => l.value)
+const SCALE_VISIBILITY_MODES = {
+  HIERARCHY: 'hierarchy',
+  ALL: 'all',
+}
 
 function normalizeTimeZoom(value) {
   if (value === 'hours') return 'minutes'
@@ -43,12 +47,15 @@ function getMilestoneLevel(duration) {
   return 'minutes'
 }
 
-function isMilestoneVisibleAtZoom(duration, timeZoom, scaleFilter) {
-  if (scaleFilter === 'all') return true
+function normalizeScaleVisibilityMode(value) {
+  return value === SCALE_VISIBILITY_MODES.ALL ? SCALE_VISIBILITY_MODES.ALL : SCALE_VISIBILITY_MODES.HIERARCHY
+}
+
+function isMilestoneVisibleAtZoom(duration, timeZoom, scaleMode = SCALE_VISIBILITY_MODES.HIERARCHY) {
+  if (normalizeScaleVisibilityMode(scaleMode) === SCALE_VISIBILITY_MODES.ALL) return true
   const msIdx      = ZOOM_ORDER.indexOf(getMilestoneLevel(duration))
   const currentIdx = ZOOM_ORDER.indexOf(timeZoom)
-  if (scaleFilter === 'strict') return msIdx === currentIdx
-  return Math.abs(msIdx - currentIdx) <= 1
+  return msIdx >= currentIdx
 }
 const MIN_MILESTONE_DURATION = 10
 const DEFAULT_WARNING_SETTINGS = {
@@ -108,12 +115,22 @@ function minuteEndToZoomCol(minute, timeZoom) {
   return Math.ceil(Math.max(0, Number(minute) || 0) / getZoomUnit(timeZoom))
 }
 
-function getVisualRange(item, timeZoom) {
+function getVisualRange(item, timeZoom, proportional = false) {
   const start = Math.max(0, Number(item.startCol) || 0)
   const end = start + Math.max(MIN_MILESTONE_DURATION, Number(item.duration) || MIN_MILESTONE_DURATION)
+  if (proportional) {
+    const unit = getZoomUnit(timeZoom)
+    const startCol = start / unit
+    const endCol = end / unit
+    return { startCol, endCol, duration: Math.max(0, endCol - startCol), proportional: true }
+  }
   const startCol = minuteToZoomCol(start, timeZoom)
   const endCol = Math.max(startCol + 1, minuteEndToZoomCol(end, timeZoom))
   return { startCol, endCol, duration: endCol - startCol }
+}
+
+function getRenderedVisualRange(item, timeZoom, scaleMode) {
+  return getVisualRange(item, timeZoom, normalizeScaleVisibilityMode(scaleMode) === SCALE_VISIBILITY_MODES.ALL)
 }
 
 function minuteToLabel(minute, timeZoom) {
@@ -553,11 +570,19 @@ function SpacingPanel({
         </div>
       </div>
       <div className={styles.axisModeRow}>
-        <span className={styles.spacingLabel}>Scale</span>
+        <span className={`${styles.spacingLabel} ${styles.scaleHelpAnchor}`} tabIndex={0}>
+          Scale
+          <span className={styles.scaleHelpPopover}>
+            <strong>Focused</strong> keeps the view readable by showing the current planning scale and broader milestones only: minute view shows all, day view shows day and month, and month view shows month milestones. <strong>Everything</strong> shows every milestone and dependency. In that mode, milestones use their true proportional position and duration instead of being rounded up to a full visible column, so a 10 minute milestone in month view may become only a tiny mark.
+          </span>
+        </span>
         <div className={styles.axisModePills}>
-          {[['adaptive', '±1 level'], ['all', 'All'], ['strict', 'Exact']].map(([val, label]) => (
+          {[
+            [SCALE_VISIBILITY_MODES.HIERARCHY, 'Focused'],
+            [SCALE_VISIBILITY_MODES.ALL, 'Everything'],
+          ].map(([val, label]) => (
             <button key={val}
-              className={`${styles.axisModePill} ${milestoneScaleFilter === val ? styles.axisModePillActive : ''}`}
+              className={`${styles.axisModePill} ${normalizeScaleVisibilityMode(milestoneScaleFilter) === val ? styles.axisModePillActive : ''}`}
               onClick={() => onMilestoneScaleFilterChange(val)}>
               {label}
             </button>
@@ -1569,7 +1594,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [hideCrossCatDeps, setHideCrossCatDeps] = useState(false)
   const [showCrucialDepsOnly, setShowCrucialDepsOnly] = useState(false)
   const [colorDependencyDirection, setColorDependencyDirection] = useState(false)
-  const [milestoneScaleFilter, setMilestoneScaleFilter] = useState('adaptive')
+  const [milestoneScaleFilter, setMilestoneScaleFilter] = useState(SCALE_VISIBILITY_MODES.HIERARCHY)
   const [reasonModal, setReasonModal] = useState(null)   // null | { depId }
   const [reasonDraft, setReasonDraft] = useState('')
   const reasonInputRef = useRef()
@@ -1686,7 +1711,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         hideCrossCatDeps: false,
         showCrucialDepsOnly: false,
         colorDependencyDirection: false,
-        milestoneScaleFilter: 'adaptive',
+        milestoneScaleFilter: SCALE_VISIBILITY_MODES.HIERARCHY,
         leftPanelWidth: 220,
         group: { activeDimId: '', activeLaneFilterId: '' },
         collapsedCategories: [],
@@ -1899,6 +1924,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const dependenciesRef = useRef([])
   const deadlinesRef    = useRef([])
   const modeRef         = useRef('milestone')
+  const milestoneScaleFilterRef = useRef(SCALE_VISIBILITY_MODES.HIERARCHY)
 
   // Keep imperative refs in sync with state (assigned synchronously in render)
   spacingRef.current       = spacing
@@ -1907,8 +1933,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   dependenciesRef.current  = dependencies
   deadlinesRef.current     = deadlines
   modeRef.current          = mode
+  milestoneScaleFilterRef.current = normalizeScaleVisibilityMode(milestoneScaleFilter)
 
-  const visualRangeFor = useCallback(item => getVisualRange(item, timeZoomRef.current), [])
+  const visualRangeFor = useCallback(item => getRenderedVisualRange(item, timeZoomRef.current, milestoneScaleFilterRef.current), [])
   const visualColToMinute = useCallback(col => zoomColToMinute(col, timeZoomRef.current), [])
   const minuteLabel = useCallback(minute => minuteToLabel(minute, timeZoomRef.current), [])
 
@@ -3559,7 +3586,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (typeof state.showCrucialDepsOnly === 'boolean') setShowCrucialDepsOnly(state.showCrucialDepsOnly)
     if (typeof state.colorDependencyDirection === 'boolean') setColorDependencyDirection(state.colorDependencyDirection)
     if (typeof state.leftPanelWidth === 'number') setLeftPanelWidth(Math.max(120, Math.min(600, state.leftPanelWidth)))
-    if (['adaptive', 'all', 'strict'].includes(state.milestoneScaleFilter)) setMilestoneScaleFilter(state.milestoneScaleFilter)
+    if (state.milestoneScaleFilter) setMilestoneScaleFilter(normalizeScaleVisibilityMode(state.milestoneScaleFilter))
 
     setActiveDimId(nextActiveDimId)
     setActiveLaneFilterId(nextActiveLaneFilterId)
@@ -3607,7 +3634,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (typeof state.showCrucialDepsOnly === 'boolean') setShowCrucialDepsOnly(state.showCrucialDepsOnly)
     if (typeof state.colorDependencyDirection === 'boolean') setColorDependencyDirection(state.colorDependencyDirection)
     if (typeof state.leftPanelWidth === 'number') setLeftPanelWidth(Math.max(120, Math.min(600, state.leftPanelWidth)))
-    if (['adaptive', 'all', 'strict'].includes(state.milestoneScaleFilter)) setMilestoneScaleFilter(state.milestoneScaleFilter)
+    if (state.milestoneScaleFilter) setMilestoneScaleFilter(normalizeScaleVisibilityMode(state.milestoneScaleFilter))
 
     setActiveDimId(nextActiveDimId)
     setActiveLaneFilterId(nextActiveLaneFilterId)
@@ -3845,6 +3872,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       })
     : []
   const axisLabelVertical = timeZoom === 'months' && colW < 58
+  const scaleVisibilityMode = normalizeScaleVisibilityMode(milestoneScaleFilter)
+  const proportionalMilestones = scaleVisibilityMode === SCALE_VISIBILITY_MODES.ALL
 
   const bufH    = ROW_BUF * rowH
   const visItems = rowItems.filter(r => r.top + r.height >= scrollTop - bufH && r.top <= scrollTop + vpSize.h + bufH)
@@ -3856,8 +3885,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
   const visMilestones = milestones.filter(m => {
     if (draggedIds.has(m.id)) return true
-    if (!isMilestoneVisibleAtZoom(m.duration, timeZoom, milestoneScaleFilter)) return false
-    const visual = getVisualRange(m, timeZoom)
+    if (!isMilestoneVisibleAtZoom(m.duration, timeZoom, scaleVisibilityMode)) return false
+    const visual = getRenderedVisualRange(m, timeZoom, scaleVisibilityMode)
     if (visual.endCol < startCol || visual.startCol > endCol) return false
     const row = noteRowMap[m.noteId]; if (!row) return false
     return row.top + row.height >= scrollTop - bufH && row.top <= scrollTop + vpSize.h + bufH
@@ -4231,18 +4260,21 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
             })}
 
             {/* Milestones */}
-            {visMilestones.map(m => {
-              const row = noteRowMap[m.noteId]; if (!row) return null
-              const visual = getVisualRange(m, timeZoom)
-              const isSelected    = selectedIds.has(m.id)
+	            {visMilestones.map(m => {
+	              const row = noteRowMap[m.noteId]; if (!row) return null
+	              const visual = getRenderedVisualRange(m, timeZoom, scaleVisibilityMode)
+	              const isSelected    = selectedIds.has(m.id)
               const isPinned      = pinnedMilestoneId === m.id
               const isViolating   = violationIds.has(m.id)
               const isBlinking    = blinkingMilestoneIds.has(m.id)
               const isDepMode     = mode === 'dependency'
               const isSource      = drawingState?.fromId === m.id
-              const msColor       = getMilestoneColor(m)
-              const isUnassigned  = msColor === null
-              return (
+	              const msColor       = getMilestoneColor(m)
+	              const isUnassigned  = msColor === null
+	              const isMinimumDuration = m.duration <= MIN_MILESTONE_DURATION
+	              const widthPx = visual.duration * colW
+	              const isTinyProportional = proportionalMilestones && widthPx < 12
+	              return (
                 <div key={m.id}
                   data-ms-id={m.id}
                   ref={el => { el ? milestoneElsRef.current.set(m.id, el) : milestoneElsRef.current.delete(m.id) }}
@@ -4252,15 +4284,19 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                     isPinned     && styles.milestonePinned,
                     isViolating  && styles.milestoneViolation,
                     isBlinking   && styles.milestoneBlink,
-                    isDepMode    && styles.milestoneDepMode,
-                    isUnassigned && styles.milestoneUnassigned,
-                  ].filter(Boolean).join(' ')}
-                  style={{
-                    left:       visual.startCol * colW,
-                    top:        HEADER_H + row.top + msY,
-                    width:      visual.duration * colW,
-                    height:     msH,
-                    background: msColor ?? '#fff',
+	                    isDepMode    && styles.milestoneDepMode,
+	                    isUnassigned && styles.milestoneUnassigned,
+	                    isMinimumDuration && styles.milestoneMinimum,
+	                    proportionalMilestones && styles.milestoneProportional,
+	                    isTinyProportional && styles.milestoneTiny,
+	                  ].filter(Boolean).join(' ')}
+	                  style={{
+	                    left:       visual.startCol * colW,
+	                    top:        HEADER_H + row.top + msY,
+	                    width:      widthPx,
+	                    minWidth:   proportionalMilestones ? 0 : undefined,
+	                    height:     msH,
+	                    background: msColor ?? '#fff',
                   }}
                   onMouseDown={e => {
                     if (paintCat) {
@@ -4285,8 +4321,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                     const note = notes.find(g => g.id === m.noteId)
                     const label = `${note?.title ?? 'Milestone'} · ${m.title || minuteToLabel(m.startCol, timeZoom)}`
                     setContextMenu({ type: 'milestone', x: e.clientX, y: e.clientY, milestoneId: m.id, label })
-                  }}>
-                  <div
+	                  }}>
+	                  <div
                     className={[styles.msHandle, isDepMode && styles.depHandle, isDepMode && isSource && styles.depHandleSource].filter(Boolean).join(' ')}
                     data-ms-id={m.id}
                     data-dep-port={isDepMode ? 'true' : undefined}
@@ -4296,9 +4332,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                       if (paintCat) return
                       if (isDepMode) startDependencyDrag(e, m.id)
                       else handleMilestoneMouseDown(e, m.id, 'left')
-                    }} />
-                  <span className={styles.msLabel}>{m.title || minuteToLabel(m.startCol, timeZoom)}</span>
-                  <div
+	                    }} />
+	                  <span className={styles.msLabel}>{m.title || minuteToLabel(m.startCol, timeZoom)}</span>
+                    {isMinimumDuration && !isTinyProportional && <span className={styles.msMinBadge}>10m</span>}
+	                  <div
                     className={[styles.msHandle, styles.msHandleRight, isDepMode && styles.depHandle, isDepMode && isSource && styles.depHandleSource].filter(Boolean).join(' ')}
                     data-ms-id={m.id}
                     data-dep-port={isDepMode ? 'true' : undefined}
@@ -4318,11 +4355,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
               style={{ width: totalCols * colW, height: totalContentH + HEADER_H }}>
               {showDeps && dependencies.map(dep => {
                 if (showCrucialDepsOnly && !crucialDependencyIds.has(dep.id)) return null
-                const from = milestones.find(m => m.id === dep.fromId)
-                const to   = milestones.find(m => m.id === dep.toId)
-                if (!from || !to) return null
-                if (!isMilestoneVisibleAtZoom(from.duration, timeZoom, milestoneScaleFilter)) return null
-                if (!isMilestoneVisibleAtZoom(to.duration, timeZoom, milestoneScaleFilter)) return null
+	                const from = milestones.find(m => m.id === dep.fromId)
+	                const to   = milestones.find(m => m.id === dep.toId)
+	                if (!from || !to) return null
+	                if (!isMilestoneVisibleAtZoom(from.duration, timeZoom, scaleVisibilityMode)) return null
+	                if (!isMilestoneVisibleAtZoom(to.duration, timeZoom, scaleVisibilityMode)) return null
                 const fromRow = noteRowMap[from.noteId]; const toRow = noteRowMap[to.noteId]
                 if (!fromRow || !toRow) return null
                 if (hideCrossCatDeps && activeDimId) {
@@ -4330,8 +4367,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                   const toCat   = assignments[to.noteId]?.[activeDimId] ?? null
                   if (fromCat !== toCat) return null
                 }
-                const fromVisual = getVisualRange(from, timeZoom)
-                const toVisual = getVisualRange(to, timeZoom)
+	                const fromVisual = getRenderedVisualRange(from, timeZoom, scaleVisibilityMode)
+	                const toVisual = getRenderedVisualRange(to, timeZoom, scaleVisibilityMode)
                 const x1 = fromVisual.endCol * colW
                 const y1 = HEADER_H + fromRow.top + Math.floor(fromRow.height / 2)
                 const x2 = toVisual.startCol * colW
