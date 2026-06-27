@@ -10,8 +10,12 @@ const MILESTONE_H  = 20   // block height in px
 const COL_BUF      = 8
 const ROW_BUF      = 3
 const EXTEND_DELTA = 365  // extra columns added when scrolling to the right edge
+const DRAG_AUTOSCROLL_EDGE_PX = 72
+const DRAG_AUTOSCROLL_MAX_PX = 28
 
 const DEFAULT_SPACING = { colW: 110, rowH: 36, rowGap: 0, laneGap: 28 }
+const COL_WIDTH_MIN = 20
+const COL_WIDTH_MAX = 250
 const INIT_TOTAL_COLS = 60    // initial column count; grows to cover viewport + buffer on mount
 const EDGE_COLS       = 5     // columns from right edge before extending
 
@@ -947,6 +951,7 @@ function WarningSettingsPanel({
 function ContextMenu({
   menu, onClose, onCreate, onInsertTimeUnit, onDeleteTimeUnit, onSetDeadline, onRemoveDeadline,
   onSetEarliestStart, onRemoveEarliestStart,
+  onCopyNote, onDuplicateNote,
   onDeleteMilestone, onToggleMilestonePin, pinnedMilestoneId, onEditDepReason, onDeleteDep,
 }) {
   if (!menu) return null
@@ -954,11 +959,20 @@ function ContextMenu({
     <>
       <div style={{ position: 'fixed', inset: 0, zIndex: 998 }} onMouseDown={onClose} />
       <div className={styles.ctxMenu} style={{ left: menu.x, top: menu.y }}>
-        {menu.type === 'cell' && (menu.isReadOnly ? (
-          <div className={styles.ctxReadOnly}>
-            Switch to {menu.readOnlyLabel} view to edit this row
-          </div>
-        ) : (<>
+        {menu.type === 'cell' && (<>
+          <button className={styles.ctxItem}
+            onClick={() => { onCopyNote(menu.noteId); onClose() }}>
+            Copy note — {menu.noteTitle}
+          </button>
+          <button className={styles.ctxItem}
+            onClick={() => { onDuplicateNote(menu.noteId); onClose() }}>
+            Duplicate note
+          </button>
+          {menu.isReadOnly ? (
+            <div className={styles.ctxReadOnly}>
+              Switch to {menu.readOnlyLabel} view to edit this row
+            </div>
+          ) : (<>
           <button className={styles.ctxItem}
             onClick={() => { onCreate(menu.noteId, menu.col, menu.color); onClose() }}>
             Add milestone — {menu.noteTitle}
@@ -983,7 +997,20 @@ function ContextMenu({
                 Set earliest start date here
               </button>
           }
-        </>))}
+        </>)}
+        </>)}
+        {menu.type === 'note' && (
+          <>
+            <button className={styles.ctxItem}
+              onClick={() => { onCopyNote(menu.noteId); onClose() }}>
+              Copy note — {menu.noteTitle}
+            </button>
+            <button className={styles.ctxItem}
+              onClick={() => { onDuplicateNote(menu.noteId); onClose() }}>
+              Duplicate note
+            </button>
+          </>
+        )}
         {menu.type === 'header' && (<>
           <button className={styles.ctxItem} onClick={() => { onInsertTimeUnit(menu.col); onClose() }}>
             Insert {menu.unitLabel || 'unit'} before
@@ -1201,6 +1228,20 @@ function GanttToolbar({
           onClick={() => onModeChange('milestone')}>Milestone</button>
         <button className={`${styles.modePill} ${mode === 'dependency' ? styles.modePillActive : ''}`}
           onClick={() => onModeChange('dependency')}>Dependency</button>
+      </div>
+      <div className={styles.scaleQuickSwitch} aria-label="Gantt planning scale">
+        <span className={styles.scaleQuickLabel}>Scale</span>
+        <div className={styles.scaleQuickPills}>
+          {TIME_ZOOM_LEVELS.map(level => (
+            <button key={level.value}
+              type="button"
+              className={`${styles.scaleQuickPill} ${timeZoom === level.value ? styles.scaleQuickPillActive : ''}`}
+              title={`Switch to ${level.label} scale`}
+              onClick={() => onTimeZoomChange(level.value)}>
+              {level.value === 'minutes' ? level.short : level.label}
+            </button>
+          ))}
+        </div>
       </div>
       <div className={styles.toolbarDiv} />
       <span className={styles.toolbarLabel}>Group by</span>
@@ -1701,7 +1742,7 @@ function ScheduleColorLegendWidget({
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, refreshKey = 0 }) {
+export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0 }) {
   // ── API data ───────────────────────────────────────────────────────────────
   const [dimensions,   setDimensions]   = useState([])
   const [categories,   setCategories]   = useState([])
@@ -1736,6 +1777,25 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setAssignments(map)
     setAssignmentOrders(orderMap)
   }
+
+  const refreshScheduleData = useCallback(async () => {
+    const [assigns, mss, deps, dls, ess, inherited, history] = await Promise.all([
+      api.getAssignments(),
+      api.getMilestones(),
+      api.getDependencies(),
+      api.getDeadlines(),
+      api.getEarliestStarts(),
+      api.getNoteInheritance(),
+      api.getTransactionHistory(),
+    ])
+    applyAssignments(assigns)
+    setMilestones(mss)
+    setDependencies(deps)
+    setDeadlines(dls)
+    setEarliestStarts(ess)
+    setNoteInheritance(inherited)
+    setTransactionHistory(history)
+  }, [])
 
   useEffect(() => {
     if (!isActive) return
@@ -1810,6 +1870,46 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     })
     return [...byKey.values()]
   }, [earliestStarts, inheritedWindows.starts])
+
+  const dependencyConstraintWindows = useMemo(() => {
+    const milestoneById = new Map(milestones.map(ms => [ms.id, ms]))
+    const startsByNote = new Map()
+    const deadlinesByNote = new Map()
+    dependencies.forEach(dep => {
+      const from = milestoneById.get(dep.fromId)
+      const to = milestoneById.get(dep.toId)
+      if (!from || !to) return
+      const fromEnd = from.startCol + from.duration
+      const incoming = startsByNote.get(to.noteId)
+      if (!incoming || fromEnd > incoming.col) {
+        startsByNote.set(to.noteId, {
+          id: `dep-start:${to.noteId}`,
+          noteId: to.noteId,
+          milestoneId: to.id,
+          col: fromEnd,
+          dependencyIds: [dep.id],
+        })
+      } else if (fromEnd === incoming.col) {
+        incoming.dependencyIds.push(dep.id)
+      }
+      const outgoing = deadlinesByNote.get(from.noteId)
+      if (!outgoing || to.startCol < outgoing.col) {
+        deadlinesByNote.set(from.noteId, {
+          id: `dep-deadline:${from.noteId}`,
+          noteId: from.noteId,
+          milestoneId: from.id,
+          col: to.startCol,
+          dependencyIds: [dep.id],
+        })
+      } else if (to.startCol === outgoing.col) {
+        outgoing.dependencyIds.push(dep.id)
+      }
+    })
+    return {
+      starts: [...startsByNote.values()],
+      deadlines: [...deadlinesByNote.values()],
+    }
+  }, [dependencies, milestones])
 
   // ── Toolbar / mode state ───────────────────────────────────────────────────
   const [mode,              setMode]              = useState('milestone')
@@ -2126,6 +2226,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [pinnedMilestoneId, setPinnedMilestoneId] = useState(null)
   const [contextMenu,  setContextMenu]  = useState(null)
   const [clickedNoteId, setClickedNoteId] = useState(null)
+  const [copiedNoteId, setCopiedNoteId] = useState(null)
 
   // ── DOM refs ───────────────────────────────────────────────────────────────
   const gridBodyRef      = useRef()
@@ -2144,6 +2245,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const gridInnerRef      = useRef(null)         // for synchronous width update during extension
   const lastExtensionRef  = useRef(0)            // timestamp — prevents stacked extensions
   const dragRef           = useRef(null)         // drag state machine
+  const dragAutoScrollRef = useRef(null)
+  const yWheelZoomRef     = useRef(false)
   const milestoneElsRef = useRef(new Map())      // id → DOM element
   const hoveredCellRef  = useRef(null)
   const drawingRef      = useRef(null)           // { fromId } sync access during drawing
@@ -2406,6 +2509,39 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     })
     return set
   }, [selectedIds, milestones])
+
+  const activeNoteIdForCopy = clickedNoteId || (selectedNoteIds.size === 1 ? [...selectedNoteIds][0] : null)
+
+  const copyNoteToScheduleClipboard = useCallback(noteId => {
+    if (!noteId) return
+    setCopiedNoteId(noteId)
+    setClickedNoteId(noteId)
+  }, [])
+
+  const duplicateNoteInSchedule = useCallback(async noteId => {
+    if (!noteId) return
+    try {
+      const result = await api.duplicateNote(noteId)
+      if (result?.note) {
+        setClickedNoteId(result.note.id)
+        if (!onNotesChanged) onNoteCreated?.(result.note)
+      }
+      await onNotesChanged?.()
+      await refreshScheduleData()
+    } catch (err) {
+      console.error(err)
+      showWarningPrompt({
+        title: 'Copy note failed',
+        message: err?.message || 'The selected note could not be copied.',
+        actions: 'close',
+      })
+    }
+  }, [onNoteCreated, onNotesChanged, refreshScheduleData, showWarningPrompt])
+
+  const pasteCopiedNote = useCallback(async () => {
+    if (!copiedNoteId) return
+    await duplicateNoteInSchedule(copiedNoteId)
+  }, [copiedNoteId, duplicateNoteInSchedule])
 
   const applyNoteVisibilityFilter = useCallback(noteIds => {
     if (noteIds.size === 0) return
@@ -2890,6 +3026,36 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setSpacing(next)
   }, [])
 
+  const handleGridWheel = useCallback(e => {
+    if (!yWheelZoomRef.current) return
+    const el = gridBodyRef.current
+    if (!el) return
+    e.preventDefault()
+    e.stopPropagation()
+    const prev = spacingRef.current
+    const factor = Math.exp(-e.deltaY * 0.002)
+    const rawNextColW = Math.round(prev.colW * factor)
+    const currentZoom = normalizeTimeZoom(timeZoomRef.current)
+    const nextColW = Math.max(COL_WIDTH_MIN, Math.min(COL_WIDTH_MAX, rawNextColW))
+    if (nextColW === prev.colW) return
+
+    const anchorMinute = zoomColToMinute(scrollLeftRef.current / prev.colW, currentZoom)
+    const nextScrollLeft = Math.max(0, Math.round(minuteToZoomColExact(anchorMinute, currentZoom) * nextColW))
+    const needed = Math.ceil((nextScrollLeft + vpRef.current.w) / nextColW) + COL_BUF + EDGE_COLS + 1
+    if (needed > totalColsRef.current) {
+      totalColsRef.current = needed
+      setTotalCols(needed)
+    }
+    if (gridInnerRef.current) {
+      const widthCols = Math.max(totalColsRef.current, needed)
+      gridInnerRef.current.style.width = `${widthCols * nextColW}px`
+    }
+    el.scrollLeft = nextScrollLeft
+    scrollLeftRef.current = el.scrollLeft
+    setScrollLeft(scrollLeftRef.current)
+    setSpacing({ ...prev, colW: nextColW })
+  }, [])
+
   const handleTimeZoomChange = useCallback(nextZoom => {
     nextZoom = normalizeTimeZoom(nextZoom)
     const prevZoom = timeZoomRef.current
@@ -2965,10 +3131,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const readOnly = isNoteRowReadOnly(cell.noteId)
     const rowMs = readOnly ? milestonesRef.current.find(m => m.noteId === cell.noteId) : null
     const readOnlyLabel = rowMs ? scaleLabelForZoom(getMilestoneLevel(rowMs.duration, rowMs.startCol)) : null
+    setClickedNoteId(cell.noteId)
     setContextMenu({ type: 'cell', x: e.clientX, y: e.clientY, col: cell.col,
       noteId: cell.noteId, noteTitle: cell.noteTitle, color: cell.color, hasDeadline, hasEarliestStart,
       isReadOnly: readOnly, readOnlyLabel })
-  }, [deadlines, earliestStarts, getNoteCellFromPointer])
+  }, [deadlines, earliestStarts, getNoteCellFromPointer, isNoteRowReadOnly])
 
   // ── Milestone CRUD ─────────────────────────────────────────────────────────
   const handleCreateMilestone = useCallback(async (noteId, startCol, color) => {
@@ -3114,9 +3281,22 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     clearWarningPrompt()
     const sp = spacingRef.current
     const isMonthMove = normalizeTimeZoom(timeZoomRef.current) === 'months'
+    const startScrollLeft = scrollLeftRef.current
     dragRef.current = { type: 'move', hasMoved: false, originals, lastValidColDelta: 0, blockedOverlap: null, blockedBarrier: null, hitBoundary: false }
     document.body.style.cursor = 'grabbing'
     document.body.style.userSelect = 'none'
+
+    let lastMoveClientX = startMouseX
+    const getScrollAdjustedDx = clientX => clientX - startMouseX + (scrollLeftRef.current - startScrollLeft)
+
+    const extendTimelineForScrollLeft = nextScrollLeft => {
+      const needed = Math.ceil((nextScrollLeft + vpRef.current.w) / sp.colW) + COL_BUF + EDGE_COLS + 1
+      if (needed > totalColsRef.current) {
+        totalColsRef.current = needed
+        setTotalCols(needed)
+        if (gridInnerRef.current) gridInnerRef.current.style.width = `${needed * sp.colW}px`
+      }
+    }
 
     const getBounds = () => {
       let minDelta = -Infinity
@@ -3152,7 +3332,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     }
 
     const getSnappedColDelta = clientX => {
-      const rawDx = clientX - startMouseX
+      const rawDx = getScrollAdjustedDx(clientX)
       const firstOrig = Object.values(originals)[0]
       if (!firstOrig) return 0
       const firstVisualStart = minuteToZoomCol(firstOrig.startCol, timeZoomRef.current)
@@ -3193,7 +3373,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     })
 
     const getLiveDx = clientX => {
-      const rawDx = clientX - startMouseX
+      const rawDx = getScrollAdjustedDx(clientX)
       let dx = rawDx
       Object.entries(originals).forEach(([id, orig]) => {
         const origVisual = getVisualRange(orig, timeZoomRef.current)
@@ -3217,9 +3397,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       return dx
     }
 
-    const onMove = e => {
-      e.preventDefault()
-      const dx = getLiveDx(e.clientX)
+    const renderMoveAt = clientX => {
+      const dx = getLiveDx(clientX)
       if (Math.abs(dx) > 2) dragRef.current.hasMoved = true
       const overrides = {}
       Object.entries(originals).forEach(([id, orig]) => {
@@ -3233,9 +3412,57 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       updateDependencyPaths(overrides)
     }
 
+    const stopAutoScroll = () => {
+      if (dragAutoScrollRef.current?.frame) cancelAnimationFrame(dragAutoScrollRef.current.frame)
+      dragAutoScrollRef.current = null
+    }
+
+    const autoScrollStep = () => {
+      const el = gridBodyRef.current
+      const drag = dragRef.current
+      if (!el || !drag || drag.type !== 'move') {
+        stopAutoScroll()
+        return
+      }
+      const rect = el.getBoundingClientRect()
+      let velocity = 0
+      if (lastMoveClientX < rect.left + DRAG_AUTOSCROLL_EDGE_PX) {
+        const t = Math.min(1, Math.max(0, (rect.left + DRAG_AUTOSCROLL_EDGE_PX - lastMoveClientX) / DRAG_AUTOSCROLL_EDGE_PX))
+        velocity = -DRAG_AUTOSCROLL_MAX_PX * t * t
+      } else if (lastMoveClientX > rect.right - DRAG_AUTOSCROLL_EDGE_PX) {
+        const t = Math.min(1, Math.max(0, (lastMoveClientX - (rect.right - DRAG_AUTOSCROLL_EDGE_PX)) / DRAG_AUTOSCROLL_EDGE_PX))
+        velocity = DRAG_AUTOSCROLL_MAX_PX * t * t
+      }
+      if (velocity !== 0) {
+        const nextLeft = Math.max(0, el.scrollLeft + velocity)
+        extendTimelineForScrollLeft(nextLeft)
+        el.scrollLeft = nextLeft
+        scrollLeftRef.current = el.scrollLeft
+        if (leftBodyInnerRef.current) leftBodyInnerRef.current.style.transform = `translateY(${-el.scrollTop}px)`
+        setScrollLeft(scrollLeftRef.current)
+        renderMoveAt(lastMoveClientX)
+      }
+      dragAutoScrollRef.current = {
+        frame: requestAnimationFrame(autoScrollStep),
+      }
+    }
+
+    const ensureAutoScroll = () => {
+      if (dragAutoScrollRef.current?.frame) return
+      dragAutoScrollRef.current = { frame: requestAnimationFrame(autoScrollStep) }
+    }
+
+    const onMove = e => {
+      e.preventDefault()
+      lastMoveClientX = e.clientX
+      renderMoveAt(lastMoveClientX)
+      ensureAutoScroll()
+    }
+
     const onUp = async e => {
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
+      stopAutoScroll()
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
       const { hasMoved, hitBoundary, hitEarliestBoundary } = dragRef.current || {}
@@ -3884,7 +4111,20 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       const tag = e.target?.tagName
       const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable
       const key = e.key.toLowerCase()
+      if (!isTyping && !e.ctrlKey && !e.metaKey && !e.altKey && key === 'y') {
+        yWheelZoomRef.current = true
+      }
       if (!isTyping && (e.ctrlKey || e.metaKey) && !e.altKey) {
+        if (key === 'c' && activeNoteIdForCopy) {
+          e.preventDefault()
+          copyNoteToScheduleClipboard(activeNoteIdForCopy)
+          return
+        }
+        if (key === 'v' && copiedNoteId) {
+          e.preventDefault()
+          pasteCopiedNote()
+          return
+        }
         if (key === 'z') {
           e.preventDefault()
           undoGanttTransaction()
@@ -3910,9 +4150,22 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       if (key === 'e') setMode('milestone')
       if (e.key === 'Delete' || e.key === 'Del') handleRequestDeleteSelection()
     }
+    const onKeyUp = e => {
+      if (e.key?.toLowerCase() === 'y') yWheelZoomRef.current = false
+    }
+    const onBlur = () => {
+      yWheelZoomRef.current = false
+    }
     document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [deleteDraft, handleConfirmDeleteDraft, handleRequestDeleteSelection, isActive, redoGanttTransaction, undoGanttTransaction])
+    document.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      yWheelZoomRef.current = false
+      document.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [activeNoteIdForCopy, copiedNoteId, copyNoteToScheduleClipboard, deleteDraft, handleConfirmDeleteDraft, handleRequestDeleteSelection, isActive, pasteCopiedNote, redoGanttTransaction, undoGanttTransaction])
 
   useEffect(() => {
     if (reasonModal) setTimeout(() => reasonInputRef.current?.focus(), 30)
@@ -4469,6 +4722,12 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                         e.stopPropagation()
                         paintNote(item.note.id)
                       } : undefined}
+                      onContextMenu={e => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setClickedNoteId(item.note.id)
+                        setContextMenu({ type: 'note', x: e.clientX, y: e.clientY, noteId: item.note.id, noteTitle: item.note.title })
+                      }}
                       onDoubleClick={e => {
                         e.stopPropagation()
                         if (paintCat) return
@@ -4533,6 +4792,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         {/* ── Grid body ───────────────────────────────────────────────────── */}
         <div ref={gridBodyRef} className={styles.gridBody}
           onScroll={handleScroll}
+          onWheel={handleGridWheel}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
           onMouseDown={handleGridMouseDown}
@@ -4666,6 +4926,37 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
               return hatchWidth > 0 ? (
                 <div key={`dl-${dl.noteId}`} className={styles.deadlineHatch}
                   style={{ left: hatchLeft, top: HEADER_H + row.top, width: hatchWidth, height: row.height }} />
+              ) : null
+            })}
+
+            {/* Dependency-derived movement limits */}
+            {dependencyConstraintWindows.starts.map(es => {
+              const row = noteRowMap[es.noteId]; if (!row) return null
+              const affected = milestones.find(m => m.id === es.milestoneId); if (!affected) return null
+              const visualCol = proportionalMilestones
+                ? minuteToZoomColExact(es.col, timeZoom)
+                : minuteToZoomCol(es.col, timeZoom)
+              const hatchWidth = Math.max(0, visualCol) * colW
+              return hatchWidth > 0 ? (
+                <div key={es.id}
+                  className={`${styles.dependencyConstraintHatch} ${styles.dependencyStartConstraint}`}
+                  title={`${es.dependencyIds.length} incoming dependency constraint${es.dependencyIds.length === 1 ? '' : 's'}`}
+                  style={{ left: 0, top: HEADER_H + row.top + msY, width: hatchWidth, height: msH }} />
+              ) : null
+            })}
+            {dependencyConstraintWindows.deadlines.map(dl => {
+              const row = noteRowMap[dl.noteId]; if (!row) return null
+              const affected = milestones.find(m => m.id === dl.milestoneId); if (!affected) return null
+              const visualCol = proportionalMilestones
+                ? minuteToZoomColExact(dl.col, timeZoom)
+                : minuteToZoomCol(dl.col, timeZoom)
+              const hatchLeft = visualCol * colW
+              const hatchWidth = Math.max(0, totalCols - visualCol) * colW
+              return hatchWidth > 0 ? (
+                <div key={dl.id}
+                  className={`${styles.dependencyConstraintHatch} ${styles.dependencyDeadlineConstraint}`}
+                  title={`${dl.dependencyIds.length} outgoing dependency constraint${dl.dependencyIds.length === 1 ? '' : 's'}`}
+                  style={{ left: hatchLeft, top: HEADER_H + row.top + msY, width: hatchWidth, height: msH }} />
               ) : null
             })}
 
@@ -4927,6 +5218,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         onRemoveDeadline={handleRemoveDeadline}
         onSetEarliestStart={handleSetEarliestStart}
         onRemoveEarliestStart={handleRemoveEarliestStart}
+        onCopyNote={copyNoteToScheduleClipboard}
+        onDuplicateNote={duplicateNoteInSchedule}
         onDeleteMilestone={handleDeleteMilestoneRequest}
         onToggleMilestonePin={handleToggleMilestonePin}
         pinnedMilestoneId={pinnedMilestoneId}

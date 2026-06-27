@@ -182,6 +182,13 @@ export default function App() {
     setToast({ noteId: newNote.id, title: newNote.title })
   }
 
+  const handleNotesChanged = async () => {
+    const data = await api.getNotes()
+    setNotes(data)
+    setNoteDataVersion(v => v + 1)
+    setRefreshKey(k => k + 1)
+  }
+
   useEffect(() => {
     if (!activeProject || appScreen !== 'workspace') return
     api.getNotes().then(setNotes).catch(console.error)
@@ -252,6 +259,7 @@ export default function App() {
             onNoteOpen={openNotePopup}
             onProjectUpdate={handleProjectUpdate}
             onNoteCreated={handleNoteCreated}
+            onNotesChanged={handleNotesChanged}
             refreshKey={noteDataVersion}
           />
         </div>

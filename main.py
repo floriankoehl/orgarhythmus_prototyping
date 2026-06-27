@@ -1980,6 +1980,116 @@ def update_note(note_id: str, data: NotePatch, user: dict = Depends(current_user
         row = con.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
     return _note(row)
 
+@app.post("/notes/{note_id}/duplicate", status_code=201)
+def duplicate_note(note_id: str, user: dict = Depends(current_user)):
+    with _db() as con:
+        project_id = _project_id_for_note(con, note_id)
+        assert_project_access(project_id, user)
+        source = con.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
+        if not source:
+            raise HTTPException(404, "Note not found")
+
+        new_note_id = str(uuid.uuid4())
+        source_order = int(source["order_idx"] or 0)
+        con.execute(
+            "UPDATE notes SET order_idx = order_idx + 1 WHERE project_id = ? AND order_idx > ?",
+            (project_id, source_order),
+        )
+        con.execute(
+            "INSERT INTO notes (id, project_id, html, title, collapsed, order_idx) VALUES (?, ?, ?, ?, ?, ?)",
+            (new_note_id, project_id, source["html"], source["title"], source["collapsed"], source_order + 1),
+        )
+
+        for row in con.execute("SELECT dimension_id, category_id, order_idx FROM assignments WHERE note_id = ?", (note_id,)).fetchall():
+            con.execute(
+                "INSERT INTO assignments (note_id, dimension_id, category_id, order_idx) VALUES (?, ?, ?, ?)",
+                (new_note_id, row["dimension_id"], row["category_id"], row["order_idx"]),
+            )
+
+        for row in con.execute("SELECT persona_id FROM persona_note_assignments WHERE note_id = ?", (note_id,)).fetchall():
+            con.execute(
+                "INSERT OR IGNORE INTO persona_note_assignments (persona_id, note_id) VALUES (?, ?)",
+                (row["persona_id"], new_note_id),
+            )
+
+        source_milestone_ids = []
+        milestone_id_map = {}
+        for row in con.execute("SELECT * FROM milestones WHERE note_id = ? ORDER BY start_col, rowid", (note_id,)).fetchall():
+            new_ms_id = str(uuid.uuid4())
+            source_milestone_ids.append(row["id"])
+            milestone_id_map[row["id"]] = new_ms_id
+            con.execute(
+                "INSERT INTO milestones (id, note_id, start_col, duration, title, color) VALUES (?, ?, ?, ?, ?, ?)",
+                (new_ms_id, new_note_id, row["start_col"], row["duration"], row["title"], row["color"]),
+            )
+            for pma in con.execute("SELECT persona_id FROM persona_milestone_assignments WHERE milestone_id = ?", (row["id"],)).fetchall():
+                con.execute(
+                    "INSERT OR IGNORE INTO persona_milestone_assignments (persona_id, milestone_id) VALUES (?, ?)",
+                    (pma["persona_id"], new_ms_id),
+                )
+
+        if source_milestone_ids:
+            ph = ",".join("?" for _ in source_milestone_ids)
+            dep_rows = con.execute(
+                f"SELECT * FROM dependencies WHERE from_id IN ({ph}) OR to_id IN ({ph})",
+                source_milestone_ids + source_milestone_ids,
+            ).fetchall()
+            for dep in dep_rows:
+                new_from_id = milestone_id_map.get(dep["from_id"], dep["from_id"])
+                new_to_id = milestone_id_map.get(dep["to_id"], dep["to_id"])
+                if new_from_id == new_to_id:
+                    continue
+                con.execute(
+                    "INSERT OR IGNORE INTO dependencies (id, from_id, to_id, reason) VALUES (?, ?, ?, ?)",
+                    (str(uuid.uuid4()), new_from_id, new_to_id, dep["reason"]),
+                )
+
+        deadline = con.execute("SELECT * FROM deadlines WHERE note_id = ?", (note_id,)).fetchone()
+        if deadline:
+            con.execute(
+                "INSERT INTO deadlines (id, note_id, col, scale) VALUES (?, ?, ?, ?)",
+                (str(uuid.uuid4()), new_note_id, deadline["col"], deadline["scale"]),
+            )
+
+        earliest_start = con.execute("SELECT * FROM earliest_starts WHERE note_id = ?", (note_id,)).fetchone()
+        if earliest_start:
+            con.execute(
+                "INSERT INTO earliest_starts (id, note_id, col, scale) VALUES (?, ?, ?, ?)",
+                (str(uuid.uuid4()), new_note_id, earliest_start["col"], earliest_start["scale"]),
+            )
+
+        inheritance = con.execute("SELECT parent_note_id FROM note_inheritance WHERE child_note_id = ?", (note_id,)).fetchone()
+        if inheritance:
+            con.execute(
+                "INSERT INTO note_inheritance (child_note_id, parent_note_id) VALUES (?, ?)",
+                (new_note_id, inheritance["parent_note_id"]),
+            )
+
+        note = con.execute("SELECT * FROM notes WHERE id = ?", (new_note_id,)).fetchone()
+        milestones = con.execute("SELECT * FROM milestones WHERE note_id = ? ORDER BY start_col", (new_note_id,)).fetchall()
+        assignments = con.execute("SELECT * FROM assignments WHERE note_id = ?", (new_note_id,)).fetchall()
+        deadlines = con.execute("SELECT * FROM deadlines WHERE note_id = ?", (new_note_id,)).fetchall()
+        earliest_starts = con.execute("SELECT * FROM earliest_starts WHERE note_id = ?", (new_note_id,)).fetchall()
+        inheritance_rows = con.execute("SELECT * FROM note_inheritance WHERE child_note_id = ?", (new_note_id,)).fetchall()
+        dependencies = con.execute(
+            """
+            SELECT * FROM dependencies
+            WHERE from_id IN (SELECT id FROM milestones WHERE note_id = ?)
+               OR to_id IN (SELECT id FROM milestones WHERE note_id = ?)
+            """,
+            (new_note_id, new_note_id),
+        ).fetchall()
+
+    return {
+        "note": _note(note),
+        "milestones": [_ms(row) for row in milestones],
+        "dependencies": [_dep(row) for row in dependencies],
+        "assignments": [_assign(row) for row in assignments],
+        "deadlines": [_dl(row) for row in deadlines],
+        "earliestStarts": [_es(row) for row in earliest_starts],
+        "noteInheritance": [_inheritance(row) for row in inheritance_rows],
+    }
+
 @app.delete("/notes/{note_id}", status_code=204)
 def delete_note(note_id: str, user: dict = Depends(current_user)):
     with _db() as con:
