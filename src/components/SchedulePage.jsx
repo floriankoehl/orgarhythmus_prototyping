@@ -123,6 +123,16 @@ function earliestStartAppliesToMilestone(es, milestone) {
   return es && milestone && earliestStartScaleBucket(es) === milestoneScaleBucket(milestone)
 }
 
+function findApplicableDeadline(deadlines, milestone) {
+  if (!milestone) return null
+  return deadlines.find(d => d.noteId === milestone.noteId && deadlineAppliesToMilestone(d, milestone)) ?? null
+}
+
+function findApplicableEarliestStart(earliestStarts, milestone) {
+  if (!milestone) return null
+  return earliestStarts.find(es => es.noteId === milestone.noteId && earliestStartAppliesToMilestone(es, milestone)) ?? null
+}
+
 function noteMilestoneScaleConflict(milestones, noteId, duration, startCol = null) {
   const newScale = durationScaleBucket(duration, startCol)
   return milestones.find(m => m.noteId === noteId && milestoneScaleBucket(m) !== newScale) ?? null
@@ -1701,6 +1711,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [dependencies, setDependencies] = useState([])
   const [deadlines,    setDeadlines]    = useState([])
   const [earliestStarts, setEarliestStarts] = useState([])
+  const [noteInheritance, setNoteInheritance] = useState([])
   const [transactionHistory, setTransactionHistory] = useState({ undo: [], redo: [] })
   const [savedFilters, setSavedFilters] = useState([])
   const [perspectives, setPerspectives] = useState([])
@@ -1730,9 +1741,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (!isActive) return
     Promise.all([
       api.getDimensions(), api.getAllCategories(), api.getAssignments(),
-      api.getMilestones(), api.getDependencies(), api.getDeadlines(), api.getEarliestStarts(), api.getFilters(), api.getSchedulePerspectives(),
+      api.getMilestones(), api.getDependencies(), api.getDeadlines(), api.getEarliestStarts(), api.getNoteInheritance(), api.getFilters(), api.getSchedulePerspectives(),
       api.getTransactionHistory(),
-    ]).then(([dims, cats, assigns, mss, deps, dls, ess, filters, loadedPerspectives, history]) => {
+    ]).then(([dims, cats, assigns, mss, deps, dls, ess, inherited, filters, loadedPerspectives, history]) => {
       setDimensions(dims); setCategories(cats)
       setSavedFilters(filters)
       setPerspectives(loadedPerspectives.map(normalizePerspective))
@@ -1741,6 +1752,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       setDependencies(deps)
       setDeadlines(dls)
       setEarliestStarts(ess)
+      setNoteInheritance(inherited)
       setTransactionHistory(history)
     }).catch(console.error)
   }, [isActive])
@@ -1749,6 +1761,55 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (!refreshKey) return
     api.getAssignments().then(applyAssignments).catch(console.error)
   }, [refreshKey])
+
+  const inheritedWindows = useMemo(() => {
+    const milestoneByNote = new Map(milestones.map(ms => [ms.noteId, ms]))
+    const starts = []
+    const ends = []
+    noteInheritance.forEach(link => {
+      const child = milestoneByNote.get(link.childNoteId)
+      const parent = milestoneByNote.get(link.parentNoteId)
+      if (!child || !parent) return
+      const childScale = milestoneScaleBucket(child)
+      starts.push({
+        id: `inh-start:${link.childNoteId}:${link.parentNoteId}`,
+        noteId: link.childNoteId,
+        col: parent.startCol,
+        scale: childScale,
+        inherited: true,
+        parentNoteId: link.parentNoteId,
+      })
+      ends.push({
+        id: `inh-deadline:${link.childNoteId}:${link.parentNoteId}`,
+        noteId: link.childNoteId,
+        col: parent.startCol + parent.duration,
+        scale: childScale,
+        inherited: true,
+        parentNoteId: link.parentNoteId,
+      })
+    })
+    return { starts, deadlines: ends }
+  }, [milestones, noteInheritance])
+
+  const effectiveDeadlines = useMemo(() => {
+    const byKey = new Map()
+    ;[...deadlines, ...inheritedWindows.deadlines].forEach(item => {
+      const key = `${item.noteId}:${deadlineScaleBucket(item)}`
+      const current = byKey.get(key)
+      if (!current || item.col < current.col) byKey.set(key, item)
+    })
+    return [...byKey.values()]
+  }, [deadlines, inheritedWindows.deadlines])
+
+  const effectiveEarliestStarts = useMemo(() => {
+    const byKey = new Map()
+    ;[...earliestStarts, ...inheritedWindows.starts].forEach(item => {
+      const key = `${item.noteId}:${earliestStartScaleBucket(item)}`
+      const current = byKey.get(key)
+      if (!current || item.col > current.col) byKey.set(key, item)
+    })
+    return [...byKey.values()]
+  }, [earliestStarts, inheritedWindows.starts])
 
   // ── Toolbar / mode state ───────────────────────────────────────────────────
   const [mode,              setMode]              = useState('milestone')
@@ -2099,8 +2160,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   timeZoomRef.current      = timeZoom
   totalColsRef.current     = totalCols
   dependenciesRef.current  = dependencies
-  deadlinesRef.current       = deadlines
-  earliestStartsRef.current  = earliestStarts
+  deadlinesRef.current       = effectiveDeadlines
+  earliestStartsRef.current  = effectiveEarliestStarts
   modeRef.current            = mode
   milestoneScaleFilterRef.current = normalizeScaleVisibilityMode(milestoneScaleFilter)
 
@@ -2170,6 +2231,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     try {
       const result = await api.applyTransaction({ ...transaction, before, after })
       setTransactionHistory(result.history)
+      await refreshGanttTransactions()
       return true
     } catch (err) {
       console.error(err)
@@ -2207,7 +2269,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       }
       return false
     }
-  }, [applyTransactionState, presentConflictMilestones, showTransactionFailure, showWarningPrompt])
+  }, [applyTransactionState, presentConflictMilestones, refreshGanttTransactions, showTransactionFailure, showWarningPrompt])
 
   const undoGanttTransaction = useCallback(async () => {
     try {
@@ -2898,15 +2960,15 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     }
     if (e.target.closest('[data-ms-id]')) return  // right-click on milestone — skip for now
 
-    const hasDeadline = deadlinesRef.current.some(d => d.noteId === cell.noteId)
-    const hasEarliestStart = earliestStartsRef.current.some(e => e.noteId === cell.noteId)
+    const hasDeadline = deadlines.some(d => d.noteId === cell.noteId)
+    const hasEarliestStart = earliestStarts.some(e => e.noteId === cell.noteId)
     const readOnly = isNoteRowReadOnly(cell.noteId)
     const rowMs = readOnly ? milestonesRef.current.find(m => m.noteId === cell.noteId) : null
     const readOnlyLabel = rowMs ? scaleLabelForZoom(getMilestoneLevel(rowMs.duration, rowMs.startCol)) : null
     setContextMenu({ type: 'cell', x: e.clientX, y: e.clientY, col: cell.col,
       noteId: cell.noteId, noteTitle: cell.noteTitle, color: cell.color, hasDeadline, hasEarliestStart,
       isReadOnly: readOnly, readOnlyLabel })
-  }, [getNoteCellFromPointer])
+  }, [deadlines, earliestStarts, getNoteCellFromPointer])
 
   // ── Milestone CRUD ─────────────────────────────────────────────────────────
   const handleCreateMilestone = useCallback(async (noteId, startCol, color) => {
@@ -2922,13 +2984,13 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       })
       return
     }
-    const dl = deadlinesRef.current.find(d => d.noteId === noteId)
-    const es = earliestStartsRef.current.find(e => e.noteId === noteId)
-    if (earliestStartAppliesToMilestone(es, ms) && startCol < es.col) {
+    const dl = findApplicableDeadline(deadlinesRef.current, ms)
+    const es = findApplicableEarliestStart(earliestStartsRef.current, ms)
+    if (es && startCol < es.col) {
       reportEarliestStartViolation()
       return
     }
-    if (startCol < 0 || (deadlineAppliesToMilestone(dl, ms) && startCol + duration > dl.col)) {
+    if (startCol < 0 || (dl && startCol + duration > dl.col)) {
       reportDeadlineViolation()
       return
     }
@@ -3062,16 +3124,16 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       let minDeltaFromEarliest = -Infinity
       Object.entries(originals).forEach(([id, orig]) => {
         const ms = milestonesRef.current.find(m => m.id === id)
-        const dl = deadlinesRef.current.find(d => d.noteId === ms?.noteId)
-        const es = earliestStartsRef.current.find(e => e.noteId === ms?.noteId)
+        const dl = findApplicableDeadline(deadlinesRef.current, ms)
+        const es = findApplicableEarliestStart(earliestStartsRef.current, ms)
         if (isMonthMove) {
           const startVisual = minuteToZoomCol(orig.startCol, 'months')
           const span = calendarMonthSpanForRange(orig.startCol, orig.duration)
           minDelta = Math.max(minDelta, -startVisual)
-          if (deadlineAppliesToMilestone(dl, ms)) {
+          if (dl) {
             maxDelta = Math.min(maxDelta, minuteToZoomCol(dl.col, 'months') - span - startVisual)
           }
-          if (earliestStartAppliesToMilestone(es, ms)) {
+          if (es) {
             const esD = minuteToZoomCol(es.col, 'months') - startVisual
             minDelta = Math.max(minDelta, esD)
             minDeltaFromEarliest = Math.max(minDeltaFromEarliest, esD)
@@ -3079,8 +3141,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           return
         }
         minDelta = Math.max(minDelta, -orig.startCol)
-        if (deadlineAppliesToMilestone(dl, ms)) maxDelta = Math.min(maxDelta, dl.col - orig.duration - orig.startCol)
-        if (earliestStartAppliesToMilestone(es, ms)) {
+        if (dl) maxDelta = Math.min(maxDelta, dl.col - orig.duration - orig.startCol)
+        if (es) {
           const esD = es.col - orig.startCol
           minDelta = Math.max(minDelta, esD)
           minDeltaFromEarliest = Math.max(minDeltaFromEarliest, esD)
@@ -3100,6 +3162,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         : (requestedVisual - firstVisualStart) * getZoomUnit(timeZoomRef.current)
       const { minDelta, maxDelta, minDeltaFromEarliest } = getBounds()
       const clamped = Math.max(minDelta, Math.min(maxDelta, colDelta))
+      if (dragRef.current) {
+        dragRef.current.hitBoundary = false
+        dragRef.current.hitEarliestBoundary = false
+      }
       if (dragRef.current && clamped !== colDelta) {
         if (colDelta > maxDelta) {
           dragRef.current.hitBoundary = true
@@ -3133,15 +3199,15 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         const origVisual = getVisualRange(orig, timeZoomRef.current)
         dx = Math.max(dx, -origVisual.startCol * sp.colW)
         const ms = milestonesRef.current.find(m => m.id === id)
-        const dl = deadlinesRef.current.find(d => d.noteId === ms?.noteId)
-        if (deadlineAppliesToMilestone(dl, ms)) {
+        const dl = findApplicableDeadline(deadlinesRef.current, ms)
+        if (dl) {
           const maxVisual = isMonthMove
             ? minuteToZoomCol(dl.col, 'months') - calendarMonthSpanForRange(orig.startCol, orig.duration)
             : minuteToZoomCol(Math.max(0, dl.col - orig.duration), timeZoomRef.current)
           dx = Math.min(dx, (maxVisual - origVisual.startCol) * sp.colW)
         }
-        const es = earliestStartsRef.current.find(e => e.noteId === ms?.noteId)
-        if (earliestStartAppliesToMilestone(es, ms)) {
+        const es = findApplicableEarliestStart(earliestStartsRef.current, ms)
+        if (es) {
           const esMinVisual = isMonthMove
             ? minuteToZoomCol(es.col, 'months')
             : minuteToZoomCol(es.col, timeZoomRef.current)
@@ -3263,17 +3329,21 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
     const getSnappedResize = clientX => {
       const dx = clientX - startMouseX
-      const dl = deadlinesRef.current.find(d => d.noteId === ms.noteId)
-      const maxRight = deadlineAppliesToMilestone(dl, ms) ? dl.col : Infinity
-      const esResize = earliestStartsRef.current.find(e => e.noteId === ms.noteId)
+      const dl = findApplicableDeadline(deadlinesRef.current, ms)
+      const maxRight = dl ? dl.col : Infinity
+      const esResize = findApplicableEarliestStart(earliestStartsRef.current, ms)
       const isMonthResize = normalizeTimeZoom(timeZoomRef.current) === 'months'
+      if (dragRef.current) {
+        dragRef.current.hitBoundary = false
+        dragRef.current.hitEarliestBoundary = false
+      }
       if (side === 'left') {
         const origVisualStart = minuteToZoomCol(origStart, timeZoomRef.current)
         const requestedVisual = snapPxToCol(origVisualStart * sp.colW + dx, sp.colW)
         const requested = isMonthResize ? zoomColToMinute(requestedVisual, 'months') : requestedVisual * getZoomUnit(timeZoomRef.current)
         const minRightVisual = minuteEndToZoomCol(origRight, timeZoomRef.current) - 1
         const maxLeft = isMonthResize ? zoomColToMinute(minRightVisual, 'months') : origRight - MIN_MILESTONE_DURATION
-        const esMinLeft = earliestStartAppliesToMilestone(esResize, ms) ? esResize.col : 0
+        const esMinLeft = esResize ? esResize.col : 0
         const leftCol = Math.min(maxLeft, Math.max(esMinLeft, requested))
         if (dragRef.current && leftCol !== requested) {
           if (esMinLeft > 0 && requested < esMinLeft) dragRef.current.hitEarliestBoundary = true
@@ -4571,7 +4641,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
             })}
 
             {/* Earliest start markers */}
-            {earliestStarts.map(es => {
+            {effectiveEarliestStarts.map(es => {
               const row = noteRowMap[es.noteId]; if (!row) return null
               if (!isEarliestStartVisibleAtZoom(es, timeZoom, scaleVisibilityMode)) return null
               const visualCol = proportionalMilestones
@@ -4585,7 +4655,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
             })}
 
             {/* Hard deadline markers */}
-            {deadlines.map(dl => {
+            {effectiveDeadlines.map(dl => {
               const row = noteRowMap[dl.noteId]; if (!row) return null
               if (!isDeadlineVisibleAtZoom(dl, timeZoom, scaleVisibilityMode)) return null
               const visualCol = proportionalMilestones

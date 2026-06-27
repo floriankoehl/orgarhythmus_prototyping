@@ -214,4 +214,9 @@ export const api = {
   getEarliestStarts:   ()               => req('GET',    '/earliest-starts'),
   setEarliestStart:    (noteId, col, scale) => req('PUT', `/earliest-starts/${noteId}`, { col, scale }),
   removeEarliestStart: (noteId)         => req('DELETE', `/earliest-starts/${noteId}`),
+
+  // Note inheritance
+  getNoteInheritance:    ()                  => req('GET',    '/note-inheritance'),
+  setNoteInheritance:    (childId, parentId) => req('PUT',    `/notes/${childId}/inheritance`, { parentNoteId: parentId }),
+  removeNoteInheritance: (childId)           => req('DELETE', `/notes/${childId}/inheritance`),
 }

@@ -194,6 +194,12 @@ def _init_db():
             )
         """)
         con.execute("""
+            CREATE TABLE IF NOT EXISTS note_inheritance (
+                child_note_id  TEXT PRIMARY KEY,
+                parent_note_id TEXT NOT NULL
+            )
+        """)
+        con.execute("""
             CREATE TABLE IF NOT EXISTS saved_filters (
                 id              TEXT PRIMARY KEY,
                 project_id      TEXT NOT NULL DEFAULT 'default',
@@ -294,6 +300,13 @@ def _migrate():
             if "goal_id" in cols and "note_id" not in cols:
                 con.execute(f"ALTER TABLE {table} RENAME COLUMN goal_id TO note_id")
 
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS note_inheritance (
+                child_note_id  TEXT PRIMARY KEY,
+                parent_note_id TEXT NOT NULL
+            )
+        """)
+
         deadline_cols = [r[1] for r in con.execute("PRAGMA table_info(deadlines)").fetchall()]
         if "scale" not in deadline_cols:
             con.execute("ALTER TABLE deadlines ADD COLUMN scale TEXT NOT NULL DEFAULT 'day'")
@@ -308,6 +321,25 @@ def _migrate():
                 """,
                 (MONTH_MINUTES, DAY_MINUTES),
             )
+
+        duplicate_ms = con.execute(
+            """
+            SELECT id FROM (
+                SELECT id, ROW_NUMBER() OVER (
+                    PARTITION BY note_id
+                    ORDER BY start_col, rowid
+                ) AS rn
+                FROM milestones
+            )
+            WHERE rn > 1
+            """
+        ).fetchall()
+        duplicate_ms_ids = [row["id"] for row in duplicate_ms]
+        if duplicate_ms_ids:
+            ph = ",".join("?" for _ in duplicate_ms_ids)
+            con.execute(f"DELETE FROM dependencies WHERE from_id IN ({ph}) OR to_id IN ({ph})", duplicate_ms_ids + duplicate_ms_ids)
+            con.execute(f"DELETE FROM persona_milestone_assignments WHERE milestone_id IN ({ph})", duplicate_ms_ids)
+            con.execute(f"DELETE FROM milestones WHERE id IN ({ph})", duplicate_ms_ids)
 
         for table, cols in {
             "schedule_perspectives": ("state_json",),
@@ -666,6 +698,9 @@ class DeadlineColIn(BaseModel):
     col: int
     scale: Optional[str] = None
 
+class NoteInheritanceIn(BaseModel):
+    parentNoteId: str
+
 class SavedFilterIn(BaseModel):
     id: Optional[str] = None
     name: str
@@ -782,6 +817,10 @@ def _dl(row) -> dict:
 def _es(row) -> dict:
     d = dict(row)
     return {"id": d["id"], "noteId": d["note_id"], "col": d["col"], "scale": _normalize_planning_scale(d.get("scale"), d["col"])}
+
+def _inheritance(row) -> dict:
+    d = dict(row)
+    return {"childNoteId": d["child_note_id"], "parentNoteId": d["parent_note_id"]}
 
 def _filter(row) -> dict:
     d = dict(row)
@@ -960,6 +999,12 @@ def _planning_scale_for_milestone(milestone: dict) -> str:
     if _is_calendar_month_range(milestone.get("startCol", 0), milestone.get("duration", 0)):
         return "month"
     return _planning_scale_for_duration(milestone.get("duration", MIN_MILESTONE_DURATION))
+
+def _planning_scale_index(scale: str) -> int:
+    return {"minute": 0, "day": 1, "month": 2}.get(scale, -1)
+
+def _is_parent_scale_for_child(parent_scale: str, child_scale: str) -> bool:
+    return _planning_scale_index(parent_scale) == _planning_scale_index(child_scale) + 1
 
 def _normalize_planning_scale(scale: str | None, col: int | None = None) -> str:
     if scale in ("minutes", "minute"):
@@ -1204,6 +1249,14 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
     by_note = {}
     for milestone in final_ms.values():
         by_note.setdefault(milestone["noteId"], []).append(milestone)
+    for note_id, note_milestones in by_note.items():
+        if len(note_milestones) > 1:
+            raise HTTPException(422, {
+                "message": "A note can only contain one milestone",
+                "type": "note_milestone_limit",
+                "noteId": note_id,
+                "milestoneIds": [m["id"] for m in note_milestones],
+            })
     for lane_milestones in by_note.values():
         for i, first in enumerate(lane_milestones):
             for second in lane_milestones[i + 1:]:
@@ -1242,45 +1295,107 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
                     "milestoneIds": [first_id, second_id],
                 })
 
-    deadlines = {
-        row["note_id"]: {"col": row["col"], "scale": _normalize_planning_scale(row["scale"], row["col"])}
-        for row in con.execute(
-            """
-            SELECT d.note_id, d.col, d.scale FROM deadlines d
-            JOIN notes n ON n.id = d.note_id
-            WHERE n.project_id = ?
-            """,
-            (project_id,),
-        ).fetchall()
-    }
+    deadlines = {}
+    for row in con.execute(
+        """
+        SELECT d.note_id, d.col, d.scale FROM deadlines d
+        JOIN notes n ON n.id = d.note_id
+        WHERE n.project_id = ?
+        """,
+        (project_id,),
+    ).fetchall():
+        scale = _normalize_planning_scale(row["scale"], row["col"])
+        key = (row["note_id"], scale)
+        current = deadlines.get(key)
+        if current is None or row["col"] < current["col"]:
+            deadlines[key] = {"col": row["col"], "scale": scale}
+
     for milestone in final_ms.values():
-        deadline = deadlines.get(milestone["noteId"])
+        milestone_scale = _planning_scale_for_milestone(milestone)
+        deadline = deadlines.get((milestone["noteId"], milestone_scale))
         if (
             deadline is not None
-            and _planning_scale_for_milestone(milestone) == deadline["scale"]
             and milestone["startCol"] + milestone["duration"] > deadline["col"]
         ):
             raise HTTPException(422, {"message": "Milestone exceeds hard deadline", "type": "deadline", "id": milestone["id"]})
 
-    earliest_starts = {
-        row["note_id"]: {"col": row["col"], "scale": _normalize_planning_scale(row["scale"], row["col"])}
+    earliest_starts = {}
+    for row in con.execute(
+        """
+        SELECT es.note_id, es.col, es.scale FROM earliest_starts es
+        JOIN notes n ON n.id = es.note_id
+        WHERE n.project_id = ?
+        """,
+        (project_id,),
+    ).fetchall():
+        scale = _normalize_planning_scale(row["scale"], row["col"])
+        key = (row["note_id"], scale)
+        current = earliest_starts.get(key)
+        if current is None or row["col"] > current["col"]:
+            earliest_starts[key] = {"col": row["col"], "scale": scale}
+
+    inheritance_rows = [
+        _inheritance(row)
         for row in con.execute(
             """
-            SELECT es.note_id, es.col, es.scale FROM earliest_starts es
-            JOIN notes n ON n.id = es.note_id
-            WHERE n.project_id = ?
+            SELECT ni.* FROM note_inheritance ni
+            JOIN notes child ON child.id = ni.child_note_id
+            JOIN notes parent ON parent.id = ni.parent_note_id
+            WHERE child.project_id = ? AND parent.project_id = ?
             """,
-            (project_id,),
+            (project_id, project_id),
         ).fetchall()
-    }
+    ]
+    milestone_by_note = {}
     for milestone in final_ms.values():
-        es = earliest_starts.get(milestone["noteId"])
+        milestone_by_note[milestone["noteId"]] = milestone
+
+    inherited_starts = {}
+    inherited_deadlines = {}
+    for item in inheritance_rows:
+        child_ms = milestone_by_note.get(item["childNoteId"])
+        parent_ms = milestone_by_note.get(item["parentNoteId"])
+        if not child_ms or not parent_ms:
+            continue
+        child_scale = _planning_scale_for_milestone(child_ms)
+        parent_scale = _planning_scale_for_milestone(parent_ms)
+        if not _is_parent_scale_for_child(parent_scale, child_scale):
+            raise HTTPException(422, {
+                "message": "Inherited parent note must be exactly one planning scale broader than the child note",
+                "type": "inheritance_scale_mismatch",
+                "noteId": item["childNoteId"],
+                "parentNoteId": item["parentNoteId"],
+            })
+        inherited_starts[item["childNoteId"]] = max(inherited_starts.get(item["childNoteId"], 0), parent_ms["startCol"])
+        inherited_deadline = parent_ms["startCol"] + parent_ms["duration"]
+        inherited_deadlines[item["childNoteId"]] = min(inherited_deadlines.get(item["childNoteId"], inherited_deadline), inherited_deadline)
+
+    for milestone in final_ms.values():
+        inherited_deadline = inherited_deadlines.get(milestone["noteId"])
+        if inherited_deadline is not None and milestone["startCol"] + milestone["duration"] > inherited_deadline:
+            raise HTTPException(422, {
+                "message": "Milestone exceeds inherited hard deadline",
+                "type": "inheritance_deadline",
+                "id": milestone["id"],
+                "noteId": milestone["noteId"],
+            })
+
+    for milestone in final_ms.values():
+        milestone_scale = _planning_scale_for_milestone(milestone)
+        es = earliest_starts.get((milestone["noteId"], milestone_scale))
+        inherited_start = inherited_starts.get(milestone["noteId"])
         if (
             es is not None
-            and _planning_scale_for_milestone(milestone) == es["scale"]
             and milestone["startCol"] < es["col"]
         ):
             raise HTTPException(422, {"message": "Milestone violates earliest start date", "type": "earliest_start", "id": milestone["id"]})
+        if inherited_start is not None and milestone["startCol"] < inherited_start:
+            raise HTTPException(422, {
+                "message": "Milestone violates inherited earliest start date",
+                "type": "inheritance_earliest_start",
+                "id": milestone["id"],
+                "noteId": milestone["noteId"],
+            })
 
     pairs = set()
     adjacency = {}
@@ -1805,6 +1920,7 @@ def delete_project(project_id: str, user: dict = Depends(current_user)):
                 con.execute(f"DELETE FROM milestones WHERE id IN ({mph})", ms_ids)
             con.execute(f"DELETE FROM deadlines WHERE note_id IN ({ph})", note_ids)
             con.execute(f"DELETE FROM earliest_starts WHERE note_id IN ({ph})", note_ids)
+            con.execute(f"DELETE FROM note_inheritance WHERE child_note_id IN ({ph}) OR parent_note_id IN ({ph})", note_ids + note_ids)
             con.execute(f"DELETE FROM assignments WHERE note_id IN ({ph})", note_ids)
             con.execute(f"DELETE FROM notes WHERE id IN ({ph})", note_ids)
         # Cascade: dimensions → categories → assignments
@@ -1874,6 +1990,7 @@ def delete_note(note_id: str, user: dict = Depends(current_user)):
             ph = ','.join('?' * len(ms_ids))
             con.execute(f"DELETE FROM persona_milestone_assignments WHERE milestone_id IN ({ph})", ms_ids)
         con.execute("DELETE FROM persona_note_assignments WHERE note_id = ?", (note_id,))
+        con.execute("DELETE FROM note_inheritance WHERE child_note_id = ? OR parent_note_id = ?", (note_id, note_id))
         con.execute("DELETE FROM notes WHERE id = ?", (note_id,))
 
 @app.put("/notes/order")
@@ -1890,6 +2007,90 @@ def reorder_notes(data: OrderIn, user: dict = Depends(current_user)):
         if len(project_ids) > 1:
             raise HTTPException(400, "Cannot reorder notes across projects")
     return {"ok": True}
+
+
+# ── Note inheritance ──────────────────────────────────────────────────────────
+def _single_milestone_for_note(con, note_id: str) -> dict | None:
+    rows = con.execute("SELECT * FROM milestones WHERE note_id = ? ORDER BY start_col, rowid", (note_id,)).fetchall()
+    if len(rows) > 1:
+        raise HTTPException(422, {"message": "A note can only contain one milestone", "type": "note_milestone_limit", "noteId": note_id})
+    return _ms(rows[0]) if rows else None
+
+def _assert_valid_note_inheritance(con, child_note_id: str, parent_note_id: str):
+    if child_note_id == parent_note_id:
+        raise HTTPException(422, {"message": "A note cannot inherit from itself", "type": "inheritance_cycle"})
+    child_project = _project_id_for_note(con, child_note_id)
+    parent_project = _project_id_for_note(con, parent_note_id)
+    if child_project != parent_project:
+        raise HTTPException(400, "Cannot inherit across projects")
+
+    current = parent_note_id
+    seen = {child_note_id}
+    while current:
+        if current in seen:
+            raise HTTPException(422, {"message": "Inheritance cannot create a cycle", "type": "inheritance_cycle"})
+        seen.add(current)
+        row = con.execute("SELECT parent_note_id FROM note_inheritance WHERE child_note_id = ?", (current,)).fetchone()
+        current = row["parent_note_id"] if row else None
+
+    child_ms = _single_milestone_for_note(con, child_note_id)
+    parent_ms = _single_milestone_for_note(con, parent_note_id)
+    if not child_ms or not parent_ms:
+        raise HTTPException(422, {
+            "message": "Both child and parent notes need one milestone before inheritance can be assigned",
+            "type": "inheritance_missing_milestone",
+        })
+    child_scale = _planning_scale_for_milestone(child_ms)
+    parent_scale = _planning_scale_for_milestone(parent_ms)
+    if not _is_parent_scale_for_child(parent_scale, child_scale):
+        raise HTTPException(422, {
+            "message": "Inherited parent note must be exactly one planning scale broader than the child note",
+            "type": "inheritance_scale_mismatch",
+            "childScale": child_scale,
+            "parentScale": parent_scale,
+        })
+    parent_start = parent_ms["startCol"]
+    parent_end = parent_ms["startCol"] + parent_ms["duration"]
+    if child_ms["startCol"] < parent_start or child_ms["startCol"] + child_ms["duration"] > parent_end:
+        raise HTTPException(422, {
+            "message": "Child milestone must fit inside the parent milestone window",
+            "type": "inheritance_window",
+            "milestoneIds": [child_ms["id"], parent_ms["id"]],
+        })
+
+@app.get("/note-inheritance")
+def list_note_inheritance(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    with _db() as con:
+        rows = con.execute(
+            """
+            SELECT ni.* FROM note_inheritance ni
+            JOIN notes child ON child.id = ni.child_note_id
+            JOIN notes parent ON parent.id = ni.parent_note_id
+            WHERE child.project_id = ? AND parent.project_id = ?
+            ORDER BY child.order_idx, parent.order_idx
+            """,
+            (project_id, project_id),
+        ).fetchall()
+    return [_inheritance(row) for row in rows]
+
+@app.put("/notes/{child_note_id}/inheritance")
+def set_note_inheritance(child_note_id: str, data: NoteInheritanceIn, user: dict = Depends(current_user)):
+    with _db() as con:
+        assert_project_access(_project_id_for_note(con, child_note_id), user)
+        _assert_valid_note_inheritance(con, child_note_id, data.parentNoteId)
+        con.execute(
+            "INSERT OR REPLACE INTO note_inheritance (child_note_id, parent_note_id) VALUES (?, ?)",
+            (child_note_id, data.parentNoteId),
+        )
+        row = con.execute("SELECT * FROM note_inheritance WHERE child_note_id = ?", (child_note_id,)).fetchone()
+    return _inheritance(row)
+
+@app.delete("/notes/{child_note_id}/inheritance", status_code=204)
+def remove_note_inheritance(child_note_id: str, user: dict = Depends(current_user)):
+    with _db() as con:
+        assert_project_access(_project_id_for_note(con, child_note_id), user)
+        con.execute("DELETE FROM note_inheritance WHERE child_note_id = ?", (child_note_id,))
 
 
 # ── Dimensions ────────────────────────────────────────────────────────────────
@@ -2662,9 +2863,9 @@ def create_milestone(data: MilestoneIn, user: dict = Depends(current_user)):
     }
     _assert_milestone_scale_edit_allowed(None, milestone)
     with _db() as con:
-        assert_project_access(_project_id_for_note(con, data.noteId), user)
-        existing = [_ms(row) for row in con.execute("SELECT * FROM milestones WHERE note_id = ?", (data.noteId,)).fetchall()]
-        _assert_note_milestone_scales_match(existing + [milestone], {data.noteId})
+        project_id = _project_id_for_note(con, data.noteId)
+        assert_project_access(project_id, user)
+        _assert_final_state_valid(con, project_id, {"milestones": [], "dependencies": []}, {"milestones": [milestone], "dependencies": []})
         con.execute(
             "INSERT INTO milestones (id, note_id, start_col, duration, title, color) VALUES (?,?,?,?,?,?)",
             (mid, data.noteId, data.startCol, duration, data.title, data.color),
@@ -2679,7 +2880,8 @@ def batch_update_milestones(data: MilestoneBatch, user: dict = Depends(current_u
             mid = u.get("id")
             if not mid:
                 continue
-            assert_project_access(_project_id_for_milestone(con, mid), user)
+            project_id = _project_id_for_milestone(con, mid)
+            assert_project_access(project_id, user)
             row = con.execute("SELECT * FROM milestones WHERE id = ?", (mid,)).fetchone()
             before = _ms(row)
             after = {**before}
@@ -2694,15 +2896,7 @@ def batch_update_milestones(data: MilestoneBatch, user: dict = Depends(current_u
             if "title"    in u: fields.append("title = ?");     values.append(u["title"])
             if _schedule_fields_changed(before, after):
                 _assert_milestone_scale_edit_allowed(before, after)
-            if before["noteId"] != after["noteId"] or _schedule_fields_changed(before, after):
-                existing = [
-                    _ms(row)
-                    for row in con.execute(
-                        "SELECT * FROM milestones WHERE note_id IN (?, ?) AND id != ?",
-                        (before["noteId"], after["noteId"], mid),
-                    ).fetchall()
-                ]
-                _assert_note_milestone_scales_match(existing + [after], {after["noteId"]})
+                _assert_final_state_valid(con, project_id, {"milestones": [before], "dependencies": []}, {"milestones": [after], "dependencies": []})
             if fields:
                 con.execute(f"UPDATE milestones SET {', '.join(fields)} WHERE id = ?", (*values, mid))
     return {"ok": True}
@@ -2710,7 +2904,8 @@ def batch_update_milestones(data: MilestoneBatch, user: dict = Depends(current_u
 @app.patch("/milestones/{ms_id}")
 def update_milestone(ms_id: str, data: MilestonePatch, user: dict = Depends(current_user)):
     with _db() as con:
-        assert_project_access(_project_id_for_milestone(con, ms_id), user)
+        project_id = _project_id_for_milestone(con, ms_id)
+        assert_project_access(project_id, user)
         row = con.execute("SELECT * FROM milestones WHERE id = ?", (ms_id,)).fetchone()
         before = _ms(row)
         after = {**before}
@@ -2725,15 +2920,7 @@ def update_milestone(ms_id: str, data: MilestonePatch, user: dict = Depends(curr
         if data.color     is not None: fields.append("color = ?");     values.append(data.color)
         if _schedule_fields_changed(before, after):
             _assert_milestone_scale_edit_allowed(before, after)
-        if before["noteId"] != after["noteId"] or _schedule_fields_changed(before, after):
-            existing = [
-                _ms(row)
-                for row in con.execute(
-                    "SELECT * FROM milestones WHERE note_id IN (?, ?) AND id != ?",
-                    (before["noteId"], after["noteId"], ms_id),
-                ).fetchall()
-            ]
-            _assert_note_milestone_scales_match(existing + [after], {after["noteId"]})
+            _assert_final_state_valid(con, project_id, {"milestones": [before], "dependencies": []}, {"milestones": [after], "dependencies": []})
         if fields:
             con.execute(f"UPDATE milestones SET {', '.join(fields)} WHERE id = ?", (*values, ms_id))
         row = con.execute("SELECT * FROM milestones WHERE id = ?", (ms_id,)).fetchone()
@@ -2964,8 +3151,13 @@ def export_database(project_id: str = Query(...), user: dict = Depends(current_u
             note_ph = ','.join('?' for _ in note_ids)
             milestones = con.execute(f"SELECT * FROM milestones WHERE note_id IN ({note_ph})", note_ids).fetchall()
             deadlines = con.execute(f"SELECT * FROM deadlines WHERE note_id IN ({note_ph})", note_ids).fetchall()
+            earliest_starts = con.execute(f"SELECT * FROM earliest_starts WHERE note_id IN ({note_ph})", note_ids).fetchall()
+            note_inheritance = con.execute(
+                f"SELECT * FROM note_inheritance WHERE child_note_id IN ({note_ph}) OR parent_note_id IN ({note_ph})",
+                note_ids + note_ids,
+            ).fetchall()
         else:
-            milestones = deadlines = []
+            milestones = deadlines = earliest_starts = note_inheritance = []
 
         milestone_ids = [row["id"] for row in milestones]
         if milestone_ids:
@@ -2990,6 +3182,8 @@ def export_database(project_id: str = Query(...), user: dict = Depends(current_u
                 "milestones":                 rows(milestones),
                 "dependencies":               rows(dependencies),
                 "deadlines":                  rows(deadlines),
+                "earliest_starts":            rows(earliest_starts),
+                "note_inheritance":           rows(note_inheritance),
                 "saved_filters":              rows(saved_filters,              ("selections_json",)),
                 "schedule_perspectives":      rows(schedule_perspectives,      ("state_json",)),
                 "classification_perspectives": rows(classification_perspectives, ("state_json",)),

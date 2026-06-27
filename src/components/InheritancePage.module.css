@@ -1,0 +1,213 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  background: #f4f5f7;
+  color: #222;
+  font-family: Arial, sans-serif;
+}
+
+.toolbar {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 18px;
+  background: #fff;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  background: #f1f3f5;
+  border: 1px solid #e0e0e0;
+  border-radius: 7px;
+}
+
+.segmented button,
+.refreshBtn {
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #555;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.segmented button:hover,
+.refreshBtn:hover {
+  background: #e8f0fe;
+  color: #1a73e8;
+}
+
+.segmented .active {
+  background: #fff;
+  color: #1a73e8;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+}
+
+.refreshBtn {
+  border: 1px solid #e0e0e0;
+  background: #fff;
+}
+
+.error {
+  min-width: 0;
+  color: #b42318;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 14px;
+  min-height: 0;
+  padding: 14px;
+  overflow: hidden;
+}
+
+.panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid #dedede;
+  border-radius: 8px;
+}
+
+.panelTitle {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 10px 12px;
+  background: #fff;
+  border-bottom: 1px solid #eee;
+  color: #666;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.parentGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+  padding: 12px;
+}
+
+.parentCard,
+.assignCard {
+  border: 1px solid #e3e3e3;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+}
+
+.noteTitle {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #222;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.noteTitle:hover {
+  color: #1a73e8;
+}
+
+.window {
+  margin-top: 4px;
+  color: #888;
+  font-size: 11px;
+}
+
+.childList,
+.unassignedList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.parentCard .childList {
+  padding: 10px 0 0;
+}
+
+.childRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  background: #f8fafc;
+  border: 1px solid #edf0f3;
+  border-radius: 6px;
+}
+
+.childRow button:first-child {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #333;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.removeBtn {
+  border: 0;
+  background: transparent;
+  color: #999;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.removeBtn:hover {
+  color: #b42318;
+}
+
+.assignCard select {
+  width: 100%;
+  height: 30px;
+  margin-top: 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fff;
+  color: #333;
+  font-size: 12px;
+}
+
+.empty {
+  padding: 10px;
+  color: #aaa;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .content {
+    grid-template-columns: 1fr;
+  }
+}

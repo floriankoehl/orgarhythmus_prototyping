@@ -9,6 +9,7 @@ import ProjectsPage from './components/ProjectsPage'
 import ProjectDashboard from './components/ProjectDashboard'
 import AuthPage from './components/AuthPage'
 import PeoplePage from './components/PeoplePage'
+import InheritancePage from './components/InheritancePage'
 import { api, authApi, hasAuthSession, setProjectId } from './api'
 import styles from './App.module.css'
 
@@ -255,6 +256,9 @@ export default function App() {
           />
         </div>
         <div className={styles.view} style={{ display: view === 4 ? 'flex' : 'none' }}>
+          <InheritancePage notes={notes} isActive={view === 4} onNoteOpen={openNotePopup} />
+        </div>
+        <div className={styles.view} style={{ display: view === 5 ? 'flex' : 'none' }}>
           <PeoplePage />
         </div>
       </div>
