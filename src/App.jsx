@@ -55,6 +55,7 @@ export default function App() {
   const [notes, setNotes]             = useState([])
   const [refreshKey, setRefreshKey]   = useState(0)
   const [noteDataVersion, setNoteDataVersion] = useState(0)
+  const [dimVersion, setDimVersion]   = useState(0)
   const [popupNoteId, setPopupNoteId] = useState(null)
   const [toast, setToast]             = useState(null)
 
@@ -249,10 +250,12 @@ export default function App() {
             onNoteUpdated={handleNoteUpdated}
             onRefresh={() => setRefreshKey(k => k + 1)}
             refreshKey={noteDataVersion}
+            dimRefreshKey={dimVersion}
+            onDimChanged={() => setDimVersion(v => v + 1)}
           />
         </div>
         <div className={styles.view} style={{ display: view === 2 ? 'flex' : 'none' }}>
-          <ClassificationPage notes={notes} isActive={view === 2} onNoteOpen={openNotePopup} refreshKey={noteDataVersion} />
+          <ClassificationPage notes={notes} isActive={view === 2} onNoteOpen={openNotePopup} refreshKey={noteDataVersion} dimRefreshKey={dimVersion} onDimChanged={() => setDimVersion(v => v + 1)} />
         </div>
         <div className={styles.view} style={{ display: view === 3 ? 'flex' : 'none' }}>
           <SchedulePage
@@ -264,6 +267,8 @@ export default function App() {
             onNoteCreated={handleNoteCreated}
             onNotesChanged={handleNotesChanged}
             refreshKey={noteDataVersion}
+            dimRefreshKey={dimVersion}
+            onDimChanged={() => setDimVersion(v => v + 1)}
           />
         </div>
         <div className={styles.view} style={{ display: view === 4 ? 'flex' : 'none' }}>

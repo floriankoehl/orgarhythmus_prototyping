@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import styles from './SchedulePage.module.css'
 import { api, projectsApi } from '../api'
+import DimensionDropUp from './DimensionDropUp'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const HEADER_H     = 64
@@ -1939,7 +1940,7 @@ function PerspectiveMenu({ perspectives, activePerspectiveId, defaultPerspective
 }
 
 function ScheduleColorLegendWidget({
-  dimensions, categories, colorDimId, onColorDimChange,
+  dimensions, categories, colorDimId, onColorDimChange, onDimDataChanged,
   activeFilterIds, onToggleSavedFilter, quickFilters, onToggleQuickFilter, onEditFilter, paintCat, onPaintActivate,
   expanded, onExpandedChange,
 }) {
@@ -1990,10 +1991,13 @@ function ScheduleColorLegendWidget({
           {colorDimId && legendCats.length === 0 && (
             <div className={styles.legendEmpty}>No categories</div>
           )}
-          <ScheduleLegendDropUp
+          <DimensionDropUp
             dimensions={dimensions}
-            colorDimId={colorDimId}
-            onColorDimChange={onColorDimChange}
+            categories={categories}
+            value={colorDimId}
+            onChange={onColorDimChange}
+            onDimDataChanged={onDimDataChanged}
+            emptyLabel="Color legend"
           />
         </div>
       )}
@@ -2017,7 +2021,7 @@ function ScheduleColorLegendWidget({
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0 }) {
+export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, onDimChanged }) {
   // ── API data ───────────────────────────────────────────────────────────────
   const [dimensions,   setDimensions]   = useState([])
   const [categories,   setCategories]   = useState([])
@@ -2096,6 +2100,24 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (!refreshKey) return
     api.getAssignments().then(applyAssignments).catch(console.error)
   }, [refreshKey])
+
+  // Re-fetch dims+cats when another page changes dimension data
+  const dimRefreshKeyRef = useRef(dimRefreshKey)
+  useEffect(() => {
+    if (dimRefreshKey === dimRefreshKeyRef.current) return
+    dimRefreshKeyRef.current = dimRefreshKey
+    Promise.all([api.getDimensions(), api.getAllCategories()])
+      .then(([dims, cats]) => { setDimensions(dims); setCategories(cats) })
+      .catch(console.error)
+  }, [dimRefreshKey])
+
+  // Called by DimensionDropUp after any dim/cat mutation
+  const handleDimDataChanged = () => {
+    Promise.all([api.getDimensions(), api.getAllCategories()])
+      .then(([dims, cats]) => { setDimensions(dims); setCategories(cats) })
+      .catch(console.error)
+    onDimChanged?.()
+  }
 
   const inheritedWindows = useMemo(() => {
     const timeSlotByNote = new Map(timeSlots.map(ms => [ms.noteId, ms]))
@@ -5853,6 +5875,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           categories={colorCategories}
           colorDimId={colorDimId}
           onColorDimChange={setColorDimId}
+          onDimDataChanged={handleDimDataChanged}
           activeFilterIds={activeFilterIds}
           onToggleSavedFilter={toggleSavedFilter}
           quickFilters={quickFilters}

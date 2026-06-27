@@ -383,6 +383,7 @@ function NotesColorLegendWidget({
   categoryNoteCounts,
   onColorDimChange,
   onReorderDims,
+  onDimDataChanged,
   onApplyToAll,
   paintCat,
   onPaintActivate,
@@ -442,9 +443,10 @@ function NotesColorLegendWidget({
           )}
           <DimensionDropUp
             dimensions={dimensions}
+            categories={categories}
             value={colorDimId}
             onChange={onColorDimChange}
-            onReorder={onReorderDims}
+            onDimDataChanged={onDimDataChanged}
             emptyLabel="Color legend"
           />
         </div>
@@ -511,7 +513,7 @@ function ModeControls({ mode, onModeChange }) {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
-export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpdated, onRefresh, refreshKey = 0 }) {
+export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpdated, onRefresh, refreshKey = 0, dimRefreshKey = 0, onDimChanged }) {
   // Canvas state
   const [openNoteIds, setOpenNoteIds]       = useState(new Set())
   const [notePositions, setNotePositions]   = useState({})
@@ -582,6 +584,16 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
       .catch(console.error)
   }, [refreshKey])
 
+  // Re-fetch only dims+cats when another page changes dimension data
+  const dimRefreshKeyRef = useRef(dimRefreshKey)
+  useEffect(() => {
+    if (dimRefreshKey === dimRefreshKeyRef.current) return
+    dimRefreshKeyRef.current = dimRefreshKey
+    Promise.all([api.getDimensions(), api.getAllCategories()])
+      .then(([dims, cats]) => { setDimensions(dims); setCategories(cats) })
+      .catch(console.error)
+  }, [dimRefreshKey])
+
   useEffect(() => {
     if (colorDimId && !dimensions.some(d => d.id === colorDimId)) {
       setColorDimId('')
@@ -607,8 +619,16 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   const reorderDimensions = async ids => {
     const ordered = ids.map(id => dimensions.find(d => d.id === id)).filter(Boolean)
     setDimensions(ordered)
-    try { await api.reorderDimensions(ids) }
+    try { await api.reorderDimensions(ids); onDimChanged?.() }
     catch (e) { console.error(e) }
+  }
+
+  // Called by DimensionDropUp after any dim/cat mutation
+  const handleDimDataChanged = () => {
+    Promise.all([api.getDimensions(), api.getAllCategories()])
+      .then(([dims, cats]) => { setDimensions(dims); setCategories(cats) })
+      .catch(console.error)
+    onDimChanged?.()
   }
 
   const arrangeInGrid = (cols, height) => {
@@ -1260,6 +1280,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
           categoryNoteCounts={categoryNoteCounts}
           onColorDimChange={changeColorDim}
           onReorderDims={reorderDimensions}
+          onDimDataChanged={handleDimDataChanged}
           onApplyToAll={applyCatToAll}
           paintCat={paintCat}
           onPaintActivate={activatePaint}

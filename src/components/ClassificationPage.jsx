@@ -69,8 +69,12 @@ function dimensionIdFromAllNotesCategoryId(catId) {
 
 function noteCreatedAtMs(note) {
   const raw = note?.createdAt ?? note?.created_at
-  const value = raw ? Date.parse(raw) : NaN
-  return Number.isFinite(value) ? value : 0
+  if (!raw) return Date.now()
+  // SQLite CURRENT_TIMESTAMP is 'YYYY-MM-DD HH:MM:SS' (UTC, space-separated).
+  // Normalize to ISO 8601 so Date.parse works reliably across all browsers.
+  const iso = raw.includes('T') ? raw : raw.replace(' ', 'T') + 'Z'
+  const value = Date.parse(iso)
+  return Number.isFinite(value) ? value : Date.now()
 }
 
 function timeCategoryIdForNote(note, nowMs = Date.now()) {
@@ -768,13 +772,8 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onE
       onDrop={handleDrop}
     >
       <div
-        className={`${styles.catBoxHeader} ${paintCat && notes.length ? styles.catBoxHeaderPaintable : ''}`}
+        className={`${styles.catBoxHeader} ${paintCat ? styles.catBoxHeaderPaintable : ''}`}
         style={{ borderTopColor: cat?.color ?? '#e0e0e0' }}
-        onClick={paintCat && notes.length ? e => {
-          e.stopPropagation()
-          onBulkPaint?.(cat, notes)
-        } : undefined}
-        title={paintCat && notes.length ? 'Assign all notes in this category' : undefined}
       >
         {cat && !dynamic && !readOnlyCategory && (
           <div className={styles.dragHandle}
@@ -810,14 +809,26 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onE
           {(dynamic || readOnlyCategory) && <span className={styles.dynamicBadge}>{dynamicDimensionLabel(cat)}</span>}
           <span className={styles.catBoxCount}> {notes.length}</span>
         </span>
-        {cat && onEdit && !readOnlyCategory && (
+        {paintCat && onBulkPaint && (
+          <button
+            className={styles.catBulkPaintBtn}
+            onClick={e => { e.stopPropagation(); onBulkPaint(cat, notes) }}
+            title={`Assign all ${notes.length} note${notes.length === 1 ? '' : 's'} in "${cat?.name ?? unassignedLabel}" to the selected category`}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M18 4l-12 8 12 8V4z"/>
+            </svg>
+            <span>Assign all</span>
+          </button>
+        )}
+        {!paintCat && cat && onEdit && !readOnlyCategory && (
           <button className={styles.catEditBtn} onClick={e => { e.stopPropagation(); onEdit() }} title="Edit category">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
               <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
             </svg>
           </button>
         )}
-        {notes.some(note => note.html) && (
+        {!paintCat && notes.some(note => note.html) && (
           <button
             className={styles.catExpandBtn}
             onClick={e => { e.stopPropagation(); setAllExpanded(v => !v) }}
@@ -827,7 +838,7 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onE
             </svg>
           </button>
         )}
-        {onCollapse && (
+        {!paintCat && onCollapse && (
           <button className={styles.catCollapseBtn} onClick={e => { e.stopPropagation(); onCollapse() }} title="Collapse">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
               <path d="M19 13H5v-2h14v2z"/>
@@ -944,7 +955,17 @@ function LegendDropUp({ dimensions, legendDimId, onLegend }) {
           style={{ position: 'fixed', bottom: pos.bottom, left: pos.left, minWidth: pos.width }}>
           <button className={`${styles.dropUpOption} ${!legendDimId ? styles.dropUpActive : ''}`}
             onClick={() => { onLegend(''); setOpen(false) }}>None</button>
-          {dimensions.map(d => (
+          {dimensions.filter(d => !d.dynamic && !d.system).map(d => (
+            <button key={d.id}
+              className={`${styles.dropUpOption} ${d.id === legendDimId ? styles.dropUpActive : ''}`}
+              onClick={() => { onLegend(d.id); setOpen(false) }}>
+              {d.name}
+            </button>
+          ))}
+          {dimensions.some(d => d.dynamic || d.system) && (
+            <div className={styles.dropUpDivider}><span>Special</span></div>
+          )}
+          {dimensions.filter(d => d.dynamic || d.system).map(d => (
             <button key={d.id}
               className={`${styles.dropUpOption} ${d.id === legendDimId ? styles.dropUpActive : ''}`}
               onClick={() => { onLegend(d.id); setOpen(false) }}>
@@ -1203,7 +1224,7 @@ function LegendWidget({
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ClassificationPage({ notes = [], isActive = false, onNoteOpen, refreshKey = 0 }) {
+export default function ClassificationPage({ notes = [], isActive = false, onNoteOpen, refreshKey = 0, dimRefreshKey = 0, onDimChanged }) {
   const [dimensions, setDimensions]         = useState([])
   const [categories, setCategories]         = useState([])
   const [timeSlots, setTimeSlots]           = useState([])
@@ -1224,7 +1245,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const [quickFilters, setQuickFilters] = useState([])
   const [editingFilter, setEditingFilter] = useState(null)
   const [maxGridCols, setMaxGridCols] = useState(6)
-  const [singleColumnWidth, setSingleColumnWidth] = useState(480)
+  const [singleColumnWidth, setSingleColumnWidth] = useState(800)
   const [paintCat, setPaintCat]             = useState(null)
   const [bulkPaintConfirm, setBulkPaintConfirm] = useState(null)
   const [editCat, setEditCat]               = useState(null)
@@ -1276,6 +1297,15 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
       .catch(console.error)
   }, [refreshKey])
 
+  const dimRefreshKeyRef = useRef(dimRefreshKey)
+  useEffect(() => {
+    if (dimRefreshKey === dimRefreshKeyRef.current) return
+    dimRefreshKeyRef.current = dimRefreshKey
+    Promise.all([api.getDimensions(), api.getAllCategories()])
+      .then(([dims, cats]) => { setDimensions(dims); setCategories(cats) })
+      .catch(console.error)
+  }, [dimRefreshKey])
+
   useEffect(() => {
     if (!statusNotice) return
     const timer = window.setTimeout(() => setStatusNotice(''), 4500)
@@ -1306,7 +1336,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
       readOnly: true,
       state: {
         maxGridCols: 6,
-        singleColumnWidth: 480,
+        singleColumnWidth: 800,
         containerDimId: groupDim?.id ?? '',
         legendDimId: priorityDim?.id ?? '',
         collapsedCatIds: [],
@@ -1335,7 +1365,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     const state = perspective?.state ?? {}
     restoringPerspectiveRef.current = (state.containerDimId || '') !== containerDimId
     setMaxGridCols(Math.max(1, Math.min(12, Number(state.maxGridCols) || 6)))
-    setSingleColumnWidth(Math.max(320, Math.min(900, Number(state.singleColumnWidth) || 480)))
+    setSingleColumnWidth(Math.max(320, Math.min(900, Number(state.singleColumnWidth) || 800)))
     setContainerDimId(state.containerDimId || '')
     setLegendDimId(state.legendDimId || '')
     setCollapsedCatIds(new Set(Array.isArray(state.collapsedCatIds) ? state.collapsedCatIds : []))
@@ -1358,14 +1388,16 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   }, [defaultPerspectiveId, dimensions.length, isActive, perspectives])
 
   const createDimension = async name => {
-    try { const d = await api.createDimension({ name }); setDimensions(p => [...p, d]) }
+    try { const d = await api.createDimension({ name }); setDimensions(p => [...p, d]); onDimChanged?.() }
     catch (e) { console.error(e) }
   }
 
   const reorderDimensions = async ids => {
+    // Preserve system/dynamic dims — only normal dims are passed by ID
+    const systemDims = dimensions.filter(d => d.dynamic || d.system)
     const ordered = ids.map(id => dimensions.find(d => d.id === id)).filter(Boolean)
-    setDimensions(ordered)
-    try { await api.reorderDimensions(ids) }
+    setDimensions([...ordered, ...systemDims])
+    try { await api.reorderDimensions(ids); onDimChanged?.() }
     catch (e) { console.error(e) }
   }
 
@@ -1373,6 +1405,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     try {
       const d = await api.updateDimension(id, { name })
       setDimensions(prev => prev.map(dim => dim.id === id ? d : dim))
+      onDimChanged?.()
     } catch (e) { console.error(e) }
   }
 
@@ -1429,11 +1462,12 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
         delete selections[id]
         return normalizeFilter({ ...filter, selections })
       }))
+      onDimChanged?.()
     } catch (e) { console.error(e) }
   }
 
   const createCategory = async (dimId, name, color) => {
-    try { const c = await api.createCategory(dimId, { name, color }); setCategories(p => [...p, c]) }
+    try { const c = await api.createCategory(dimId, { name, color }); setCategories(p => [...p, c]); onDimChanged?.() }
     catch (e) { console.error(e) }
   }
 
@@ -1441,6 +1475,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     try {
       const updated = await api.updateCategory(id, patch)
       setCategories(p => p.map(c => c.id === id ? updated : c))
+      onDimChanged?.()
     } catch (e) { console.error(e) }
   }
 
@@ -1471,7 +1506,11 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   }
 
   const requestBulkPaint = (sourceCat, sourceNotes) => {
-    if (!paintCat || !legendDimId || isDynamicDimensionId(legendDimId) || !sourceNotes.length) return
+    if (!paintCat || !legendDimId || isDynamicDimensionId(legendDimId)) return
+    if (!sourceNotes.length) {
+      setStatusNotice('No notes in this category to assign.')
+      return
+    }
     const sourceName = sourceCat?.name ?? unassignedLabel
     setBulkPaintConfirm({
       sourceName,
