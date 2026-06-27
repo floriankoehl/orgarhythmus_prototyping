@@ -1044,9 +1044,21 @@
 
 .warningPromptActions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 12px;
+}
+
+.warningAutoResolveToggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: auto;
+  font-size: 11px;
+  color: #666;
+  cursor: pointer;
+  user-select: none;
 }
 
 .warningIgnoreBtn,

@@ -250,6 +250,7 @@ export default function App() {
             isActive={view === 3}
             onNoteOpen={openNotePopup}
             onProjectUpdate={handleProjectUpdate}
+            onNoteCreated={handleNoteCreated}
             refreshKey={noteDataVersion}
           />
         </div>

@@ -30,6 +30,24 @@ const TIME_ZOOM_LEVELS = [
 ]
 const TIME_ZOOM_BY_VALUE = Object.fromEntries(TIME_ZOOM_LEVELS.map(level => [level.value, level]))
 const DEFAULT_TIME_ZOOM = 'days'
+const ZOOM_ORDER = TIME_ZOOM_LEVELS.map(l => l.value)
+
+function getMilestoneLevel(duration) {
+  const d = Math.max(0, Number(duration) || 0)
+  if (d >= 60 * 24 * 30) return 'months'
+  if (d >= 60 * 24 * 7)  return 'weeks'
+  if (d >= 60 * 24)      return 'days'
+  if (d >= 60)           return 'hours'
+  return 'minutes'
+}
+
+function isMilestoneVisibleAtZoom(duration, timeZoom, scaleFilter) {
+  if (scaleFilter === 'all') return true
+  const msIdx      = ZOOM_ORDER.indexOf(getMilestoneLevel(duration))
+  const currentIdx = ZOOM_ORDER.indexOf(timeZoom)
+  if (scaleFilter === 'strict') return msIdx === currentIdx
+  return Math.abs(msIdx - currentIdx) <= 1
+}
 const MIN_MILESTONE_DURATION = 15
 const DEFAULT_WARNING_SETTINGS = {
   resizeWarnOrderThreshold: 2,
@@ -138,6 +156,14 @@ function durationScaleBucketIndex(bucket) {
   return ['minute', 'hour', 'day', 'week', 'month'].indexOf(bucket)
 }
 
+function areDurationLevelsCompatible(durationA, durationB) {
+  const levelA = durationScaleBucket(durationA)
+  const levelB = durationScaleBucket(durationB)
+  if (levelA === levelB) return true
+  const fine = new Set(['minute', 'hour'])
+  return fine.has(levelA) && fine.has(levelB)
+}
+
 function zoomForConflictGap(minutes) {
   const gap = Math.abs(Number(minutes) || 0)
   if (gap >= 43200) return 'months'
@@ -242,29 +268,45 @@ function getDependencyViolations(msList, deps) {
 function getCascadingDependencyConflict(msList, deps, initialViolations = null) {
   const msMap = Object.fromEntries(msList.map(m => [m.id, m]))
   const seedViolations = initialViolations ?? getDependencyViolations(msList, deps)
+
+  // pushedStart tracks where each milestone would land after being pushed by the chain.
+  // Starts at the real current position; gets updated as each cascade step forces a milestone right.
+  const pushedStart = Object.fromEntries(msList.map(m => [m.id, m.startCol]))
+
   const violations = []
   const violationIds = new Set()
   const milestoneIds = new Set()
   const queue = []
+
   const addViolation = violation => {
     if (!violation || violationIds.has(violation.dep.id)) return
     violationIds.add(violation.dep.id)
     violations.push(violation)
     milestoneIds.add(violation.from.id)
     milestoneIds.add(violation.to.id)
+    // Push `to` to just after `from` ends in the pushed world
+    const fromPushedEnd = pushedStart[violation.from.id] + violation.from.duration
+    if (pushedStart[violation.to.id] < fromPushedEnd) {
+      pushedStart[violation.to.id] = fromPushedEnd
+    }
     queue.push(violation.to.id)
   }
+
   seedViolations.forEach(addViolation)
+
   while (queue.length) {
     const fromId = queue.shift()
     const from = msMap[fromId]
     if (!from) continue
+    const fromPushedEnd = pushedStart[fromId] + from.duration
     deps.forEach(dep => {
       if (dep.fromId !== fromId || violationIds.has(dep.id)) return
       const to = msMap[dep.toId]
-      if (to && from.startCol + from.duration > to.startCol) addViolation({ dep, from, to })
+      // Use the pushed position of `to` to check if the chain would violate it
+      if (to && fromPushedEnd > pushedStart[dep.toId]) addViolation({ dep, from, to })
     })
   }
+
   return { violations, depIds: [...violationIds], milestoneIds }
 }
 
@@ -442,6 +484,7 @@ function SpacingPanel({
   hideCrossCatDeps, onHideCrossCatDepsChange,
   showCrucialDepsOnly, onShowCrucialDepsOnlyChange,
   colorDependencyDirection, onColorDependencyDirectionChange,
+  milestoneScaleFilter, onMilestoneScaleFilterChange,
   canFilterToSelection, onFilterToSelectedNotes, onExpandEverything,
 }) {
   const panelRef = useRef()
@@ -479,13 +522,25 @@ function SpacingPanel({
         </label>
       ))}
       <div className={styles.axisModeRow}>
-        <span className={styles.spacingLabel}>Zoom</span>
+        <span className={styles.spacingLabel}>Metric</span>
         <div className={styles.axisModePills}>
           {TIME_ZOOM_LEVELS.map(level => (
             <button key={level.value}
               className={`${styles.axisModePill} ${timeZoom === level.value ? styles.axisModePillActive : ''}`}
               onClick={() => onTimeZoomChange(level.value)}>
               {level.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className={styles.axisModeRow}>
+        <span className={styles.spacingLabel}>Scale</span>
+        <div className={styles.axisModePills}>
+          {[['adaptive', '±1 level'], ['all', 'All'], ['strict', 'Exact']].map(([val, label]) => (
+            <button key={val}
+              className={`${styles.axisModePill} ${milestoneScaleFilter === val ? styles.axisModePillActive : ''}`}
+              onClick={() => onMilestoneScaleFilterChange(val)}>
+              {label}
             </button>
           ))}
         </div>
@@ -892,6 +947,7 @@ function GanttToolbar({
   showDeps, onShowDepsChange, hideCrossCatDeps, onHideCrossCatDepsChange,
   showCrucialDepsOnly, onShowCrucialDepsOnlyChange,
   colorDependencyDirection, onColorDependencyDirectionChange,
+  milestoneScaleFilter, onMilestoneScaleFilterChange,
   autoResolveDependencyView, onAutoResolveDependencyViewChange,
   warningSettings, onWarningSettingsChange,
   canDeleteSelection, onDeleteSelection,
@@ -1001,6 +1057,7 @@ function GanttToolbar({
             hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={onHideCrossCatDepsChange}
             showCrucialDepsOnly={showCrucialDepsOnly} onShowCrucialDepsOnlyChange={onShowCrucialDepsOnlyChange}
             colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={onColorDependencyDirectionChange}
+            milestoneScaleFilter={milestoneScaleFilter} onMilestoneScaleFilterChange={onMilestoneScaleFilterChange}
             canFilterToSelection={canFilterToSelection}
             onFilterToSelectedNotes={onFilterToSelectedNotes}
             onExpandEverything={onExpandEverything} />
@@ -1425,7 +1482,7 @@ function ScheduleColorLegendWidget({
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, refreshKey = 0 }) {
+export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, refreshKey = 0 }) {
   // ── API data ───────────────────────────────────────────────────────────────
   const [dimensions,   setDimensions]   = useState([])
   const [categories,   setCategories]   = useState([])
@@ -1493,6 +1550,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [hideCrossCatDeps, setHideCrossCatDeps] = useState(false)
   const [showCrucialDepsOnly, setShowCrucialDepsOnly] = useState(false)
   const [colorDependencyDirection, setColorDependencyDirection] = useState(false)
+  const [milestoneScaleFilter, setMilestoneScaleFilter] = useState('adaptive')
   const [reasonModal, setReasonModal] = useState(null)   // null | { depId }
   const [reasonDraft, setReasonDraft] = useState('')
   const reasonInputRef = useRef()
@@ -1515,6 +1573,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [autoResolveDependencyView, setAutoResolveDependencyView] = useState(false)
   const [deleteDraft, setDeleteDraft] = useState(null)
   const [resizeConfirmDraft, setResizeConfirmDraft] = useState(null)
+  const [metricResizeDraft,  setMetricResizeDraft]  = useState(null)
   const warningPromptTimerRef = useRef(null)
   const capturePerspectiveStateRef = useRef(null)
   const restorePerspectiveSnapshotRef = useRef(null)
@@ -1608,6 +1667,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         hideCrossCatDeps: false,
         showCrucialDepsOnly: false,
         colorDependencyDirection: false,
+        milestoneScaleFilter: 'adaptive',
         leftPanelWidth: 220,
         group: { activeDimId: '', activeLaneFilterId: '' },
         collapsedCategories: [],
@@ -2037,18 +2097,26 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
   useEffect(() => {
     if (pendingConflictMilestoneIds.size === 0) return
-    const target = milestones.find(m => pendingConflictMilestoneIds.has(m.id) && noteRowMap[m.noteId])
-    if (!target) return
+    const conflictMs = milestones.filter(m => pendingConflictMilestoneIds.has(m.id) && noteRowMap[m.noteId])
+    if (conflictMs.length === 0) return
+    const target = conflictMs[0]
     const row = noteRowMap[target.noteId]
+    const earliest = conflictMs.reduce((min, m) => m.startCol < min.startCol ? m : min, conflictMs[0])
     requestAnimationFrame(() => {
       const el = gridBodyRef.current
       if (!el) return
+      const sp = spacingRef.current
       const inset = Math.max(40, Math.floor(vpRef.current.h * 0.25))
       const nextTop = Math.max(0, row.top - inset)
       el.scrollTop = nextTop
       scrollTopRef.current = el.scrollTop
       if (leftBodyInnerRef.current) leftBodyInnerRef.current.style.transform = `translateY(${-el.scrollTop}px)`
       setScrollTop(el.scrollTop)
+      const visual = getVisualRange(earliest, timeZoomRef.current)
+      const nextLeft = Math.max(0, visual.startCol * sp.colW - sp.colW * 2)
+      el.scrollLeft = nextLeft
+      scrollLeftRef.current = el.scrollLeft
+      setScrollLeft(el.scrollLeft)
       setPendingConflictMilestoneIds(new Set())
     })
   }, [noteRowMap, milestones, pendingConflictMilestoneIds])
@@ -2349,30 +2417,33 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const milestoneIds = conflict.milestoneIds
     const conflictMilestones = allMilestones.filter(m => milestoneIds.has(m.id))
     const noteIds = new Set(conflictMilestones.map(m => m.noteId))
-    const conflictGaps = conflict.violations.map(v => Math.abs((v.from.startCol + v.from.duration) - v.to.startCol))
-    const smallestGap = conflictGaps.length ? Math.min(...conflictGaps) : 0
+    const smallestDuration = conflictMilestones.length ? Math.min(...conflictMilestones.map(m => m.duration)) : 0
     const previousSnapshot = capturePerspectiveStateRef.current?.()
     const shouldAutoSelect = autoResolveDependencyViewRef.current
 
     if (shouldAutoSelect) {
       resolveDependencySelectionRef.current?.(milestoneIds)
     } else {
+      // Build the note set for the filter: new conflict notes + notes of already-selected
+      // milestones. Without this union, applyNoteVisibilityFilter would hide the notes of
+      // milestones that were selected from a previous conflict step, and the deselection
+      // effect would then strip them from selectedIds before the user can click Resolve.
+      const resolveNoteIds = new Set(noteIds)
+      milestonesRef.current.forEach(m => {
+        if (selectedIdsRef.current.has(m.id)) resolveNoteIds.add(m.noteId)
+      })
       setSelectedDepIds(new Set())
-      setRevealedConflictNoteIds(new Set(noteIds))
+      setRevealedConflictNoteIds(resolveNoteIds)
       setPendingConflictMilestoneIds(milestoneIds)
       setPendingDependencyResolveIds(milestoneIds)
       setActiveFilterIds([])
       setQuickFilters([])
       setPaintCat(null)
-      applyNoteVisibilityFilter(noteIds)
-      if (previousSnapshot) {
-        window.setTimeout(() => {
-          restorePerspectiveSnapshotRef.current?.(previousSnapshot)
-        }, 3000)
-      }
+      applyNoteVisibilityFilter(resolveNoteIds)
+      setDependencyResolveSnapshot(prev => prev ?? previousSnapshot)
     }
 
-    setTimeZoom(zoomForConflictGap(smallestGap))
+    setTimeZoom(zoomForConflictGap(smallestDuration))
     setBlinkingDepIds(new Set(depIds))
     setBlinkingMilestoneIds(new Set(milestoneIds))
     window.setTimeout(() => setBlinkingDepIds(new Set()), 3000)
@@ -2384,6 +2455,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         : `${conflict.violations.length} dependency constraints were violated.`,
       actions: 'dependency',
       dependencyIds: depIds,
+      milestoneIds,
     })
   }, [applyNoteVisibilityFilter, showWarningPrompt])
   reportDependencyViolationsRef.current = reportDependencyViolations
@@ -2953,6 +3025,27 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           if (blocked) return
           try { await applyResize() } catch (err) { console.error(err) }
         }
+        if (!areDurationLevelsCompatible(origDur, newDur)) {
+          const crossMetricDeps = dependenciesRef.current.filter(dep => {
+            if (dep.fromId === milestoneId) {
+              const to = milestonesRef.current.find(m => m.id === dep.toId)
+              return to && !areDurationLevelsCompatible(newDur, to.duration)
+            }
+            if (dep.toId === milestoneId) {
+              const from = milestonesRef.current.find(m => m.id === dep.fromId)
+              return from && !areDurationLevelsCompatible(from.duration, newDur)
+            }
+            return false
+          })
+          if (crossMetricDeps.length > 0) {
+            resetToOriginal()
+            const origBucket = durationScaleBucket(origDur)
+            const newBucket  = durationScaleBucket(newDur)
+            const direction  = durationScaleBucketIndex(newBucket) > durationScaleBucketIndex(origBucket) ? 'UP' : 'DOWN'
+            setMetricResizeDraft({ milestoneId, newStart, newDur, origDur, origBucket, newBucket, direction, crossMetricDeps, applyResizeIfValid })
+            return
+          }
+        }
         const magnitude = durationOrderMagnitudeChange(origDur, newDur)
         const warnThreshold = warningSettings.resizeWarnOrderThreshold
         const extraConfirmThreshold = warningSettings.resizeBlockOrderThreshold
@@ -3059,6 +3152,16 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (!fromId || !toId || fromId === toId) return
     if (hasCycle(fromId, toId, dependenciesRef.current)) return
     if (dependenciesRef.current.some(d => d.fromId === fromId && d.toId === toId)) return
+    const fromMs = milestonesRef.current.find(m => m.id === fromId)
+    const toMs   = milestonesRef.current.find(m => m.id === toId)
+    if (fromMs && toMs && !areDurationLevelsCompatible(fromMs.duration, toMs.duration)) {
+      showWarningPrompt({
+        title: 'Incompatible time scales',
+        message: `Dependencies can only link milestones at compatible time scales. ${durationScaleBucket(fromMs.duration)}-level and ${durationScaleBucket(toMs.duration)}-level milestones cannot be linked.`,
+        actions: 'close',
+      })
+      return
+    }
     const pendingDep = { id: newClientId('dep'), fromId, toId, reason: '' }
     const nextDependencies = [...dependenciesRef.current, pendingDep]
     const applyDependency = async () => {
@@ -3074,6 +3177,58 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (blocked) return
     try { await applyDependency() } catch (err) { console.error(err) }
   }, [clearWarningPrompt, commitTransaction, maybeBlockDependencyWarning])
+
+  const handleMetricResizeAccept = useCallback(async () => {
+    const draft = metricResizeDraft
+    setMetricResizeDraft(null)
+    if (!draft) return
+    if (draft.crossMetricDeps.length > 0) {
+      try {
+        await commitTransaction({
+          id: newClientId('tx'),
+          type: 'dependency.delete-many',
+          label: `Delete ${draft.crossMetricDeps.length} incompatible dependenc${draft.crossMetricDeps.length === 1 ? 'y' : 'ies'}`,
+          before: { milestones: [], dependencies: draft.crossMetricDeps },
+          after:  { milestones: [], dependencies: [] },
+        })
+      } catch (err) { console.error(err) }
+    }
+    try { await draft.applyResizeIfValid() } catch (err) { console.error(err) }
+  }, [commitTransaction, metricResizeDraft])
+
+  const handleMetricResizeClone = useCallback(async () => {
+    const draft = metricResizeDraft
+    setMetricResizeDraft(null)
+    if (!draft) return
+    const originalMs = milestonesRef.current.find(m => m.id === draft.milestoneId)
+    if (!originalMs) return
+    const originalNote = notes.find(n => n.id === originalMs.noteId)
+    if (!originalNote) return
+    try {
+      const clonedNote = await api.createNote({
+        id: newClientId('note'),
+        title: `${originalNote.title} (Resized ${draft.direction})`,
+        html: originalNote.html ?? '',
+        collapsed: false,
+      })
+      onNoteCreated?.(clonedNote)
+      const noteAssignments = assignments[originalNote.id] ?? {}
+      await Promise.all(
+        Object.entries(noteAssignments).map(([dimId, catId]) =>
+          api.assign(clonedNote.id, dimId, catId).catch(console.error)
+        )
+      )
+      const clonedMs = await api.createMilestone({
+        id: newClientId('ms'),
+        noteId: clonedNote.id,
+        startCol: draft.newStart,
+        duration: draft.newDur,
+        title: originalMs.title ?? '',
+        color: originalMs.color ?? '#1a73e8',
+      })
+      setMilestones(prev => [...prev, clonedMs])
+    } catch (err) { console.error('Clone note failed', err) }
+  }, [assignments, metricResizeDraft, notes, onNoteCreated])
 
   const updatePreviewArrow = useCallback((sourceId, clientX, clientY) => {
     const rect = gridBodyRef.current?.getBoundingClientRect()
@@ -3274,40 +3429,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     } catch (err) { console.error(err) }
   }, [commitTransaction, deleteDraft])
 
-  const handleWarningUndo = useCallback(async () => {
-    clearWarningPrompt()
-    setBlinkingDepIds(new Set())
-    setBlinkingMilestoneIds(new Set())
-    setPendingDependencyResolveIds(new Set())
-    await undoGanttTransaction()
-  }, [clearWarningPrompt, undoGanttTransaction])
-
-  const handleWarningDeleteConstraint = useCallback(async () => {
-    const depIds = new Set(warningPrompt?.dependencyIds ?? [])
-    if (depIds.size === 0) {
-      clearWarningPrompt()
-      return
-    }
-    const before = dependenciesRef.current.filter(dep => depIds.has(dep.id))
-    if (before.length === 0) {
-      clearWarningPrompt()
-      return
-    }
-    const ok = await commitTransaction({
-      id: newClientId('tx'),
-      type: before.length > 1 ? 'dependency.delete-many' : 'dependency.delete',
-      label: before.length > 1 ? 'Delete dependency constraints' : 'Delete dependency constraint',
-      before: { milestones: [], dependencies: before },
-      after: { milestones: [], dependencies: [] },
-    })
-    if (ok) {
-      clearWarningPrompt()
-      setSelectedDepIds(new Set())
-      setBlinkingDepIds(new Set())
-      setBlinkingMilestoneIds(new Set())
-      setPendingDependencyResolveIds(new Set())
-    }
-  }, [clearWarningPrompt, commitTransaction, warningPrompt])
+  const handleWarningResolve = useCallback(() => {
+    resolveDependencySelection(warningPrompt?.milestoneIds ?? null)
+  }, [resolveDependencySelection, warningPrompt])
 
   useEffect(() => {
     if (!isActive) return
@@ -3364,6 +3488,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     hideCrossCatDeps,
     showCrucialDepsOnly,
     colorDependencyDirection,
+    milestoneScaleFilter,
     leftPanelWidth,
     group: {
       activeDimId,
@@ -3388,7 +3513,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }), [
     activeDimId, activeFilterIds, activeLaneFilterId, activePerspectiveId, axisMode, colorDimId,
     colorDependencyDirection, hiddenCatIds, hiddenNotesByLane, hideCrossCatDeps,
-    leftPanelWidth, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps, spacing, timeZoom, visibleNoteFilterIds,
+    leftPanelWidth, milestoneScaleFilter, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps, spacing, timeZoom, visibleNoteFilterIds,
   ])
   capturePerspectiveStateRef.current = capturePerspectiveState
 
@@ -3409,6 +3534,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (typeof state.showCrucialDepsOnly === 'boolean') setShowCrucialDepsOnly(state.showCrucialDepsOnly)
     if (typeof state.colorDependencyDirection === 'boolean') setColorDependencyDirection(state.colorDependencyDirection)
     if (typeof state.leftPanelWidth === 'number') setLeftPanelWidth(Math.max(120, Math.min(600, state.leftPanelWidth)))
+    if (['adaptive', 'all', 'strict'].includes(state.milestoneScaleFilter)) setMilestoneScaleFilter(state.milestoneScaleFilter)
 
     setActiveDimId(nextActiveDimId)
     setActiveLaneFilterId(nextActiveLaneFilterId)
@@ -3456,6 +3582,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (typeof state.showCrucialDepsOnly === 'boolean') setShowCrucialDepsOnly(state.showCrucialDepsOnly)
     if (typeof state.colorDependencyDirection === 'boolean') setColorDependencyDirection(state.colorDependencyDirection)
     if (typeof state.leftPanelWidth === 'number') setLeftPanelWidth(Math.max(120, Math.min(600, state.leftPanelWidth)))
+    if (['adaptive', 'all', 'strict'].includes(state.milestoneScaleFilter)) setMilestoneScaleFilter(state.milestoneScaleFilter)
 
     setActiveDimId(nextActiveDimId)
     setActiveLaneFilterId(nextActiveLaneFilterId)
@@ -3685,6 +3812,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
   const visMilestones = milestones.filter(m => {
     if (draggedIds.has(m.id)) return true
+    if (!isMilestoneVisibleAtZoom(m.duration, timeZoom, milestoneScaleFilter)) return false
     const visual = getVisualRange(m, timeZoom)
     if (visual.endCol < startCol || visual.startCol > endCol) return false
     const row = noteRowMap[m.noteId]; if (!row) return false
@@ -3726,6 +3854,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={setHideCrossCatDeps}
         showCrucialDepsOnly={showCrucialDepsOnly} onShowCrucialDepsOnlyChange={setShowCrucialDepsOnly}
         colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={setColorDependencyDirection}
+        milestoneScaleFilter={milestoneScaleFilter} onMilestoneScaleFilterChange={setMilestoneScaleFilter}
         autoResolveDependencyView={autoResolveDependencyView}
         onAutoResolveDependencyViewChange={setAutoResolveDependencyView}
         warningSettings={warningSettings}
@@ -4131,6 +4260,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                 const from = milestones.find(m => m.id === dep.fromId)
                 const to   = milestones.find(m => m.id === dep.toId)
                 if (!from || !to) return null
+                if (!isMilestoneVisibleAtZoom(from.duration, timeZoom, milestoneScaleFilter)) return null
+                if (!isMilestoneVisibleAtZoom(to.duration, timeZoom, milestoneScaleFilter)) return null
                 const fromRow = noteRowMap[from.noteId]; const toRow = noteRowMap[to.noteId]
                 if (!fromRow || !toRow) return null
                 if (hideCrossCatDeps && activeDimId) {
@@ -4299,11 +4430,16 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           <div className={styles.warningPromptActions}>
             {warningPrompt.actions === 'dependency' ? (
               <>
-                <button className={styles.warningUndoBtn} onClick={handleWarningUndo}>
-                  Undo
-                </button>
-                <button className={styles.warningDangerBtn} autoFocus onClick={handleWarningDeleteConstraint}>
-                  Delete constraint
+                <label className={styles.warningAutoResolveToggle}>
+                  <input
+                    type="checkbox"
+                    checked={autoResolveDependencyView}
+                    onChange={e => setAutoResolveDependencyView(e.target.checked)}
+                  />
+                  Auto-select
+                </label>
+                <button className={styles.warningSafeBtn} autoFocus onClick={handleWarningResolve}>
+                  Resolve
                 </button>
               </>
             ) : (
@@ -4341,6 +4477,30 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                 await action?.()
               }}>
                 Apply resize anyway
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {metricResizeDraft && createPortal(
+        <div className={styles.deleteModalBackdrop} onMouseDown={() => setMetricResizeDraft(null)}>
+          <div className={styles.deleteModal} role="dialog" aria-modal="true" onMouseDown={e => e.stopPropagation()}>
+            <div className={styles.deleteModalTitle}>Time scale change</div>
+            <div className={styles.deleteModalText}>
+              This resize moves the milestone from <strong>{metricResizeDraft.origBucket}</strong>-level to <strong>{metricResizeDraft.newBucket}</strong>-level.{' '}
+              {metricResizeDraft.crossMetricDeps.length} existing dependenc{metricResizeDraft.crossMetricDeps.length === 1 ? 'y' : 'ies'} would become incompatible across time scales.
+            </div>
+            <div className={styles.deleteModalActions}>
+              <button className={styles.modalSafePrimaryBtn} autoFocus onClick={() => setMetricResizeDraft(null)}>
+                Cancel
+              </button>
+              <button className={styles.modalDangerMutedBtn} onClick={handleMetricResizeAccept}>
+                Resize & remove {metricResizeDraft.crossMetricDeps.length === 1 ? 'dep' : `${metricResizeDraft.crossMetricDeps.length} deps`}
+              </button>
+              <button className={styles.modalDangerMutedBtn} onClick={handleMetricResizeClone}>
+                Clone note (Resized {metricResizeDraft.direction})
               </button>
             </div>
           </div>
