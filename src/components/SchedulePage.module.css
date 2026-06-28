@@ -11,7 +11,7 @@
 
 /* ── Toolbar ─────────────────────────────────────────────────────────────── */
 .toolbar {
-  height: 58px;
+  height: 66px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -25,8 +25,9 @@
 
 .toolbarDeleteBtn {
   position: absolute;
-  top: 8px;
+  top: 50%;
   right: 16px;
+  transform: translateY(-50%);
   height: 28px;
   padding: 0 12px;
   color: #e53e3e;
@@ -135,26 +136,29 @@
 .cornerControls {
   height: 100%;
   display: flex;
-  flex-direction: column;
+  align-items: stretch;
   justify-content: center;
-  gap: 5px;
-  padding: 6px 8px;
+  gap: 8px;
+  padding: 8px;
   box-sizing: border-box;
 }
 
 .cornerControls .historyButtons {
+  flex-direction: column;
   justify-content: center;
 }
 
 .cornerControls .historyBtn {
-  height: 21px;
+  height: 22px;
   min-width: 48px;
   padding: 0 7px;
+  box-sizing: border-box;
   font-size: 10px;
 }
 
 .cornerControls .modePills {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   box-sizing: border-box;
 }
 
@@ -2085,6 +2089,8 @@
 .monthBand {
   top: 0;
   height: 20px;
+  border-bottom: 1px solid #e8e8e8;
+  box-sizing: border-box;
 }
 
 .weekBand {
@@ -2132,7 +2138,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-right: 1px solid #e8e8e8;
+  border-left: 1px solid #e8e8e8;
   box-sizing: border-box;
   overflow: hidden;
   user-select: none;

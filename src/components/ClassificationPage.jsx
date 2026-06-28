@@ -12,6 +12,7 @@ const FILTER_DIMENSION_ID = '__filters__'
 const FILTER_CATEGORY_PREFIX = 'filter:'
 const ALL_NOTES_CATEGORY_PREFIX = '__all_notes__:'
 const TIME_DIMENSION_ID = '__time__'
+const UNASSIGNED_CATEGORY_ID = '__unassigned__'
 const TIME_CATEGORY_PREFIX = 'time:'
 const TIME_DYNAMIC_CATEGORIES = [
   { id: `${TIME_CATEGORY_PREFIX}hour`, name: 'Last hour', color: '#22c55e', maxAgeMs: 60 * 60 * 1000 },
@@ -332,8 +333,220 @@ function ClassificationVisualSettings({ maxGridCols, onMaxGridColsChange, single
 }
 
 // ── Classification toolbar ────────────────────────────────────────────────────
+function ClassificationCategoryVisibilityDropdown({ categories, hiddenCatIds, onToggle, onShowAll }) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef()
+
+  useEffect(() => {
+    if (!open) return
+    const close = e => { if (!wrapRef.current?.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+
+  const shownCount = categories.filter(cat => !hiddenCatIds.has(cat.id)).length
+
+  return (
+    <div ref={wrapRef} className={styles.categoryFilterWrap}>
+      <button
+        className={`${styles.categoryFilterBtn} ${open ? styles.categoryFilterBtnOpen : ''}`}
+        onClick={() => setOpen(value => !value)}>
+        {shownCount}/{categories.length} visible
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"
+          style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', flexShrink: 0 }}>
+          <path d="M7 10l5 5 5-5z"/>
+        </svg>
+      </button>
+      {open && (
+        <div className={styles.categoryFilterMenu}>
+          {categories.length === 0 ? (
+            <div className={styles.categoryFilterEmpty}>No categories</div>
+          ) : (
+            <>
+              <div className={styles.categoryFilterBulkRow}>
+                <button className={styles.categoryFilterAll} onClick={onShowAll}>Show all</button>
+                <button className={styles.categoryFilterAll} onClick={() =>
+                  categories.forEach(cat => { if (!hiddenCatIds.has(cat.id)) onToggle(cat.id) })
+                }>Hide all</button>
+              </div>
+              {categories.map((cat, index) => {
+                const isUnassigned = cat.id === UNASSIGNED_CATEGORY_ID
+                return (
+                  <label key={cat.id} className={styles.categoryFilterItem}
+                    style={isUnassigned && index > 0 ? { borderTop: '1px solid #f0f0f0', marginTop: 2 } : undefined}>
+                    <input type="checkbox" checked={!hiddenCatIds.has(cat.id)} onChange={() => onToggle(cat.id)} />
+                    <span className={styles.categoryFilterDot} style={{ background: cat.color }} />
+                    <span className={styles.categoryFilterName} style={isUnassigned ? { color: '#888', fontStyle: 'italic' } : undefined}>
+                      {cat.name}
+                    </span>
+                  </label>
+                )
+              })}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ClassificationGroupScroller({
+  dimensions, categories, activeCategories, activeDimId, hiddenCatIds,
+  onDimensionChange, onShowOnlyCategory,
+}) {
+  const wheelAtRef = useRef(0)
+  const categoryWheelAtRef = useRef(0)
+  const pickerRef = useRef(null)
+  const categoryPickerRef = useRef(null)
+  const [dimensionMenuOpen, setDimensionMenuOpen] = useState(false)
+  const [categoryMenuOpen, setCategoryMenuOpen] = useState(false)
+
+  const activeIndex = activeDimId ? dimensions.findIndex(dim => dim.id === activeDimId) : -1
+  const currentDim = activeIndex >= 0 ? dimensions[activeIndex] : null
+  const visibleActiveCategories = activeCategories.filter(cat => !hiddenCatIds.has(cat.id))
+  const focusedCategory = visibleActiveCategories.length === 1 ? visibleActiveCategories[0] : null
+  const focusedCategoryIndex = focusedCategory
+    ? activeCategories.findIndex(cat => cat.id === focusedCategory.id)
+    : -1
+  const canCycleDimension = dimensions.length > 0
+  const canCycleCategory = activeCategories.length > 0
+  const dimensionSwatches = dim => categories.filter(cat => cat.dimensionId === dim.id).slice(0, 3)
+
+  const selectDimensionIndex = index => {
+    if (!canCycleDimension) return
+    onDimensionChange(dimensions[(index + dimensions.length) % dimensions.length].id)
+  }
+  const prevDimension = () => selectDimensionIndex(activeIndex >= 0 ? activeIndex - 1 : dimensions.length - 1)
+  const nextDimension = () => selectDimensionIndex(activeIndex >= 0 ? activeIndex + 1 : 0)
+  const selectCategoryIndex = index => {
+    if (!canCycleCategory) return
+    onShowOnlyCategory(activeCategories[(index + activeCategories.length) % activeCategories.length].id)
+  }
+  const prevCategory = () => selectCategoryIndex(focusedCategoryIndex >= 0 ? focusedCategoryIndex - 1 : activeCategories.length - 1)
+  const nextCategory = () => selectCategoryIndex(focusedCategoryIndex >= 0 ? focusedCategoryIndex + 1 : 0)
+
+  const cycleDimension = e => {
+    e.preventDefault()
+    const now = Date.now()
+    if (now - wheelAtRef.current < 180) return
+    wheelAtRef.current = now
+    e.deltaY > 0 ? nextDimension() : prevDimension()
+  }
+  const cycleCategory = e => {
+    if (!canCycleCategory) return
+    e.preventDefault()
+    const now = Date.now()
+    if (now - categoryWheelAtRef.current < 180) return
+    categoryWheelAtRef.current = now
+    e.deltaY > 0 ? nextCategory() : prevCategory()
+  }
+
+  useEffect(() => {
+    if (!dimensionMenuOpen && !categoryMenuOpen) return
+    const close = e => {
+      if (!pickerRef.current?.contains(e.target)) setDimensionMenuOpen(false)
+      if (!categoryPickerRef.current?.contains(e.target)) setCategoryMenuOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [categoryMenuOpen, dimensionMenuOpen])
+
+  return (
+    <div className={styles.groupScroller}>
+      <div className={styles.groupScrollerUnit} onWheel={cycleDimension}>
+        <span className={styles.groupScrollerLabel}>Dimension</span>
+        <div ref={pickerRef} className={styles.groupScrollerRow}>
+          <button className={styles.groupScrollerArrow} onClick={prevDimension} disabled={!canCycleDimension} title="Previous dimension">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <button className={styles.groupScrollerName} onClick={() => setDimensionMenuOpen(value => !value)}
+            disabled={!canCycleDimension} title="Pick dimension">
+            <span className={styles.groupScrollerSwatches}>
+              {(currentDim ? dimensionSwatches(currentDim) : []).map(cat => <b key={cat.id} style={{ background: cat.color || '#aaa' }} />)}
+              {(!currentDim || dimensionSwatches(currentDim).length === 0) && <b style={{ background: '#9ca3af' }} />}
+            </span>
+            <span className={styles.groupScrollerText}>{currentDim?.name ?? 'None'}</span>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+          </button>
+          <button className={styles.groupScrollerArrow} onClick={nextDimension} disabled={!canCycleDimension} title="Next dimension">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M9 18l6-6-6-6"/></svg>
+          </button>
+          {dimensionMenuOpen && (
+            <div className={styles.groupScrollerMenu}>
+              <button className={!activeDimId ? styles.groupScrollerMenuItemActive : styles.groupScrollerMenuItem}
+                onClick={() => { onDimensionChange(''); setDimensionMenuOpen(false) }}>
+                <span className={styles.groupScrollerSingleSwatch}><b style={{ background: '#9ca3af' }} /></span>
+                <strong>None</strong>
+              </button>
+              {dimensions.map(dim => (
+                <button key={dim.id}
+                  className={dim.id === activeDimId ? styles.groupScrollerMenuItemActive : styles.groupScrollerMenuItem}
+                  onClick={() => { onDimensionChange(dim.id); setDimensionMenuOpen(false) }}>
+                  <span>
+                    {dimensionSwatches(dim).map(cat => <b key={cat.id} style={{ background: cat.color || '#aaa' }} />)}
+                    {dimensionSwatches(dim).length === 0 && <b style={{ background: '#9ca3af' }} />}
+                  </span>
+                  <strong>{dim.name}</strong>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className={styles.groupScrollerDots}>
+          {dimensions.map(dim => (
+            <button key={dim.id}
+              className={`${styles.groupScrollerDot} ${dim.id === activeDimId ? styles.groupScrollerDotActive : ''}`}
+              onClick={() => onDimensionChange(dim.id)} title={dim.name} />
+          ))}
+        </div>
+      </div>
+
+      {currentDim && (
+        <div className={styles.groupScrollerUnit} onWheel={cycleCategory}>
+          <span className={styles.groupScrollerLabel}>Category</span>
+          <div ref={categoryPickerRef} className={styles.groupScrollerRow}>
+            <button className={styles.groupScrollerArrow} onClick={prevCategory} disabled={!canCycleCategory} title="Previous category">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <button className={styles.groupScrollerName} onClick={() => setCategoryMenuOpen(value => !value)}
+              disabled={!canCycleCategory} title="Pick category">
+              <span className={styles.groupScrollerCatDot} style={{ background: focusedCategory?.color || '#9ca3af' }} />
+              <span className={styles.groupScrollerText}>{focusedCategory?.name ?? 'Custom'}</span>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+            </button>
+            <button className={styles.groupScrollerArrow} onClick={nextCategory} disabled={!canCycleCategory} title="Next category">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+            {categoryMenuOpen && (
+              <div className={styles.groupScrollerMenu}>
+                {activeCategories.map(cat => (
+                  <button key={cat.id}
+                    className={cat.id === focusedCategory?.id ? styles.groupScrollerMenuItemActive : styles.groupScrollerMenuItem}
+                    onClick={() => { onShowOnlyCategory(cat.id); setCategoryMenuOpen(false) }}>
+                    <span className={styles.groupScrollerSingleSwatch}><b style={{ background: cat.color || '#aaa' }} /></span>
+                    <strong>{cat.name}</strong>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className={styles.groupScrollerDots}>
+            {activeCategories.map(cat => (
+              <button key={cat.id}
+                className={`${styles.groupScrollerDot} ${cat.id === focusedCategory?.id ? styles.groupScrollerDotActive : ''}`}
+                onClick={() => onShowOnlyCategory(cat.id)} title={cat.name} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ClassificationToolbar({
-  dimensions, containerDimId, onContainerDimChange, onCreateDim, onRenameDim, onRequestDeleteDim,
+  dimensions, categories, activeCategories, visibilityCategories, containerDimId, hiddenCatIds,
+  onContainerDimChange, onToggleCategory, onShowAllCategories, onShowOnlyCategory,
+  onCreateDim, onRenameDim, onRequestDeleteDim,
   onReorderDims, maxGridCols, onMaxGridColsChange, singleColumnWidth, onSingleColumnWidthChange,
 }) {
   const [dimMenuOpen, setDimMenuOpen] = useState(false)
@@ -392,33 +605,26 @@ function ClassificationToolbar({
 
   return (
     <div className={styles.classToolbar}>
-      <div className={styles.tbGroupBy} aria-label="Normal dimensions">
-        <button
-          className={`${styles.tbGroupByPill} ${!containerDimId ? styles.tbGroupByPillActive : ''}`}
-          onClick={() => onContainerDimChange('')}>
-          None
-        </button>
-        {normalDimensions.map(d => (
-          <button key={d.id}
-            className={`${styles.tbGroupByPill} ${d.id === containerDimId ? styles.tbGroupByPillActive : ''}`}
-            onClick={() => onContainerDimChange(d.id)}>
-            {d.name}
-          </button>
-        ))}
-      </div>
+      <ClassificationGroupScroller
+        dimensions={dimensions}
+        categories={categories}
+        activeCategories={activeCategories}
+        activeDimId={containerDimId}
+        hiddenCatIds={hiddenCatIds}
+        onDimensionChange={onContainerDimChange}
+        onShowOnlyCategory={onShowOnlyCategory}
+      />
+
+      {visibilityCategories.length > 0 && (
+        <ClassificationCategoryVisibilityDropdown
+          categories={visibilityCategories}
+          hiddenCatIds={hiddenCatIds}
+          onToggle={onToggleCategory}
+          onShowAll={onShowAllCategories}
+        />
+      )}
 
       <div style={{ flex: 1 }} />
-
-      <div className={styles.tbDynamicGroup} aria-label="Dynamic dimensions">
-        {specialDimensions.map(d => (
-          <button key={d.id}
-            className={`${styles.tbGroupByPill} ${styles.tbDynamicPill} ${d.id === containerDimId ? styles.tbGroupByPillActive : ''}`}
-            title={d.system ? 'System dimension' : 'Dynamic dimension'}
-            onClick={() => onContainerDimChange(d.id)}>
-            {d.name}
-          </button>
-        ))}
-      </div>
 
       <div className={styles.tbSettingsWrap}>
         <button
@@ -1907,6 +2113,35 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     : visibleNotes
   const showUnassignedBox = containerDimId !== TIME_DIMENSION_ID
   const unassignedLabel = isKanbanContainerDimension ? 'Not scheduled yet' : 'Unassigned'
+  const visibilityCategories = showUnassignedBox
+    ? [...containerCats, { id: UNASSIGNED_CATEGORY_ID, name: unassignedLabel, color: '#bbb' }]
+    : containerCats
+  const hiddenContainerCategoryIds = new Set(collapsedCatIds)
+  if (unassignedCollapsed) hiddenContainerCategoryIds.add(UNASSIGNED_CATEGORY_ID)
+
+  const toggleContainerCategoryVisibility = catId => {
+    if (catId === UNASSIGNED_CATEGORY_ID) {
+      setUnassignedCollapsed(value => !value)
+      return
+    }
+    setCollapsedCatIds(prev => {
+      const next = new Set(prev)
+      if (next.has(catId)) next.delete(catId)
+      else next.add(catId)
+      return next
+    })
+  }
+
+  const showAllContainerCategories = () => {
+    setCollapsedCatIds(new Set())
+    setUnassignedCollapsed(false)
+  }
+
+  const showOnlyContainerCategory = catId => {
+    if (!catId) return
+    setCollapsedCatIds(new Set(containerCats.filter(cat => cat.id !== catId).map(cat => cat.id)))
+    setUnassignedCollapsed(true)
+  }
 
   const reorderNoteInCategory = async (catId, dragNoteId, targetNoteId) => {
     if (!containerDimId || isDynamicDimensionId(containerDimId) || !catId || dragNoteId === targetNoteId) return
@@ -1931,8 +2166,8 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   }
 
   const visibleContainerCats = containerCats.filter(c => !collapsedCatIds.has(c.id))
-  const numBoxes = visibleContainerCats.length + (showUnassignedBox ? 1 : 0)
-  const gridCols = Math.min(numBoxes, maxGridCols)
+  const numBoxes = visibleContainerCats.length + (showUnassignedBox && !unassignedCollapsed ? 1 : 0)
+  const gridCols = Math.max(1, Math.min(numBoxes, maxGridCols))
   const colTemplate = gridCols === 1 ? `min(100%, ${singleColumnWidth}px)` : '1fr'
   const gridStyle = {
     gridTemplateColumns: `repeat(${gridCols}, ${colTemplate})`,
@@ -1949,8 +2184,15 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     >
       <ClassificationToolbar
         dimensions={dynamicDimensions}
+        categories={dynamicCategories}
+        activeCategories={containerCats}
+        visibilityCategories={visibilityCategories}
         containerDimId={containerDimId}
+        hiddenCatIds={hiddenContainerCategoryIds}
         onContainerDimChange={setContainerDimId}
+        onToggleCategory={toggleContainerCategoryVisibility}
+        onShowAllCategories={showAllContainerCategories}
+        onShowOnlyCategory={showOnlyContainerCategory}
         onCreateDim={createDimension}
         onRenameDim={renameDimension}
         onRequestDeleteDim={setConfirmDeleteDimId}
@@ -1962,31 +2204,6 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
       />
 
       <div className={styles.body}>
-        {/* Collapsed categories strip */}
-        {(collapsedCatIds.size > 0 || (showUnassignedBox && unassignedCollapsed)) && (
-          <div className={styles.collapsedStrip}>
-            {containerCats.filter(c => collapsedCatIds.has(c.id)).map(cat => (
-              <button key={cat.id} className={styles.collapsedChip}
-                style={{ borderColor: cat.color, borderStyle: cat.dynamic ? 'dashed' : undefined }}
-                onClick={() => setCollapsedCatIds(prev => { const n = new Set(prev); n.delete(cat.id); return n })}>
-                <span className={styles.collapsedDot} style={{ background: cat.color }} />
-                <span style={{ color: '#444' }}>{cat.name}</span>
-                {(cat.dynamic || cat.system) && <span style={{ color: '#888', fontWeight: 700 }}> {dynamicDimensionLabel(cat)}</span>}
-                <span style={{ color: '#aaa', fontWeight: 400 }}> {notesForCat(cat.id).length}</span>
-              </button>
-            ))}
-            {showUnassignedBox && unassignedCollapsed && (
-              <button className={styles.collapsedChip}
-                style={{ borderColor: '#ccc' }}
-                onClick={() => setUnassignedCollapsed(false)}>
-                <span className={styles.collapsedDot} style={{ background: '#ccc' }} />
-                <span style={{ color: '#444' }}>{unassignedLabel}</span>
-                <span style={{ color: '#aaa', fontWeight: 400 }}> {unassignedNotes.length}</span>
-              </button>
-            )}
-          </div>
-        )}
-
         <div className={styles.canvas} style={gridStyle}
           onDragOver={e => {
             if (e.dataTransfer.types.includes('catdrag') || e.dataTransfer.types.includes('persona-drag')) e.preventDefault()

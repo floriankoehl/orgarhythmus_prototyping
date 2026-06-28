@@ -1643,7 +1643,7 @@ function ScheduleGroupScroller({
               title="Pick category"
             >
               <span className={styles.groupScrollerCatDot} style={{ background: focusedCategory?.color || '#9ca3af' }} />
-              <span className={styles.groupScrollerText}>{focusedCategory?.name ?? 'All visible'}</span>
+              <span className={styles.groupScrollerText}>{focusedCategory?.name ?? 'Custom'}</span>
               <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
             </button>
             <button className={styles.groupScrollerArrow} onClick={nextCategory} disabled={!canCycleCategory} title="Next category">
