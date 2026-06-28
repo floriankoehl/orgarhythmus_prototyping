@@ -1,0 +1,199 @@
+/* PeopleWidget — mirrors the legend widget pattern */
+
+.widget {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* ── Panel ─────────────────────────────────────────────────────────────── */
+.panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  min-width: 200px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.14);
+}
+
+/* ── Active persona hint ────────────────────────────────────────────────── */
+.activeHint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font-size: 11px;
+  color: #1a73e8;
+  font-family: Arial, sans-serif;
+  background: #e8f0fe;
+  border-bottom: 1px solid #c5d8fc;
+  font-style: italic;
+}
+
+.activeHintDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #1a73e8;
+  flex-shrink: 0;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+/* ── Persona item ───────────────────────────────────────────────────────── */
+.item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #f5f5f5;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  font-family: Arial, sans-serif;
+  color: #444;
+  transition: background 0.1s;
+}
+.item:last-of-type { border-bottom: none; }
+.item:hover { background: #f8f8f8; }
+
+.itemActive {
+  background: #e8f0fe !important;
+  color: #1a73e8;
+  font-weight: 600;
+}
+
+.avatar {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.checkIcon {
+  flex-shrink: 0;
+  color: #1a73e8;
+}
+
+/* ── Empty state ────────────────────────────────────────────────────────── */
+.empty {
+  padding: 12px 14px;
+  font-size: 12px;
+  font-family: Arial, sans-serif;
+  color: #999;
+  text-align: center;
+}
+
+/* ── Cancel button ──────────────────────────────────────────────────────── */
+.cancelBtn {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-family: Arial, sans-serif;
+  color: #888;
+  background: #fafafa;
+  border: none;
+  border-top: 1px solid #ebebeb;
+  cursor: pointer;
+  text-align: center;
+}
+.cancelBtn:hover { background: #f0f0f0; color: #333; }
+
+/* ── Toggle button (the visible icon) ──────────────────────────────────── */
+.toggleBtn {
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+  background: rgba(255,255,255,0.88);
+  border: 1px solid #ddd;
+  border-radius: 50%;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.toggleBtn:hover { color: #333; background: #fff; }
+
+.toggleActive {
+  color: #1a73e8 !important;
+  background: #e8f0fe !important;
+  border-color: #1a73e8 !important;
+}
+
+.togglePainting {
+  color: #1a73e8 !important;
+  border-color: #1a73e8 !important;
+  box-shadow: 0 0 0 3px rgba(26,115,232,0.20) !important;
+  animation: paintPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes paintPulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(26,115,232,0.20); }
+  50%       { box-shadow: 0 0 0 5px rgba(26,115,232,0.08); }
+}
+
+/* ── Hover tooltip hint ─────────────────────────────────────────────────── */
+.hint {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: max-content;
+  max-width: 190px;
+  padding: 7px 9px;
+  color: #333;
+  background: rgba(255,255,255,0.92);
+  border: 1px solid #e0e0e0;
+  border-radius: 7px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 0.14s, transform 0.14s;
+  backdrop-filter: blur(4px);
+}
+.hint strong,
+.hint small {
+  display: block;
+  white-space: nowrap;
+}
+.hint strong {
+  font-size: 12px;
+  font-family: Arial, sans-serif;
+  line-height: 1.2;
+}
+.hint small {
+  margin-top: 2px;
+  color: #777;
+  font-size: 11px;
+  font-family: Arial, sans-serif;
+  line-height: 1.2;
+}
+.widget:hover .hint {
+  opacity: 1;
+  transform: translateY(0);
+}

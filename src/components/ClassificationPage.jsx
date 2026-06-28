@@ -1,7 +1,10 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import styles from './ClassificationPage.module.css'
 import { api } from '../api'
+import PeopleWidget from './PeopleWidget'
+import PersonaAvatarStack from './PersonaAvatarStack'
+import { usePersonaCursor } from '../hooks/usePersonaCursor'
 
 const PRESET_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#94a3b8']
 const FILTER_DIMENSION_ID = '__filters__'
@@ -628,7 +631,7 @@ function CategoryEditModal({ cat, onClose, onSave, onDelete }) {
 }
 
 // ── Note row inside a container ───────────────────────────────────────────────
-function NoteRow({ note, paintCat, onPaint, legendColor, onNoteDrop, onOpen, canDrag = true, forceExpanded = false }) {
+function NoteRow({ note, paintCat, onPaint, paintPersona, onPersonaPaint, legendColor, onNoteDrop, onOpen, canDrag = true, forceExpanded = false, getNotePersonas, onRemovePersona }) {
   const [expanded, setExpanded] = useState(false)
   const [dragging, setDragging] = useState(false)
   const showContent = Boolean(note.html && (expanded || forceExpanded))
@@ -637,8 +640,8 @@ function NoteRow({ note, paintCat, onPaint, legendColor, onNoteDrop, onOpen, can
     <div
       className={`${styles.noteRow} ${dragging ? styles.dragging : ''}`}
       style={legendColor ? { borderLeft: `3px solid ${legendColor}`, background: `${legendColor}28` } : undefined}
-      draggable={!paintCat && canDrag}
-      onDragStart={paintCat || !canDrag ? undefined : e => {
+      draggable={!paintCat && !paintPersona && canDrag}
+      onDragStart={paintCat || paintPersona || !canDrag ? undefined : e => {
         e.dataTransfer.setData('noteId', note.id)
         e.dataTransfer.effectAllowed = 'move'
         setDragging(true)
@@ -654,28 +657,29 @@ function NoteRow({ note, paintCat, onPaint, legendColor, onNoteDrop, onOpen, can
         e.dataTransfer.setDragImage(ghost, e.nativeEvent.offsetX ?? 0, e.nativeEvent.offsetY ?? 0)
         setTimeout(() => ghost.remove(), 0)
       }}
-      onDragOver={paintCat || !canDrag ? undefined : e => {
+      onDragOver={paintCat || paintPersona || !canDrag ? undefined : e => {
         if (!e.dataTransfer.types.includes('noteid')) return
         e.preventDefault()
       }}
-      onDrop={paintCat || !canDrag ? undefined : e => {
+      onDrop={paintCat || paintPersona || !canDrag ? undefined : e => {
         e.preventDefault()
         e.stopPropagation()
         const dragNoteId = e.dataTransfer.getData('noteId')
         if (dragNoteId) onNoteDrop?.(dragNoteId, note.id)
       }}
-      onDragEnd={paintCat ? undefined : () => setDragging(false)}
-      onClick={paintCat ? e => { e.stopPropagation(); onPaint(note.id) } : undefined}
-      onDoubleClick={paintCat ? undefined : e => { e.stopPropagation(); onOpen?.(note.id) }}
+      onDragEnd={paintCat || paintPersona ? undefined : () => setDragging(false)}
+      onClick={paintPersona ? e => { e.stopPropagation(); onPersonaPaint?.(note.id) } : paintCat ? e => { e.stopPropagation(); onPaint(note.id) } : undefined}
+      onDoubleClick={paintCat || paintPersona ? undefined : e => { e.stopPropagation(); onOpen?.(note.id) }}
     >
       <div className={styles.noteRowHeader}>
         <button className={styles.rowChevron}
-          onClick={paintCat ? undefined : () => setExpanded(e => !e)}>
+          onClick={paintCat || paintPersona ? undefined : () => setExpanded(e => !e)}>
           <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"
             style={{ transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.15s' }}>
             <path d="M7 10l5 5 5-5z" />
           </svg>
         </button>
+        <PersonaAvatarStack personas={getNotePersonas?.(note.id) ?? []} onRemove={onRemovePersona ? personaId => onRemovePersona(personaId, note.id) : undefined} />
         <span className={styles.rowTitle}>{note.title}</span>
       </div>
       {showContent && (
@@ -689,10 +693,11 @@ function NoteRow({ note, paintCat, onPaint, legendColor, onNoteDrop, onOpen, can
 }
 
 // ── Category container box ────────────────────────────────────────────────────
-function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onEdit, onCollapse,
+function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, paintPersona, onPersonaCategoryPaint, onPersonaNotePaint, getNoteColor, getNotePersonas, onRemovePersona, catPersonas, onPersonaCatDrop, onRemoveCatPersona, onEdit, onCollapse,
   onCatDragStart, onCatDragEnd, onCatDragOver, onCatDrop, onReorderNote, insertSide, isDraggingCat, onNoteOpen,
   onBulkPaint, dynamic = false, readOnlyCategory = false, unassignedLabel = 'Unassigned' }) {
   const [isDragOver, setIsDragOver] = useState(false)
+  const [isPersonaDragOver, setIsPersonaDragOver] = useState(false)
   const [allExpanded, setAllExpanded] = useState(false)
   const dragCounter = useRef(0)
   const boxRef = useRef()
@@ -700,6 +705,7 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onE
   const clearDragOver = () => {
     dragCounter.current = 0
     setIsDragOver(false)
+    setIsPersonaDragOver(false)
   }
 
   useEffect(() => {
@@ -716,15 +722,26 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onE
     e.preventDefault()
     if (e.dataTransfer.types.includes('catdrag')) return
     dragCounter.current++
-    setIsDragOver(true)
+    if (e.dataTransfer.types.includes('persona-drag')) {
+      if (cat && !readOnlyCategory) setIsPersonaDragOver(true)
+    } else {
+      setIsDragOver(true)
+    }
   }
   const handleDragLeave = () => {
     if (dragCounter.current === 0) return
     dragCounter.current--
-    if (dragCounter.current === 0) setIsDragOver(false)
+    if (dragCounter.current === 0) {
+      setIsDragOver(false)
+      setIsPersonaDragOver(false)
+    }
   }
   const handleDragOver = e => {
     if (dynamic) return
+    if (e.dataTransfer.types.includes('persona-drag') && cat && !readOnlyCategory) {
+      e.preventDefault()
+      return
+    }
     e.preventDefault()
     if (e.dataTransfer.types.includes('catdrag')) {
       const rect = boxRef.current?.getBoundingClientRect()
@@ -739,6 +756,12 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onE
     if (dynamic) return
     e.preventDefault()
     e.stopPropagation()
+    const personaId = e.dataTransfer.getData('persona-drag')
+    if (personaId && cat && !readOnlyCategory) {
+      setIsPersonaDragOver(false)
+      onPersonaCatDrop?.(personaId, cat.id)
+      return
+    }
     clearDragOver()
     if (e.dataTransfer.types.includes('catdrag')) { onCatDrop?.(); return }
     const noteId = e.dataTransfer.getData('noteId')
@@ -772,8 +795,9 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onE
       onDrop={handleDrop}
     >
       <div
-        className={`${styles.catBoxHeader} ${paintCat ? styles.catBoxHeaderPaintable : ''}`}
+        className={`${styles.catBoxHeader} ${paintCat ? styles.catBoxHeaderPaintable : ''} ${paintPersona && cat && !dynamic ? styles.catBoxHeaderPersonaPaintable : ''} ${isPersonaDragOver ? styles.catBoxHeaderPersonaDrop : ''}`}
         style={{ borderTopColor: cat?.color ?? '#e0e0e0' }}
+        onClick={paintPersona && cat && !dynamic ? e => { e.stopPropagation(); onPersonaCategoryPaint?.(cat.id) } : undefined}
       >
         {cat && !dynamic && !readOnlyCategory && (
           <div className={styles.dragHandle}
@@ -809,6 +833,12 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onE
           {(dynamic || readOnlyCategory) && <span className={styles.dynamicBadge}>{dynamicDimensionLabel(cat)}</span>}
           <span className={styles.catBoxCount}> {notes.length}</span>
         </span>
+        {cat && !dynamic && !readOnlyCategory && catPersonas?.length > 0 && (
+          <PersonaAvatarStack
+            personas={catPersonas}
+            onRemove={personaId => onRemoveCatPersona?.(personaId, cat.id)}
+          />
+        )}
         {paintCat && onBulkPaint && (
           <button
             className={styles.catBulkPaintBtn}
@@ -849,10 +879,12 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, getNoteColor, onE
       <div className={styles.catBoxBody}>
         {notes.length === 0
           ? <div className={styles.catBoxEmpty}>{dynamic ? 'No matching notes' : 'Drop notes here'}</div>
-          : notes.map(g => <NoteRow key={g.id} note={g} paintCat={paintCat} onPaint={onPaint} legendColor={getNoteColor?.(g.id)}
+          : notes.map(g => <NoteRow key={g.id} note={g} paintCat={paintCat} onPaint={onPaint} paintPersona={paintPersona} onPersonaPaint={onPersonaNotePaint} legendColor={getNoteColor?.(g.id)}
               onNoteDrop={handleNoteDrop}
               canDrag={!dynamic}
               forceExpanded={allExpanded}
+              getNotePersonas={getNotePersonas}
+              onRemovePersona={onRemovePersona}
               onOpen={onNoteOpen} />)
         }
       </div>
@@ -1247,6 +1279,12 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const [maxGridCols, setMaxGridCols] = useState(6)
   const [singleColumnWidth, setSingleColumnWidth] = useState(800)
   const [paintCat, setPaintCat]             = useState(null)
+  const [paintPersonaId, setPaintPersonaId] = useState(null)
+  const [personas, setPersonas] = useState([])
+  const [personaNoteAssignments, setPersonaNoteAssignments] = useState([])
+  const [personaCatAssignments, setPersonaCatAssignments] = useState([])
+  const activePersona = useMemo(() => personas.find(p => p.id === paintPersonaId) ?? null, [personas, paintPersonaId])
+  const personaCursor = usePersonaCursor(activePersona)
   const [bulkPaintConfirm, setBulkPaintConfirm] = useState(null)
   const [editCat, setEditCat]               = useState(null)
   const [confirmDeleteDimId, setConfirmDeleteDimId] = useState(null)
@@ -1271,14 +1309,17 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   }
 
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getFilters(), api.getClassificationPerspectives(), api.getTimeSlots()])
-      .then(([dims, cats, assigns, filters, loadedPerspectives, loadedTimeSlots]) => {
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getFilters(), api.getClassificationPerspectives(), api.getTimeSlots(), api.getPersonas(), api.getDirectPersonaNoteAssignments(), api.getDirectPersonaAssignments()])
+      .then(([dims, cats, assigns, filters, loadedPerspectives, loadedTimeSlots, ps, pnas, pcas]) => {
         setDimensions(dims)
         setCategories(cats)
         setTimeSlots(loadedTimeSlots)
         setNamedFilters(filters.map(normalizeFilter))
         setPerspectives(loadedPerspectives.map(normalizePerspective))
         applyAssignments(assigns)
+        setPersonas(ps)
+        setPersonaNoteAssignments(pnas)
+        setPersonaCatAssignments(pcas)
         const groupDim    = dims.find(d => d.name === 'Group')
         const priorityDim = dims.find(d => d.name === 'Priority')
         if (groupDim)    setContainerDimId(groupDim.id)
@@ -1286,6 +1327,24 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
       })
       .catch(console.error)
   }, [])
+
+  const catPersonasMap = useMemo(() => {
+    const map = {}
+    personaCatAssignments.forEach(a => {
+      const p = personas.find(p => p.id === a.personaId)
+      if (p) (map[a.categoryId] = map[a.categoryId] || []).push(p)
+    })
+    return map
+  }, [personas, personaCatAssignments])
+
+  const notePersonasMap = useMemo(() => {
+    const map = {}
+    personaNoteAssignments.forEach(a => {
+      const p = personas.find(p => p.id === a.personaId)
+      if (p) (map[a.noteId] = map[a.noteId] || []).push(p)
+    })
+    return map
+  }, [personas, personaNoteAssignments])
 
   useEffect(() => {
     if (!refreshKey) return
@@ -1819,9 +1878,9 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
 
   return (
     <div
-      className={`${styles.note} ${paintCat ? styles.paintMode : ''}`}
-      style={paintCat ? { cursor: makeColorCursor(paintCat.color) } : undefined}
-      onClick={paintCat ? () => setPaintCat(null) : undefined}
+      className={`${styles.note} ${paintCat || paintPersonaId ? styles.paintMode : ''}`}
+      style={paintCat ? { cursor: makeColorCursor(paintCat.color) } : personaCursor ? { cursor: personaCursor } : undefined}
+      onClick={(paintCat || paintPersonaId) ? () => { setPaintCat(null); setPaintPersonaId(null) } : undefined}
     >
       <ClassificationToolbar
         dimensions={dynamicDimensions}
@@ -1864,7 +1923,9 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
         )}
 
         <div className={styles.canvas} style={gridStyle}
-          onDragOver={e => { if (e.dataTransfer.types.includes('catdrag')) e.preventDefault() }}
+          onDragOver={e => {
+            if (e.dataTransfer.types.includes('catdrag') || e.dataTransfer.types.includes('persona-drag')) e.preventDefault()
+          }}
           onDrop={e => { if (e.dataTransfer.types.includes('catdrag')) { reorderCatsDrop(); catDragCleanup() } }}
         >
           {containerCats.filter(c => !collapsedCatIds.has(c.id)).map(cat => (
@@ -1872,7 +1933,37 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
               onDrop={cat.dynamic ? undefined : noteId => assignNote(noteId, cat.id)}
               onEdit={cat.dynamicType === 'filter' ? () => setEditingFilter(namedFilters.find(f => f.id === cat.filterId)) : cat.dynamic || cat.system ? undefined : () => setEditCat(cat)}
               onCollapse={() => setCollapsedCatIds(prev => new Set([...prev, cat.id]))}
-              paintCat={paintCat} onPaint={paintNote} getNoteColor={getNoteLegendColor}
+              paintCat={paintCat} onPaint={paintNote}
+              paintPersona={paintPersonaId ? true : null}
+              onPersonaCategoryPaint={catId => { if (paintPersonaId && containerDimId) api.assignPersona(paintPersonaId, containerDimId, catId).catch(console.error) }}
+              onPersonaNotePaint={noteId => {
+                if (!paintPersonaId) return
+                api.assignPersonaToNote(paintPersonaId, noteId).catch(console.error)
+                setPersonaNoteAssignments(prev => [
+                  ...prev.filter(a => !(a.personaId === paintPersonaId && a.noteId === noteId)),
+                  { personaId: paintPersonaId, noteId },
+                ])
+              }}
+              getNoteColor={getNoteLegendColor}
+              getNotePersonas={noteId => notePersonasMap[noteId] || []}
+              onRemovePersona={(personaId, noteId) => {
+                api.unassignPersonaFromNote(personaId, noteId).catch(console.error)
+                setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.noteId === noteId)))
+              }}
+              catPersonas={cat.id ? catPersonasMap[cat.id] || [] : []}
+              onPersonaCatDrop={(personaId, catId) => {
+                if (!containerDimId) return
+                api.assignPersona(personaId, containerDimId, catId).catch(console.error)
+                setPersonaCatAssignments(prev => [
+                  ...prev.filter(a => !(a.personaId === personaId && a.categoryId === catId)),
+                  { personaId, dimensionId: containerDimId, categoryId: catId },
+                ])
+              }}
+              onRemoveCatPersona={(personaId, catId) => {
+                if (!containerDimId) return
+                api.unassignPersona(personaId, containerDimId, catId).catch(console.error)
+                setPersonaCatAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.categoryId === catId)))
+              }}
               onCatDragStart={setCatDragId}
               onCatDragEnd={catDragCleanup}
               onCatDragOver={handleCatDragOver}
@@ -1892,7 +1983,24 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
               onCollapse={() => setUnassignedCollapsed(true)}
               unassignedLabel={unassignedLabel}
               onReorderNote={reorderNoteInCategory}
-              paintCat={paintCat} onPaint={paintNote} getNoteColor={getNoteLegendColor}
+              paintCat={paintCat} onPaint={paintNote}
+              paintPersona={paintPersonaId ? true : null}
+              onPersonaCategoryPaint={() => {}}
+              onPersonaNotePaint={noteId => {
+                if (!paintPersonaId) return
+                api.assignPersonaToNote(paintPersonaId, noteId).catch(console.error)
+                setPersonaNoteAssignments(prev => [
+                  ...prev.filter(a => !(a.personaId === paintPersonaId && a.noteId === noteId)),
+                  { personaId: paintPersonaId, noteId },
+                ])
+              }}
+              getNoteColor={getNoteLegendColor}
+              getNotePersonas={noteId => notePersonasMap[noteId] || []}
+              onRemovePersona={(personaId, noteId) => {
+                api.unassignPersonaFromNote(personaId, noteId).catch(console.error)
+                setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.noteId === noteId)))
+              }}
+              catPersonas={[]}
               onBulkPaint={requestBulkPaint}
               onNoteOpen={onNoteOpen} />
           )}
@@ -1933,11 +2041,17 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
             quickFilters={quickFilters}
             onToggleQuickFilter={toggleQuickFilter}
             paintCat={paintCat}
-            onPaintActivate={activatePaint}
+            onPaintActivate={(catId, color) => { setPaintPersonaId(null); activatePaint(catId, color) }}
             onEditCat={setEditCat}
             onCreateCat={createCategory}
             expanded={floatingPanel === 'color'}
             onExpandedChange={open => setFloatingPanel(open ? 'color' : null)}
+          />
+          <PeopleWidget
+            paintPersonaId={paintPersonaId}
+            onPaintPersonaChange={id => { setPaintCat(null); setPaintPersonaId(id) }}
+            expanded={floatingPanel === 'people'}
+            onExpandedChange={open => setFloatingPanel(open ? 'people' : null)}
           />
         </div>
 

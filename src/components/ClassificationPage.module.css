@@ -674,6 +674,19 @@
   background: rgba(26,115,232,0.06);
 }
 
+.catBoxHeaderPersonaPaintable {
+  cursor: crosshair;
+}
+.catBoxHeaderPersonaPaintable:hover {
+  background: rgba(26,115,232,0.08);
+}
+
+.catBoxHeaderPersonaDrop {
+  background: rgba(26,115,232,0.12) !important;
+  outline: 2px dashed #1a73e8;
+  outline-offset: -2px;
+}
+
 /* Bulk-paint button shown on header hover in paint mode */
 .catBulkPaintBtn {
   flex-shrink: 0;
@@ -1035,7 +1048,6 @@
   word-wrap: break-word;
 }
 .noteHoverContent > * { margin: 4px 0 0; }
-.noteRow:hover .noteHoverContent { display: block; }
 
 /* ── Add category box (grid item) ────────────────────────── */
 .addCatBox {

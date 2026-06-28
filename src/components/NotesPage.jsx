@@ -4,6 +4,9 @@ import { api } from '../api'
 import CategoryAssignmentPicker from './CategoryAssignmentPicker'
 import CategoryHashtagSuggestions from './CategoryHashtagSuggestions'
 import DimensionDropUp from './DimensionDropUp'
+import PeopleWidget from './PeopleWidget'
+import PersonaAvatarStack from './PersonaAvatarStack'
+import { usePersonaCursor } from '../hooks/usePersonaCursor'
 import { categoryMatchesForHashtags, mergeSelectionsWithHashtags } from '../categoryHashtags'
 import { useProgressiveNoteSearch } from '../useProgressiveNoteSearch'
 
@@ -74,6 +77,10 @@ function PostIt({
   interactionMode,
   paintCat,
   onPaint,
+  paintPersona,
+  onPersonaPaint,
+  assignedPersonas,
+  onRemovePersona,
   onDragStart,
   onCollapse,
   onOpen,
@@ -210,6 +217,11 @@ function PostIt({
   }
 
   const handleClick = (e) => {
+    if (paintPersona) {
+      e.stopPropagation()
+      onPersonaPaint?.(note.id)
+      return
+    }
     if (paintCat) {
       e.stopPropagation()
       onPaint?.(note.id)
@@ -303,7 +315,10 @@ function PostIt({
             placeholder="Untitled"
           />
         ) : (
-          <span className={styles.postitTitle}>{note.title || 'Untitled'}</span>
+          <>
+            <PersonaAvatarStack personas={assignedPersonas || []} onRemove={onRemovePersona} />
+            <span className={styles.postitTitle}>{note.title || 'Untitled'}</span>
+          </>
         )}
         {!inlineEditing && interactionMode === 'edit' && (
           <>
@@ -546,8 +561,13 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   const [categorySelections, setCategorySelections] = useState({})
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false)
   const [allAssignments, setAllAssignments] = useState([])
+  const [personas, setPersonas] = useState([])
+  const [personaNoteAssignments, setPersonaNoteAssignments] = useState([])
   const [colorDimId, setColorDimId] = useState('')
   const [paintCat, setPaintCat] = useState(null)
+  const [paintPersonaId, setPaintPersonaId] = useState(null)
+  const activePersona = useMemo(() => personas.find(p => p.id === paintPersonaId) ?? null, [personas, paintPersonaId])
+  const personaCursor = usePersonaCursor(activePersona)
   const [floatingPanel, setFloatingPanel] = useState(null)
   const [interactionMode, setInteractionMode] = useState('edit')
   const [selectedIds, setSelectedIds] = useState(new Set())
@@ -574,12 +594,23 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   }, [findFocused])
 
   // ── Load category metadata ──────────────────────────────────────────────────
+  const notePersonasMap = useMemo(() => {
+    const map = {}
+    personaNoteAssignments.forEach(a => {
+      const p = personas.find(p => p.id === a.personaId)
+      if (p) (map[a.noteId] = map[a.noteId] || []).push(p)
+    })
+    return map
+  }, [personas, personaNoteAssignments])
+
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments()])
-      .then(([dims, cats, asns]) => {
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getPersonas(), api.getDirectPersonaNoteAssignments()])
+      .then(([dims, cats, asns, ps, pnas]) => {
         setDimensions(dims)
         setCategories(cats)
         setAllAssignments(asns)
+        setPersonas(ps)
+        setPersonaNoteAssignments(pnas)
       })
       .catch(console.error)
   }, [refreshKey])
@@ -1138,9 +1169,9 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
     <div
-      className={`${styles.note} ${paintCat ? styles.paintMode : ''}`}
-      style={paintCat ? { cursor: makeColorCursor(paintCat.color) } : undefined}
-      onClick={paintCat ? () => setPaintCat(null) : undefined}
+      className={`${styles.note} ${paintCat || paintPersonaId ? styles.paintMode : ''}`}
+      style={paintCat ? { cursor: makeColorCursor(paintCat.color) } : personaCursor ? { cursor: personaCursor } : undefined}
+      onClick={(paintCat || paintPersonaId) ? () => { setPaintCat(null); setPaintPersonaId(null) } : undefined}
     >
 
       {/* Floating background */}
@@ -1200,6 +1231,20 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
               onInlineUpdate={handleInlineUpdate}
               paintCat={paintCat}
               onPaint={paintNote}
+              paintPersona={paintPersonaId ? true : null}
+              assignedPersonas={notePersonasMap[id] || []}
+              onPersonaPaint={async noteId => {
+                if (!paintPersonaId) return
+                await api.assignPersonaToNote(paintPersonaId, noteId).catch(console.error)
+                setPersonaNoteAssignments(prev => [
+                  ...prev.filter(a => !(a.personaId === paintPersonaId && a.noteId === noteId)),
+                  { personaId: paintPersonaId, noteId },
+                ])
+              }}
+              onRemovePersona={async personaId => {
+                await api.unassignPersonaFromNote(personaId, id).catch(console.error)
+                setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.noteId === id)))
+              }}
             />
           )
         })}
@@ -1283,10 +1328,16 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
           onDimDataChanged={handleDimDataChanged}
           onApplyToAll={applyCatToAll}
           paintCat={paintCat}
-          onPaintActivate={activatePaint}
+          onPaintActivate={(catId, color) => { setPaintPersonaId(null); activatePaint(catId, color) }}
           onExpandCategory={expandCategoryOnCanvas}
           expanded={floatingPanel === 'color'}
           onExpandedChange={open => setFloatingPanel(open ? 'color' : null)}
+        />
+        <PeopleWidget
+          paintPersonaId={paintPersonaId}
+          onPaintPersonaChange={id => { setPaintCat(null); setPaintPersonaId(id) }}
+          expanded={floatingPanel === 'people'}
+          onExpandedChange={open => setFloatingPanel(open ? 'people' : null)}
         />
       </div>
 
