@@ -23,6 +23,8 @@ function StatCard({ label, value }) {
 export default function ProjectDashboard({ project, onUpdate, isActive }) {
   const [name,        setName]        = useState(project.name)
   const [desc,        setDesc]        = useState(project.description || '')
+  const [startDate,   setStartDate]   = useState(project.startDate || '')
+  const [endDate,     setEndDate]     = useState(project.endDate || '')
   const [stats,       setStats]       = useState(null)
   const [editingName, setEditingName] = useState(false)
   const [editingDesc, setEditingDesc] = useState(false)
@@ -35,6 +37,8 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
     setName(project.name)
     setDesc(project.description || '')
     setDraftDesc(project.description || '')
+    setStartDate(project.startDate || '')
+    setEndDate(project.endDate || '')
   }, [project.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -75,6 +79,14 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
   const handleDescCancel = () => {
     setDraftDesc(desc)
     setEditingDesc(false)
+  }
+
+  const handleStartDateBlur = () => {
+    if (startDate !== (project.startDate || '')) persist({ startDate })
+  }
+
+  const handleEndDateBlur = () => {
+    if (endDate !== (project.endDate || '')) persist({ endDate })
   }
 
   const handleExport = async () => {
@@ -128,6 +140,33 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
             {Object.entries(STAT_LABELS).map(([key, label]) => (
               <StatCard key={key} label={label} value={stats?.[key]} />
             ))}
+          </div>
+        </div>
+
+        {/* Timeline dates */}
+        <div className={styles.section}>
+          <label className={styles.sectionLabel}>Timeline</label>
+          <div className={styles.dateRow}>
+            <div className={styles.dateField}>
+              <label className={styles.dateLabel}>Start date</label>
+              <input
+                type="date"
+                className={styles.dateInput}
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+                onBlur={handleStartDateBlur}
+              />
+            </div>
+            <div className={styles.dateField}>
+              <label className={styles.dateLabel}>End date <span className={styles.dateOptional}>(optional)</span></label>
+              <input
+                type="date"
+                className={styles.dateInput}
+                value={endDate}
+                onChange={e => setEndDate(e.target.value)}
+                onBlur={handleEndDateBlur}
+              />
+            </div>
           </div>
         </div>
 

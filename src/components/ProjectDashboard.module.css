@@ -196,6 +196,47 @@
 }
 .descSave:hover { background: #1765cc; }
 
+/* ── Timeline dates ─────────────────────────────────────────────────────────── */
+.dateRow {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.dateField {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+  min-width: 140px;
+}
+
+.dateLabel {
+  font-size: 12px;
+  color: #555;
+  font-weight: 500;
+}
+
+.dateOptional {
+  font-weight: 400;
+  color: #9aa0a6;
+}
+
+.dateInput {
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: Arial, sans-serif;
+  color: #333;
+  background: #fff;
+  border: 1.5px solid #e0e0e0;
+  border-radius: 7px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.dateInput:hover { border-color: #bbb; }
+.dateInput:focus { border-color: #1a73e8; }
+
 /* ── Footer row ────────────────────────────────────────────────────────────── */
 .footerRow {
   display: flex;

@@ -51,6 +51,10 @@ const TIME_SLOT_LABEL_MODES = [
 ]
 const SCHEDULE_PERSPECTIVE_VERSION = 2
 
+// Module-level anchor date. When set, col 0 = this date instead of today.
+// Updated by SchedulePage whenever the active project changes.
+let _timelineAnchor = null
+
 function normalizeTimeZoom(value) {
   if (value === 'hours') return 'minutes'
   if (value === 'weeks') return 'days'
@@ -260,16 +264,17 @@ function filterCategoryId(filterId) {
 
 // ── Axis / label helpers ───────────────────────────────────────────────────────
 
-// minute 0 = today at 00:00.
-function minuteToDate(minute) {
-  const d = new Date(); d.setHours(0, 0, 0, 0)
-  d.setMinutes(d.getMinutes() + minute)
+// minute 0 = project start date (or today if no project start is set).
+function timelineStartDate() {
+  if (_timelineAnchor) return new Date(_timelineAnchor.getTime())
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
   return d
 }
 
-function timelineStartDate() {
-  const d = new Date()
-  d.setHours(0, 0, 0, 0)
+function minuteToDate(minute) {
+  const d = timelineStartDate()
+  d.setMinutes(d.getMinutes() + minute)
   return d
 }
 
@@ -2047,16 +2052,23 @@ function PerspectiveMenu({ perspectives, activePerspectiveId, defaultPerspective
   const [name, setName] = useState('')
   const [editingId, setEditingId] = useState('')
   const [editingName, setEditingName] = useState('')
+  const [savingActive, setSavingActive] = useState(false)
   const wrapRef = useRef()
   const wheelAtRef = useRef(0)
   const applyTimerRef = useRef(null)
   const active = perspectives.find(p => p.id === activePerspectiveId)
   const canSaveActive = Boolean(active && !active.readOnly)
 
-  const saveActive = e => {
+  const saveActive = async e => {
     e?.preventDefault()
     e?.stopPropagation()
-    if (canSaveActive) onUpdate(activePerspectiveId)
+    if (!canSaveActive || savingActive) return
+    setSavingActive(true)
+    try {
+      await onUpdate(active.id)
+    } finally {
+      setSavingActive(false)
+    }
   }
 
   useEffect(() => {
@@ -2116,9 +2128,10 @@ function PerspectiveMenu({ perspectives, activePerspectiveId, defaultPerspective
   return (
     <div ref={wrapRef} className={styles.perspectiveWrap}>
       <button
+        type="button"
         className={styles.perspectiveToolbarSaveBtn}
-        title={canSaveActive ? 'Update current perspective snapshot' : 'None cannot be saved'}
-        disabled={!canSaveActive}
+        title={canSaveActive ? (savingActive ? 'Saving perspective…' : 'Update current perspective snapshot') : 'None cannot be saved'}
+        disabled={!canSaveActive || savingActive}
         onClick={saveActive}>
         <SaveIcon />
       </button>
@@ -2281,6 +2294,17 @@ function ScheduleColorLegendWidget({
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged }) {
+  // ── Timeline anchor ────────────────────────────────────────────────────────
+  // Keep the module-level anchor in sync with the project's start date so that
+  // col 0 always maps to the project start rather than drifting with today.
+  const _anchor = useMemo(() => {
+    if (!project?.startDate) return null
+    const d = new Date(project.startDate)
+    d.setHours(0, 0, 0, 0)
+    return d
+  }, [project?.startDate])
+  _timelineAnchor = _anchor
+
   // ── API data ───────────────────────────────────────────────────────────────
   const [dimensions,   setDimensions]   = useState([])
   const [categories,   setCategories]   = useState([])
@@ -5355,14 +5379,12 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
   const updatePerspectiveSnapshot = useCallback(async perspectiveId => {
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
-    const current = perspectives.find(p => p.id === perspectiveId)
-    if (!current) return
     try {
       const saved = normalizePerspective(await api.updateSchedulePerspective(perspectiveId, { state: capturePerspectiveState() }))
       setPerspectives(prev => prev.map(p => p.id === saved.id ? saved : p))
       setActivePerspectiveId(saved.id)
     } catch (err) { console.error(err) }
-  }, [capturePerspectiveState, perspectives])
+  }, [capturePerspectiveState])
 
   const renamePerspective = useCallback(async (perspectiveId, name) => {
     if (perspectiveId === NONE_PERSPECTIVE_ID) return

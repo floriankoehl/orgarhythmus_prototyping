@@ -54,13 +54,19 @@ function ProjectCard({ project, onOpen, onDelete }) {
 
   const date = new Date(project.createdAt)
   const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const startStr = project.startDate
+    ? new Date(project.startDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : null
 
   return (
     <div className={styles.card} onClick={() => onOpen(project)}>
       <div className={styles.cardBody}>
         <div className={styles.cardName}>{project.name}</div>
         <div className={styles.cardMeta}>
-          <span className={styles.cardDate}>{dateStr}</span>
+          {startStr
+            ? <span className={styles.cardDate}>Starts {startStr}</span>
+            : <span className={styles.cardDate}>{dateStr}</span>
+          }
         </div>
         {project.description && (
           <div className={styles.cardDesc}>{project.description}</div>

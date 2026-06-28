@@ -588,6 +588,12 @@ def _migrate():
             con.execute("ALTER TABLE projects ADD COLUMN resize_scale_crossing_warning_enabled INTEGER NOT NULL DEFAULT 1")
         con.execute("UPDATE projects SET resize_warn_order_threshold = 2 WHERE resize_warn_order_threshold = 1")
         con.execute("UPDATE projects SET resize_block_order_threshold = 2 WHERE resize_block_order_threshold = 3")
+        if 'start_date' not in proj_cols:
+            con.execute("ALTER TABLE projects ADD COLUMN start_date TEXT NOT NULL DEFAULT ''")
+            con.execute("UPDATE projects SET start_date = DATE('now') WHERE start_date = ''")
+            proj_cols = [r[1] for r in con.execute("PRAGMA table_info(projects)").fetchall()]
+        if 'end_date' not in proj_cols:
+            con.execute("ALTER TABLE projects ADD COLUMN end_date TEXT NOT NULL DEFAULT ''")
         if 'color' in proj_cols:
             pass  # keep for compat, just don't use in UI
 
@@ -684,10 +690,14 @@ class ProjectIn(BaseModel):
     id: Optional[str] = None
     name: str
     description: str = ''
+    startDate: Optional[str] = None
+    endDate: Optional[str] = None
 
 class ProjectPatch(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    startDate: Optional[str] = None
+    endDate: Optional[str] = None
     resizeWarnOrderThreshold: Optional[float] = None
     resizeBlockOrderThreshold: Optional[float] = None
     resizeScaleCrossingWarningEnabled: Optional[bool] = None
@@ -829,6 +839,8 @@ def _project(row) -> dict:
         "userId": d.get("user_id", ""),
         "name": d["name"],
         "description": d.get("description", ""),
+        "startDate": d.get("start_date", ""),
+        "endDate": d.get("end_date", ""),
         "resizeWarnOrderThreshold": float(d.get("resize_warn_order_threshold", 2)),
         "resizeBlockOrderThreshold": float(d.get("resize_block_order_threshold", 2)),
         "resizeScaleCrossingWarningEnabled": bool(d.get("resize_scale_crossing_warning_enabled", 1)),
@@ -1971,12 +1983,14 @@ def list_projects(user: dict = Depends(current_user)):
 def create_project(data: ProjectIn, user: dict = Depends(current_user)):
     pid = data.id or str(uuid.uuid4())
     name = data.name.strip() or 'Untitled'
+    start_date = data.startDate or datetime.now().strftime('%Y-%m-%d')
+    end_date = data.endDate or ''
     with _db() as con:
         if con.execute("SELECT id FROM projects WHERE id = ?", (pid,)).fetchone():
             raise HTTPException(409, "Project already exists")
         con.execute(
-            "INSERT INTO projects (id, user_id, name, description, resize_warn_order_threshold, resize_block_order_threshold, resize_scale_crossing_warning_enabled) VALUES (?, ?, ?, ?, 2, 2, 1)",
-            (pid, user["id"], name, data.description or ''),
+            "INSERT INTO projects (id, user_id, name, description, start_date, end_date, resize_warn_order_threshold, resize_block_order_threshold, resize_scale_crossing_warning_enabled) VALUES (?, ?, ?, ?, ?, ?, 2, 2, 1)",
+            (pid, user["id"], name, data.description or '', start_date, end_date),
         )
         row = con.execute("SELECT * FROM projects WHERE id = ?", (pid,)).fetchone()
     _seed_defaults(pid)
@@ -1991,6 +2005,10 @@ def update_project(project_id: str, data: ProjectPatch, user: dict = Depends(cur
             fields.append("name = ?");  values.append(data.name.strip() or 'Untitled')
         if data.description is not None:
             fields.append("description = ?"); values.append(data.description)
+        if data.startDate is not None:
+            fields.append("start_date = ?"); values.append(data.startDate)
+        if data.endDate is not None:
+            fields.append("end_date = ?"); values.append(data.endDate)
         if data.resizeWarnOrderThreshold is not None:
             fields.append("resize_warn_order_threshold = ?"); values.append(max(0, float(data.resizeWarnOrderThreshold)))
         if data.resizeBlockOrderThreshold is not None:
