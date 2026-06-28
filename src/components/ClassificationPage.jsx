@@ -1256,7 +1256,7 @@ function LegendWidget({
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ClassificationPage({ notes = [], isActive = false, onNoteOpen, refreshKey = 0, dimRefreshKey = 0, onDimChanged }) {
+export default function ClassificationPage({ notes = [], isActive = false, onNoteOpen, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged }) {
   const [dimensions, setDimensions]         = useState([])
   const [categories, setCategories]         = useState([])
   const [timeSlots, setTimeSlots]           = useState([])
@@ -1345,6 +1345,17 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     })
     return map
   }, [personas, personaNoteAssignments])
+
+  useEffect(() => {
+    if (!peopleRefreshKey) return
+    Promise.all([api.getPersonas(), api.getDirectPersonaNoteAssignments(), api.getDirectPersonaAssignments()])
+      .then(([ps, pnas, pcas]) => {
+        setPersonas(ps)
+        setPersonaNoteAssignments(pnas)
+        setPersonaCatAssignments(pcas)
+      })
+      .catch(console.error)
+  }, [peopleRefreshKey])
 
   useEffect(() => {
     if (!refreshKey) return
@@ -1692,6 +1703,25 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     }
   }
 
+  const assignPersonaToCategory = (personaId, dimId, catId) => {
+    if (!personaId || !dimId || !catId || isDynamicDimensionId(dimId)) return
+    setPersonaCatAssignments(prev => [
+      ...prev.filter(a => !(a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId)),
+      { personaId, dimensionId: dimId, categoryId: catId },
+    ])
+    api.assignPersona(personaId, dimId, catId)
+      .then(() => onPeopleChanged?.())
+      .catch(console.error)
+  }
+
+  const removePersonaFromCategory = (personaId, dimId, catId) => {
+    if (!personaId || !dimId || !catId || isDynamicDimensionId(dimId)) return
+    setPersonaCatAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId)))
+    api.unassignPersona(personaId, dimId, catId)
+      .then(() => onPeopleChanged?.())
+      .catch(console.error)
+  }
+
   // ── Derived (needed by reorder handlers below) ───────────────────────────────
   const filterCategories = namedFilters.map((filter, idx) => ({
     id: filterCategoryId(filter.id),
@@ -1935,10 +1965,10 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
               onCollapse={() => setCollapsedCatIds(prev => new Set([...prev, cat.id]))}
               paintCat={paintCat} onPaint={paintNote}
               paintPersona={paintPersonaId ? true : null}
-              onPersonaCategoryPaint={catId => { if (paintPersonaId && containerDimId) api.assignPersona(paintPersonaId, containerDimId, catId).catch(console.error) }}
+              onPersonaCategoryPaint={catId => assignPersonaToCategory(paintPersonaId, containerDimId, catId)}
               onPersonaNotePaint={noteId => {
                 if (!paintPersonaId) return
-                api.assignPersonaToNote(paintPersonaId, noteId).catch(console.error)
+                api.assignPersonaToNote(paintPersonaId, noteId).then(() => onPeopleChanged?.()).catch(console.error)
                 setPersonaNoteAssignments(prev => [
                   ...prev.filter(a => !(a.personaId === paintPersonaId && a.noteId === noteId)),
                   { personaId: paintPersonaId, noteId },
@@ -1947,23 +1977,12 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
               getNoteColor={getNoteLegendColor}
               getNotePersonas={noteId => notePersonasMap[noteId] || []}
               onRemovePersona={(personaId, noteId) => {
-                api.unassignPersonaFromNote(personaId, noteId).catch(console.error)
+                api.unassignPersonaFromNote(personaId, noteId).then(() => onPeopleChanged?.()).catch(console.error)
                 setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.noteId === noteId)))
               }}
               catPersonas={cat.id ? catPersonasMap[cat.id] || [] : []}
-              onPersonaCatDrop={(personaId, catId) => {
-                if (!containerDimId) return
-                api.assignPersona(personaId, containerDimId, catId).catch(console.error)
-                setPersonaCatAssignments(prev => [
-                  ...prev.filter(a => !(a.personaId === personaId && a.categoryId === catId)),
-                  { personaId, dimensionId: containerDimId, categoryId: catId },
-                ])
-              }}
-              onRemoveCatPersona={(personaId, catId) => {
-                if (!containerDimId) return
-                api.unassignPersona(personaId, containerDimId, catId).catch(console.error)
-                setPersonaCatAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.categoryId === catId)))
-              }}
+              onPersonaCatDrop={(personaId, catId) => assignPersonaToCategory(personaId, containerDimId, catId)}
+              onRemoveCatPersona={(personaId, catId) => removePersonaFromCategory(personaId, containerDimId, catId)}
               onCatDragStart={setCatDragId}
               onCatDragEnd={catDragCleanup}
               onCatDragOver={handleCatDragOver}
@@ -1988,7 +2007,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
               onPersonaCategoryPaint={() => {}}
               onPersonaNotePaint={noteId => {
                 if (!paintPersonaId) return
-                api.assignPersonaToNote(paintPersonaId, noteId).catch(console.error)
+                api.assignPersonaToNote(paintPersonaId, noteId).then(() => onPeopleChanged?.()).catch(console.error)
                 setPersonaNoteAssignments(prev => [
                   ...prev.filter(a => !(a.personaId === paintPersonaId && a.noteId === noteId)),
                   { personaId: paintPersonaId, noteId },
@@ -1997,7 +2016,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
               getNoteColor={getNoteLegendColor}
               getNotePersonas={noteId => notePersonasMap[noteId] || []}
               onRemovePersona={(personaId, noteId) => {
-                api.unassignPersonaFromNote(personaId, noteId).catch(console.error)
+                api.unassignPersonaFromNote(personaId, noteId).then(() => onPeopleChanged?.()).catch(console.error)
                 setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.noteId === noteId)))
               }}
               catPersonas={[]}
@@ -2052,6 +2071,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
             onPaintPersonaChange={id => { setPaintCat(null); setPaintPersonaId(id) }}
             expanded={floatingPanel === 'people'}
             onExpandedChange={open => setFloatingPanel(open ? 'people' : null)}
+            refreshKey={peopleRefreshKey}
           />
         </div>
 

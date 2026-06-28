@@ -56,6 +56,7 @@ export default function App() {
   const [refreshKey, setRefreshKey]   = useState(0)
   const [noteDataVersion, setNoteDataVersion] = useState(0)
   const [dimVersion, setDimVersion]   = useState(0)
+  const [peopleVersion, setPeopleVersion] = useState(0)
   const [popupNoteId, setPopupNoteId] = useState(null)
   const [toast, setToast]             = useState(null)
 
@@ -255,7 +256,16 @@ export default function App() {
           />
         </div>
         <div className={styles.view} style={{ display: view === 2 ? 'flex' : 'none' }}>
-          <ClassificationPage notes={notes} isActive={view === 2} onNoteOpen={openNotePopup} refreshKey={noteDataVersion} dimRefreshKey={dimVersion} onDimChanged={() => setDimVersion(v => v + 1)} />
+          <ClassificationPage
+            notes={notes}
+            isActive={view === 2}
+            onNoteOpen={openNotePopup}
+            refreshKey={noteDataVersion}
+            dimRefreshKey={dimVersion}
+            peopleRefreshKey={peopleVersion}
+            onDimChanged={() => setDimVersion(v => v + 1)}
+            onPeopleChanged={() => setPeopleVersion(v => v + 1)}
+          />
         </div>
         <div className={styles.view} style={{ display: view === 3 ? 'flex' : 'none' }}>
           <SchedulePage
@@ -268,14 +278,19 @@ export default function App() {
             onNotesChanged={handleNotesChanged}
             refreshKey={noteDataVersion}
             dimRefreshKey={dimVersion}
+            peopleRefreshKey={peopleVersion}
             onDimChanged={() => setDimVersion(v => v + 1)}
+            onPeopleChanged={() => setPeopleVersion(v => v + 1)}
           />
         </div>
         <div className={styles.view} style={{ display: view === 4 ? 'flex' : 'none' }}>
           <InheritancePage notes={notes} isActive={view === 4} onNoteOpen={openNotePopup} />
         </div>
         <div className={styles.view} style={{ display: view === 5 ? 'flex' : 'none' }}>
-          <PeoplePage />
+          <PeoplePage
+            peopleRefreshKey={peopleVersion}
+            onPeopleChanged={() => setPeopleVersion(v => v + 1)}
+          />
         </div>
       </div>
 

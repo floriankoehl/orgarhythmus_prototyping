@@ -1367,34 +1367,6 @@ function PersonaMini({ persona, size = 28 }) {
   )
 }
 
-function uniqueBy(items, keyFn) {
-  const seen = new Set()
-  return items.filter(item => {
-    const key = keyFn(item)
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-}
-
-
-function deriveEffectivePersonaAssignments(directAssignments, effectiveNoteAssignments, noteAssignments) {
-  const noteCategoryLinks = new Map()
-  noteAssignments.forEach(a => {
-    const list = noteCategoryLinks.get(a.noteId) || []
-    list.push({ dimensionId: a.dimensionId, categoryId: a.categoryId })
-    noteCategoryLinks.set(a.noteId, list)
-  })
-  const inherited = effectiveNoteAssignments.flatMap(a =>
-    (noteCategoryLinks.get(a.noteId) || []).map(link => ({
-      personaId: a.personaId,
-      dimensionId: link.dimensionId,
-      categoryId: link.categoryId,
-    }))
-  )
-  return uniqueBy([...directAssignments, ...inherited], a => `${a.personaId}:${a.dimensionId}:${a.categoryId}`)
-}
-
 function People2DView({
   activeDimension,
   activeCats = [],
@@ -1411,7 +1383,9 @@ function People2DView({
   onUnassign,
   onMoveAssignment,
   onAssignPersonaToNote,
+  onUnassignPersonaFromNote,
   onAssignLeader,
+  onRemoveLeader,
   onSelect,
   selected,
 }) {
@@ -1429,10 +1403,6 @@ function People2DView({
       e.preventDefault()
       onUnassign?.(payload.personaId, payload.dimensionId, payload.categoryId)
     }
-  }
-  const dragPersona = (personaId, e) => {
-    e.dataTransfer.effectAllowed = 'copyMove'
-    e.dataTransfer.setData('application/x-persona', JSON.stringify({ source: 'panel', personaId }))
   }
   const dragCategoryAssignment = (personaId, dimensionId, categoryId, e) => {
     e.stopPropagation()
@@ -1514,18 +1484,32 @@ function People2DView({
                 </div>
                 <div className={styles.people2dPersonaCloud}>
                   {assigned.map(persona => (
-                    <button
+                    <div
                       key={persona.id}
-                      className={`${styles.people2dPersonaButton} ${selected === persona.id ? styles.people2dPersonaButtonActive : ''}`}
+                      className={styles.people2dPersonaItem}
                       draggable
                       onDragStart={e => dragCategoryAssignment(persona.id, activeDimension.id, cat.id, e)}
-                      onClick={e => {
-                        e.stopPropagation()
-                        onSelect?.(selected === persona.id ? null : persona.id)
-                      }}
                     >
-                      <PersonaMini persona={persona} />
-                    </button>
+                      <button
+                        className={`${styles.people2dPersonaButton} ${selected === persona.id ? styles.people2dPersonaButtonActive : ''}`}
+                        onClick={e => {
+                          e.stopPropagation()
+                          onSelect?.(selected === persona.id ? null : persona.id)
+                        }}
+                      >
+                        <PersonaMini persona={persona} />
+                      </button>
+                      <button
+                        className={styles.people2dPersonaRemove}
+                        title={`Remove ${persona.name} from ${cat.name}`}
+                        onClick={e => {
+                          e.stopPropagation()
+                          onUnassign?.(persona.id, activeDimension.id, cat.id)
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
                   ))}
                 </div>
               </section>
@@ -1535,42 +1519,89 @@ function People2DView({
       )}
 
       {focusedCategory && (
-        <div className={styles.people2dFocus}>
-          <section
-            className={styles.people2dLeaderLane}
-            style={{ '--cat-color': focusedCategory.color || '#888' }}
-          >
-            <div className={styles.people2dLaneTitle}>People in {focusedCategory.name}</div>
-            <div className={styles.people2dPersonaCloud}>
-              {focusedCategoryPersonas.length === 0 ? <span className={styles.people2dEmpty}>No people assigned yet</span> : focusedCategoryPersonas.map(persona => (
-                <button
-                  key={persona.id}
-                  className={styles.people2dPersonaButton}
-                  draggable
-                  onDragStart={e => dragPersona(persona.id, e)}
-                  onClick={() => onSelect?.(selected === persona.id ? null : persona.id)}
-                >
-                  <PersonaMini persona={persona} />
-                </button>
-              ))}
+        <div className={styles.people2dFocus} style={{ '--cat-color': focusedCategory.color || '#888' }}>
+          <div className={styles.people2dCategoryToolbar}>
+            <div className={styles.people2dCategoryIdentity}>
+              <span className={styles.people2dCategorySwatch} />
+              <div className={styles.people2dCategoryTitleBlock}>
+                <span className={styles.people2dCategoryKicker}>{activeDimension?.name || 'Category'}</span>
+                <strong>{focusedCategory.name}</strong>
+              </div>
             </div>
-          </section>
+            <div className={styles.people2dCategoryStats}>
+              <span>{leaderPersonas.length} leaders</span>
+              <span>{focusedCategoryPersonas.length} people</span>
+              <span>{focusedNotes.length} notes</span>
+            </div>
+            <button
+              className={styles.people2dCategoryBack}
+              onClick={() => onClearCategory?.()}
+              title="Back to all categories"
+            >
+              All categories
+            </button>
+          </div>
           <section
             className={styles.people2dLeaderLane}
-            style={{ '--cat-color': focusedCategory.color || '#888' }}
             onDragOver={allowDrop}
             onDrop={handleLeaderDrop}
           >
             <div className={styles.people2dLaneTitle}>Leaders</div>
             <div className={styles.people2dPersonaCloud}>
               {leaderPersonas.length === 0 ? <span className={styles.people2dEmpty}>Drop people here</span> : leaderPersonas.map(persona => (
-                <button
+                <div
                   key={persona.id}
-                  className={styles.people2dPersonaButton}
-                  onClick={() => onSelect?.(selected === persona.id ? null : persona.id)}
+                  className={styles.people2dPersonaItem}
                 >
-                  <PersonaMini persona={persona} />
-                </button>
+                  <button
+                    className={`${styles.people2dPersonaButton} ${selected === persona.id ? styles.people2dPersonaButtonActive : ''}`}
+                    onClick={() => onSelect?.(selected === persona.id ? null : persona.id)}
+                  >
+                    <PersonaMini persona={persona} />
+                  </button>
+                  <button
+                    className={styles.people2dPersonaRemove}
+                    title={`Remove ${persona.name} as leader`}
+                    onClick={e => {
+                      e.stopPropagation()
+                      onRemoveLeader?.(persona.id, focusedCategory.id)
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+          <section
+            className={styles.people2dLeaderLane}
+          >
+            <div className={styles.people2dLaneTitle}>People in {focusedCategory.name}</div>
+            <div className={styles.people2dPersonaCloud}>
+              {focusedCategoryPersonas.length === 0 ? <span className={styles.people2dEmpty}>No people assigned yet</span> : focusedCategoryPersonas.map(persona => (
+                <div
+                  key={persona.id}
+                  className={styles.people2dPersonaItem}
+                  draggable
+                  onDragStart={e => dragCategoryAssignment(persona.id, activeDimension.id, focusedCategory.id, e)}
+                >
+                  <button
+                    className={`${styles.people2dPersonaButton} ${selected === persona.id ? styles.people2dPersonaButtonActive : ''}`}
+                    onClick={() => onSelect?.(selected === persona.id ? null : persona.id)}
+                  >
+                    <PersonaMini persona={persona} />
+                  </button>
+                  <button
+                    className={styles.people2dPersonaRemove}
+                    title={`Remove ${persona.name} from ${focusedCategory.name}`}
+                    onClick={e => {
+                      e.stopPropagation()
+                      onUnassign?.(persona.id, activeDimension.id, focusedCategory.id)
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
               ))}
             </div>
           </section>
@@ -1589,16 +1620,30 @@ function People2DView({
                   <p>{note.description || ''}</p>
                   <div className={styles.people2dPersonaCloud}>
                     {assigned.map(persona => (
-                      <button
+                      <div
                         key={persona.id}
-                        className={styles.people2dPersonaButton}
-                        onClick={e => {
-                          e.stopPropagation()
-                          onSelect?.(selected === persona.id ? null : persona.id)
-                        }}
+                        className={styles.people2dPersonaItem}
                       >
-                        <PersonaMini persona={persona} size={24} />
-                      </button>
+                        <button
+                          className={`${styles.people2dPersonaButton} ${selected === persona.id ? styles.people2dPersonaButtonActive : ''}`}
+                          onClick={e => {
+                            e.stopPropagation()
+                            onSelect?.(selected === persona.id ? null : persona.id)
+                          }}
+                        >
+                          <PersonaMini persona={persona} size={24} />
+                        </button>
+                        <button
+                          className={styles.people2dPersonaRemove}
+                          title={`Remove ${persona.name} from note "${note.title || 'Untitled'}"`}
+                          onClick={e => {
+                            e.stopPropagation()
+                            onUnassignPersonaFromNote?.(persona.id, note.id)
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </section>
@@ -1613,7 +1658,7 @@ function People2DView({
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
-export default function PeoplePage() {
+export default function PeoplePage({ peopleRefreshKey = 0, onPeopleChanged }) {
   const [dimensions, setDimensions]   = useState([])
   const [dimIndex, setDimIndex]       = useState(0)
   const [categories, setCategories]   = useState([])
@@ -1661,6 +1706,18 @@ export default function PeoplePage() {
   }, [replacePersonaAssignments])
 
   useEffect(() => {
+    if (!peopleRefreshKey) return
+    Promise.all([api.getPersonas(), api.getDirectPersonaAssignments(), api.getDirectPersonaNoteAssignments(), api.getCategoryLeaders()])
+      .then(([pers, personaAsns, pnAsns, leaders]) => {
+        setPersonas(pers)
+        replacePersonaAssignments(personaAsns, { revise: true })
+        setPersonaNoteAssignments(pnAsns)
+        setCategoryLeaders(leaders)
+      })
+      .catch(console.error)
+  }, [peopleRefreshKey, replacePersonaAssignments])
+
+  useEffect(() => {
     personaAssignmentsRef.current = personaAssignments
   }, [personaAssignments])
 
@@ -1671,11 +1728,6 @@ export default function PeoplePage() {
   const focusedCategory = focusedCategoryId
     ? activeCats.find(c => c.id === focusedCategoryId) ?? null
     : null
-
-  const effectivePersonaAssignments = useMemo(
-    () => deriveEffectivePersonaAssignments(personaAssignments, personaNoteAssignments, noteAssignments),
-    [personaAssignments, personaNoteAssignments, noteAssignments],
-  )
 
   useEffect(() => {
     if (!focusedCategoryId) return
@@ -1712,6 +1764,7 @@ export default function PeoplePage() {
         a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId ? saved : a
       )
       replacePersonaAssignments(savedAssignments, { revise: false })
+      onPeopleChanged?.()
     } catch (e) {
       console.error(e)
       const revertedAssignments = personaAssignmentsRef.current.filter(a => !(a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId))
@@ -1726,6 +1779,7 @@ export default function PeoplePage() {
     replacePersonaAssignments(nextAssignments, { immediate: true })
     try {
       await api.unassignPersona(personaId, dimId, catId)
+      onPeopleChanged?.()
     } catch (e) {
       console.error(e)
       if (removed) {
@@ -1756,6 +1810,7 @@ export default function PeoplePage() {
         await api.assignPersona(personaId, dimId, toCatId)
       }
       await api.unassignPersona(personaId, dimId, fromCatId)
+      onPeopleChanged?.()
     } catch (e) {
       console.error(e)
       replacePersonaAssignments(previousAssignments)
@@ -1767,6 +1822,7 @@ export default function PeoplePage() {
     setCategoryLeaders(prev => [...prev, { personaId, categoryId: catId }])
     try {
       await api.addCategoryLeader(catId, personaId)
+      onPeopleChanged?.()
     } catch (e) {
       console.error(e)
       setCategoryLeaders(prev => prev.filter(l => !(l.personaId === personaId && l.categoryId === catId)))
@@ -1777,6 +1833,7 @@ export default function PeoplePage() {
     setCategoryLeaders(prev => prev.filter(l => !(l.personaId === personaId && l.categoryId === catId)))
     try {
       await api.removeCategoryLeader(catId, personaId)
+      onPeopleChanged?.()
     } catch (e) {
       console.error(e)
       setCategoryLeaders(prev => [...prev, { personaId, categoryId: catId }])
@@ -1788,6 +1845,7 @@ export default function PeoplePage() {
     setPersonaNoteAssignments(prev => [...prev, { personaId, noteId }])
     try {
       await api.assignPersonaToNote(personaId, noteId)
+      onPeopleChanged?.()
     } catch (e) {
       console.error(e)
       setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.noteId === noteId)))
@@ -1798,6 +1856,7 @@ export default function PeoplePage() {
     setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.noteId === noteId)))
     try {
       await api.unassignPersonaFromNote(personaId, noteId)
+      onPeopleChanged?.()
     } catch (e) {
       console.error(e)
       setPersonaNoteAssignments(prev => [...prev, { personaId, noteId }])
@@ -1813,6 +1872,7 @@ export default function PeoplePage() {
     try {
       const saved = await api.updatePersona(id, { name: patch.name, model_key: patch.modelKey })
       setPersonas(prev => prev.map(p => p.id === id ? saved : p))
+      onPeopleChanged?.()
     } catch (e) {
       if (previous) setPersonas(prev => prev.map(p => p.id === id ? previous : p))
       throw e
@@ -1830,6 +1890,7 @@ export default function PeoplePage() {
     setEditPersonaId(null)
     try {
       await api.deletePersona(id)
+      onPeopleChanged?.()
     } catch (e) {
       setPersonas(previousPersonas)
       replacePersonaAssignments(previousAssignments)
@@ -1840,7 +1901,7 @@ export default function PeoplePage() {
 
   const selectedPersona = personas.find(p => p.id === selected) ?? null
   const selectedAssignments = selectedPersona && activeDimension
-    ? effectivePersonaAssignments
+    ? personaAssignments
       .filter(a => a.personaId === selectedPersona.id && a.dimensionId === activeDimension.id)
       .map(a => ({ ...a, category: categories.find(c => c.id === a.categoryId) }))
       .filter(a => a.category)
@@ -1895,7 +1956,7 @@ export default function PeoplePage() {
             activeDimensionId={activeDimension?.id ?? null}
             activeCats={activeCats}
             personas={personas}
-            personaAssignments={effectivePersonaAssignments}
+            personaAssignments={personaAssignments}
             assignmentRevision={assignmentRevision}
             notes={notes}
             noteAssignments={noteAssignments}
@@ -1922,7 +1983,7 @@ export default function PeoplePage() {
           activeDimension={activeDimension}
           activeCats={activeCats}
           personas={personas}
-          personaAssignments={effectivePersonaAssignments}
+          personaAssignments={personaAssignments}
           notes={notes}
           noteAssignments={noteAssignments}
           personaNoteAssignments={personaNoteAssignments}
@@ -1934,7 +1995,9 @@ export default function PeoplePage() {
           onUnassign={handleUnassignPersona}
           onMoveAssignment={handleMovePersonaAssignment}
           onAssignPersonaToNote={handleAssignPersonaToNote}
+          onUnassignPersonaFromNote={handleUnassignPersonaFromNote}
           onAssignLeader={handleAssignLeader}
+          onRemoveLeader={handleRemoveLeader}
           onSelect={setSelected}
           selected={selected}
         />
@@ -2050,14 +2113,17 @@ export default function PeoplePage() {
       {showAddPanel && (
         <AddPersonaPanel
           onClose={() => setShowAddPanel(false)}
-          onCreate={(persona) => setPersonas(prev => [...prev, persona])}
+          onCreate={(persona) => {
+            setPersonas(prev => [...prev, persona])
+            onPeopleChanged?.()
+          }}
         />
       )}
 
       {editPersona && (
         <ProtopersonaModal
           persona={editPersona}
-          assignments={effectivePersonaAssignments}
+          assignments={personaAssignments}
           categories={categories}
           dimensions={dimensions}
           onClose={() => setEditPersonaId(null)}

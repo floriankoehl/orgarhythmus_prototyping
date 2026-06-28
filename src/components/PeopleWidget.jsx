@@ -21,12 +21,13 @@ export default function PeopleWidget({
   onPaintPersonaChange,
   expanded,
   onExpandedChange,
+  refreshKey = 0,
 }) {
   const [personas, setPersonas] = useState([])
 
   useEffect(() => {
     api.getPersonas().then(setPersonas).catch(console.error)
-  }, [])
+  }, [refreshKey])
 
   const activePersona = personas.find(p => p.id === paintPersonaId) ?? null
 
@@ -37,7 +38,7 @@ export default function PeopleWidget({
           {paintPersonaId && (
             <div className={styles.activeHint}>
               <span className={styles.activeHintDot} />
-              <span>Click a note{activePersona ? ` to assign ${activePersona.name}` : ''}</span>
+              <span>Click a note or category{activePersona ? ` to assign ${activePersona.name}` : ''}</span>
             </div>
           )}
           {personas.length === 0 && (
@@ -94,7 +95,7 @@ export default function PeopleWidget({
       {!expanded && (
         <span className={styles.hint}>
           <strong>People</strong>
-          <small>{paintPersonaId && activePersona ? `Assigning ${activePersona.name}` : 'Assign people to notes'}</small>
+          <small>{paintPersonaId && activePersona ? `Assigning ${activePersona.name}` : 'Assign people to notes / categories'}</small>
         </span>
       )}
     </div>

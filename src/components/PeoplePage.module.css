@@ -123,8 +123,18 @@
   gap: 7px;
 }
 
+.people2dPersonaItem {
+  position: relative;
+  max-width: 176px;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+}
+
 .people2dPersonaButton {
+  min-width: 0;
   max-width: 160px;
+  min-height: 30px;
   padding: 4px 7px 4px 4px;
   color: #222;
   background: rgba(255,255,255,0.86);
@@ -137,6 +147,41 @@
 .people2dPersonaButtonActive {
   border-color: #1a73e8;
   background: #e8f0fe;
+}
+
+.people2dPersonaRemove {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: #666;
+  background: #fff;
+  border: 1px solid #d8d8d8;
+  border-radius: 50%;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.13);
+  cursor: pointer;
+  font: 800 13px/1 Arial, sans-serif;
+  opacity: 0;
+  transform: scale(0.88);
+  transition: opacity 0.12s, transform 0.12s, color 0.12s, border-color 0.12s, background 0.12s;
+}
+
+.people2dPersonaItem:hover .people2dPersonaRemove,
+.people2dPersonaItem:focus-within .people2dPersonaRemove {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.people2dPersonaRemove:hover,
+.people2dPersonaRemove:focus-visible {
+  color: #fff;
+  background: #e53e3e;
+  border-color: #e53e3e;
 }
 
 .people2dPersonaMini {
@@ -168,6 +213,97 @@
   min-height: 100%;
 }
 
+.people2dCategoryToolbar {
+  width: 100%;
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--cat-color), #fff 88%);
+  border: 2px solid color-mix(in srgb, var(--cat-color), #fff 24%);
+  border-left-width: 8px;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.07);
+  box-sizing: border-box;
+}
+
+.people2dCategoryIdentity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+
+.people2dCategorySwatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--cat-color);
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--cat-color), #000 20%);
+  flex: 0 0 auto;
+}
+
+.people2dCategoryTitleBlock {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.people2dCategoryTitleBlock strong {
+  min-width: 0;
+  color: #111;
+  font: 800 20px Arial, sans-serif;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.people2dCategoryKicker {
+  color: var(--cat-color);
+  font: 800 10px Arial, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.people2dCategoryStats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.people2dCategoryStats span {
+  padding: 4px 8px;
+  color: color-mix(in srgb, var(--cat-color), #222 18%);
+  background: #fff;
+  border: 1px solid color-mix(in srgb, var(--cat-color), #fff 30%);
+  border-radius: 999px;
+  font: 800 11px Arial, sans-serif;
+  white-space: nowrap;
+}
+
+.people2dCategoryBack {
+  min-height: 30px;
+  padding: 0 10px;
+  color: #333;
+  background: #fff;
+  border: 1px solid color-mix(in srgb, var(--cat-color), #fff 28%);
+  border-radius: 6px;
+  cursor: pointer;
+  font: 800 12px Arial, sans-serif;
+  white-space: nowrap;
+}
+
+.people2dCategoryBack:hover {
+  color: var(--cat-color);
+  border-color: var(--cat-color);
+}
+
 .people2dLeaderLane,
 .people2dFocusedNote {
   padding: 14px;
@@ -175,6 +311,11 @@
   border: 2px solid color-mix(in srgb, var(--cat-color), #fff 32%);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+}
+
+.people2dFocus .people2dLeaderLane:first-of-type {
+  background: color-mix(in srgb, var(--cat-color), #fff 86%);
+  border-color: var(--cat-color);
 }
 
 .people2dLaneTitle {
@@ -983,3 +1124,19 @@
   transition: background 0.1s;
 }
 .modalConfirm:hover { background: #a93226; }
+
+@media (max-width: 720px) {
+  .people2dCategoryToolbar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .people2dCategoryStats {
+    justify-content: flex-start;
+  }
+
+  .people2dCategoryBack {
+    align-self: flex-start;
+  }
+}

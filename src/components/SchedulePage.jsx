@@ -2024,7 +2024,7 @@ function ScheduleColorLegendWidget({
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, onDimChanged }) {
+export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged }) {
   // ── API data ───────────────────────────────────────────────────────────────
   const [dimensions,   setDimensions]   = useState([])
   const [categories,   setCategories]   = useState([])
@@ -2106,6 +2106,17 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (!refreshKey) return
     api.getAssignments().then(applyAssignments).catch(console.error)
   }, [refreshKey])
+
+  useEffect(() => {
+    if (!peopleRefreshKey) return
+    Promise.all([api.getPersonas(), api.getDirectPersonaNoteAssignments(), api.getDirectPersonaAssignments()])
+      .then(([ps, pnas, pcas]) => {
+        setPersonas(ps)
+        setPersonaNoteAssignments(pnas)
+        setPersonaCatAssignments(pcas)
+      })
+      .catch(console.error)
+  }, [peopleRefreshKey])
 
   // Re-fetch dims+cats when another page changes dimension data
   const dimRefreshKeyRef = useRef(dimRefreshKey)
@@ -2523,11 +2534,13 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
   const paintNote = useCallback(async noteId => {
     if (paintPersonaId) {
-      await api.assignPersonaToNote(paintPersonaId, noteId).catch(console.error)
       setPersonaNoteAssignments(prev => [
         ...prev.filter(a => !(a.personaId === paintPersonaId && a.noteId === noteId)),
         { personaId: paintPersonaId, noteId },
       ])
+      await api.assignPersonaToNote(paintPersonaId, noteId)
+        .then(() => onPeopleChanged?.())
+        .catch(console.error)
       return
     }
     if (!paintCat || !colorDimId || colorDimId === FILTER_DIMENSION_ID) return
@@ -2535,7 +2548,45 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       await api.assign(noteId, colorDimId, paintCat.id)
       setAssignments(prev => ({ ...prev, [noteId]: { ...(prev[noteId] ?? {}), [colorDimId]: paintCat.id } }))
     } catch (err) { console.error(err) }
-  }, [colorDimId, paintCat, paintPersonaId])
+  }, [colorDimId, onPeopleChanged, paintCat, paintPersonaId])
+
+  const assignPersonaToNote = useCallback((personaId, noteId) => {
+    if (!personaId || !noteId) return
+    setPersonaNoteAssignments(prev => [
+      ...prev.filter(a => !(a.personaId === personaId && a.noteId === noteId)),
+      { personaId, noteId },
+    ])
+    api.assignPersonaToNote(personaId, noteId)
+      .then(() => onPeopleChanged?.())
+      .catch(console.error)
+  }, [onPeopleChanged])
+
+  const removePersonaFromNote = useCallback((personaId, noteId) => {
+    if (!personaId || !noteId) return
+    setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.noteId === noteId)))
+    api.unassignPersonaFromNote(personaId, noteId)
+      .then(() => onPeopleChanged?.())
+      .catch(console.error)
+  }, [onPeopleChanged])
+
+  const assignPersonaToLaneCategory = useCallback((personaId, catId) => {
+    if (!personaId || !catId || !activeDimId || activeDimId === FILTER_DIMENSION_ID) return
+    setPersonaCatAssignments(prev => [
+      ...prev.filter(a => !(a.personaId === personaId && a.dimensionId === activeDimId && a.categoryId === catId)),
+      { personaId, dimensionId: activeDimId, categoryId: catId },
+    ])
+    api.assignPersona(personaId, activeDimId, catId)
+      .then(() => onPeopleChanged?.())
+      .catch(console.error)
+  }, [activeDimId, onPeopleChanged])
+
+  const removePersonaFromLaneCategory = useCallback((personaId, catId) => {
+    if (!personaId || !catId || !activeDimId || activeDimId === FILTER_DIMENSION_ID) return
+    setPersonaCatAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.dimensionId === activeDimId && a.categoryId === catId)))
+    api.unassignPersona(personaId, activeDimId, catId)
+      .then(() => onPeopleChanged?.())
+      .catch(console.error)
+  }, [activeDimId, onPeopleChanged])
 
   const saveFilter = useCallback(async filter => {
     const normalized = normalizeSavedFilter(filter)
@@ -5263,9 +5314,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                         lhReorderOver && styles.laneHdrReorderTarget,
                       ].filter(Boolean).join(' ')}
                       style={{ top: item.top, height: item.height, borderLeftColor: item.cat?.color ?? '#bbb', background: item.cat ? `${item.cat.color}18` : '#f3f3f3' }}
-                      draggable={Boolean(item.cat && activeDimId)}
+                      draggable={Boolean(item.cat && activeDimId && !paintCat && !paintPersonaId)}
                       onDragStart={e => {
-                        if (!item.cat || !activeDimId) return
+                        if (!item.cat || !activeDimId || paintCat || paintPersonaId) return
                         e.dataTransfer.setData('schedule-cat-id', item.cat.id)
                         e.dataTransfer.effectAllowed = 'move'
                         setDraggingCatId(item.cat.id)
@@ -5297,11 +5348,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                         const personaId = e.dataTransfer.getData('persona-drag')
                         if (personaId && item.cat && activeDimId) {
                           setDragOverLaneCatId(null)
-                          api.assignPersona(personaId, activeDimId, item.cat.id).catch(console.error)
-                          setPersonaCatAssignments(prev => [
-                            ...prev.filter(a => !(a.personaId === personaId && a.categoryId === item.cat.id)),
-                            { personaId, dimensionId: activeDimId, categoryId: item.cat.id },
-                          ])
+                          assignPersonaToLaneCategory(personaId, item.cat.id)
                           return
                         }
                         const catId = e.dataTransfer.getData('schedule-cat-id')
@@ -5322,7 +5369,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                           categoryId: item.cat?.id ?? UNASSIGNED_LANE,
                           categoryName: item.cat?.name ?? 'Unassigned',
                         })
-                      }}>
+                      }}
+                      onClick={paintPersonaId && item.cat ? e => {
+                        e.stopPropagation()
+                        assignPersonaToLaneCategory(paintPersonaId, item.cat.id)
+                      } : undefined}>
                       <span
                         className={styles.laneHdrName}
                         onDoubleClick={e => {
@@ -5336,14 +5387,12 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                         {item.cat?.name ?? 'Unassigned'}
                       </span>
                       {item.cat && (catPersonasMap[item.cat.id] || []).length > 0 && (
-                        <PersonaAvatarStack
-                          personas={catPersonasMap[item.cat.id]}
-                          onRemove={personaId => {
-                            if (!activeDimId) return
-                            api.unassignPersona(personaId, activeDimId, item.cat.id).catch(console.error)
-                            setPersonaCatAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.categoryId === item.cat.id)))
-                          }}
-                        />
+                        <span className={styles.lanePersonaStack}>
+                          <PersonaAvatarStack
+                            personas={catPersonasMap[item.cat.id]}
+                            onRemove={personaId => removePersonaFromLaneCategory(personaId, item.cat.id)}
+                          />
+                        </span>
                       )}
                       <LaneNoteFilter
                         laneKey={laneKeyForCat(item.cat)}
@@ -5373,9 +5422,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                         dragOverNoteId === item.note.id && styles.noteRowDropTarget,
                         isNoteHighlighted(item.note.id) && styles.noteRowHighlight,
                       ].filter(Boolean).join(' ')}
-                      draggable={Boolean(activeDimId) && !paintCat}
+                      draggable={Boolean(activeDimId) && !paintCat && !paintPersonaId}
                       onDragStart={e => {
-                        if (paintCat || !activeDimId) return
+                        if (paintCat || paintPersonaId || !activeDimId) return
                         e.dataTransfer.setData('schedule-note-id', item.note.id)
                         e.dataTransfer.setData('schedule-note-cat', item.cat?.id ?? '')
                         e.dataTransfer.effectAllowed = 'move'
@@ -5393,6 +5442,12 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                         setTimeout(() => ghost.remove(), 0)
                       }}
                       onDragOver={e => {
+                        if (e.dataTransfer.types.includes('persona-drag')) {
+                          e.preventDefault()
+                          setDragOverNoteId(item.note.id)
+                          setDragOverLaneCatId(null)
+                          return
+                        }
                         if (!activeDimId || !e.dataTransfer.types.includes('schedule-note-id')) return
                         e.preventDefault()
                         setDragOverNoteId(item.note.id)
@@ -5400,6 +5455,13 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                       }}
                       onDragLeave={() => setDragOverNoteId(prev => prev === item.note.id ? null : prev)}
                       onDrop={e => {
+                        e.preventDefault()
+                        const personaId = e.dataTransfer.getData('persona-drag')
+                        if (personaId) {
+                          setDragOverNoteId(null)
+                          assignPersonaToNote(personaId, item.note.id)
+                          return
+                        }
                         const dragNoteId = e.dataTransfer.getData('schedule-note-id')
                         const dragCat = e.dataTransfer.getData('schedule-note-cat')
                         setDragOverNoteId(null)
@@ -5438,7 +5500,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                       }}
                       onDoubleClick={e => {
                         e.stopPropagation()
-                        if (paintCat) return
+                        if (paintCat || paintPersonaId) return
                         onNoteOpen?.(item.note.id)
                       }}
                       style={{ top: item.top, height: item.height, borderLeftColor: item.cat?.color ?? 'transparent' }}>
@@ -5447,21 +5509,18 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                       )}
                       <PersonaAvatarStack
                         personas={notePersonasMap[item.note.id] || []}
-                        onRemove={personaId => {
-                          api.unassignPersonaFromNote(personaId, item.note.id).catch(console.error)
-                          setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.noteId === item.note.id)))
-                        }}
+                        onRemove={personaId => removePersonaFromNote(personaId, item.note.id)}
                       />
                       <span
                         className={`${styles.noteTitle} ${paintCat ? styles.paintTarget : ''}`}
                         title={paintCat ? 'Apply selected category' : undefined}
-                        onClick={paintCat ? undefined : e => {
+                        onClick={(paintCat || paintPersonaId) ? undefined : e => {
                           e.stopPropagation()
                           setClickedNoteId(prev => prev === item.note.id ? null : item.note.id)
                         }}
                         onDoubleClick={e => {
                           e.stopPropagation()
-                          if (paintCat) return
+                          if (paintCat || paintPersonaId) return
                           onNoteOpen?.(item.note.id)
                         }}>
                         {item.note.title}
@@ -5745,7 +5804,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                   }}
                   title={!isScaleEditable ? `Switch to ${scaleLabelForZoom(getTimeSlotLevel(m.duration, m.startCol))} view to edit this time slot.` : undefined}
                   onMouseDown={e => {
-                    if (paintCat) {
+                    if (paintCat || paintPersonaId) {
                       e.preventDefault()
                       e.stopPropagation()
                       return
@@ -5763,13 +5822,13 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                   onDoubleClick={e => {
                     e.preventDefault()
                     e.stopPropagation()
-                    if (paintCat) return
+                    if (paintCat || paintPersonaId) return
                     focusTimeSlotByDoubleClick(m.id)
                   }}
                   onContextMenu={e => {
                     e.preventDefault()
                     e.stopPropagation()
-                    if (paintCat) return
+                    if (paintCat || paintPersonaId) return
                     const note = notes.find(g => g.id === m.noteId)
                     const label = `${note?.title ?? 'Time slot'} · ${m.title || minuteToLabel(m.startCol, timeZoom)}`
                     setContextMenu({ type: 'timeSlot', x: e.clientX, y: e.clientY, timeSlotId: m.id, noteId: m.noteId, label })
@@ -5962,6 +6021,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           onPaintPersonaChange={id => { setPaintCat(null); setPaintPersonaId(id) }}
           expanded={floatingPanel === 'people'}
           onExpandedChange={open => setFloatingPanel(open ? 'people' : null)}
+          refreshKey={peopleRefreshKey}
         />
       </div>
 
