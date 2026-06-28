@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { projectsApi } from '../api'
+import { useConfirmDialog } from './ConfirmDialog'
 import styles from './ProjectDashboard.module.css'
 
 const STAT_LABELS = {
@@ -23,7 +24,6 @@ function StatCard({ label, value }) {
 export default function ProjectDashboard({ project, onUpdate, isActive }) {
   const [name,        setName]        = useState(project.name)
   const [desc,        setDesc]        = useState(project.description || '')
-  const [startDate,   setStartDate]   = useState(project.startDate || '')
   const [endDate,     setEndDate]     = useState(project.endDate || '')
   const [stats,       setStats]       = useState(null)
   const [editingName, setEditingName] = useState(false)
@@ -32,12 +32,12 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
   const [exporting,   setExporting]   = useState(false)
   const nameInputRef = useRef()
   const saveTimerRef = useRef(null)
+  const { confirm: confirmDialog, dialog: confirmDialogEl } = useConfirmDialog()
 
   useEffect(() => {
     setName(project.name)
     setDesc(project.description || '')
     setDraftDesc(project.description || '')
-    setStartDate(project.startDate || '')
     setEndDate(project.endDate || '')
   }, [project.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -81,12 +81,17 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
     setEditingDesc(false)
   }
 
-  const handleStartDateBlur = () => {
-    if (startDate !== (project.startDate || '')) persist({ startDate })
-  }
-
-  const handleEndDateBlur = () => {
-    if (endDate !== (project.endDate || '')) persist({ endDate })
+  const handleEndDateBlur = async () => {
+    const current = project.endDate || ''
+    if (endDate === current) return
+    const ok = await confirmDialog({
+      title: 'Change end date?',
+      message: endDate ? `Set the project end date to ${endDate}?` : 'Remove the project end date?',
+      confirmLabel: 'Yes, change it',
+      cancelLabel: 'Cancel',
+    })
+    if (!ok) { setEndDate(current); return }
+    persist({ endDate })
   }
 
   const handleExport = async () => {
@@ -148,14 +153,10 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
           <label className={styles.sectionLabel}>Timeline</label>
           <div className={styles.dateRow}>
             <div className={styles.dateField}>
-              <label className={styles.dateLabel}>Start date</label>
-              <input
-                type="date"
-                className={styles.dateInput}
-                value={startDate}
-                onChange={e => setStartDate(e.target.value)}
-                onBlur={handleStartDateBlur}
-              />
+              <label className={styles.dateLabel}>Created (start)</label>
+              <div className={styles.dateReadOnly}>
+                {new Date(String(project.createdAt).replace(' ', 'T')).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+              </div>
             </div>
             <div className={styles.dateField}>
               <label className={styles.dateLabel}>End date <span className={styles.dateOptional}>(optional)</span></label>
@@ -215,6 +216,7 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
         </div>
 
       </div>
+      {confirmDialogEl}
     </div>
   )
 }

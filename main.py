@@ -690,13 +690,11 @@ class ProjectIn(BaseModel):
     id: Optional[str] = None
     name: str
     description: str = ''
-    startDate: Optional[str] = None
     endDate: Optional[str] = None
 
 class ProjectPatch(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    startDate: Optional[str] = None
     endDate: Optional[str] = None
     resizeWarnOrderThreshold: Optional[float] = None
     resizeBlockOrderThreshold: Optional[float] = None
@@ -839,7 +837,6 @@ def _project(row) -> dict:
         "userId": d.get("user_id", ""),
         "name": d["name"],
         "description": d.get("description", ""),
-        "startDate": d.get("start_date", ""),
         "endDate": d.get("end_date", ""),
         "resizeWarnOrderThreshold": float(d.get("resize_warn_order_threshold", 2)),
         "resizeBlockOrderThreshold": float(d.get("resize_block_order_threshold", 2)),
@@ -1983,14 +1980,13 @@ def list_projects(user: dict = Depends(current_user)):
 def create_project(data: ProjectIn, user: dict = Depends(current_user)):
     pid = data.id or str(uuid.uuid4())
     name = data.name.strip() or 'Untitled'
-    start_date = data.startDate or datetime.now().strftime('%Y-%m-%d')
     end_date = data.endDate or ''
     with _db() as con:
         if con.execute("SELECT id FROM projects WHERE id = ?", (pid,)).fetchone():
             raise HTTPException(409, "Project already exists")
         con.execute(
-            "INSERT INTO projects (id, user_id, name, description, start_date, end_date, resize_warn_order_threshold, resize_block_order_threshold, resize_scale_crossing_warning_enabled) VALUES (?, ?, ?, ?, ?, ?, 2, 2, 1)",
-            (pid, user["id"], name, data.description or '', start_date, end_date),
+            "INSERT INTO projects (id, user_id, name, description, end_date, resize_warn_order_threshold, resize_block_order_threshold, resize_scale_crossing_warning_enabled) VALUES (?, ?, ?, ?, ?, 2, 2, 1)",
+            (pid, user["id"], name, data.description or '', end_date),
         )
         row = con.execute("SELECT * FROM projects WHERE id = ?", (pid,)).fetchone()
     _seed_defaults(pid)
@@ -2005,8 +2001,6 @@ def update_project(project_id: str, data: ProjectPatch, user: dict = Depends(cur
             fields.append("name = ?");  values.append(data.name.strip() or 'Untitled')
         if data.description is not None:
             fields.append("description = ?"); values.append(data.description)
-        if data.startDate is not None:
-            fields.append("start_date = ?"); values.append(data.startDate)
         if data.endDate is not None:
             fields.append("end_date = ?"); values.append(data.endDate)
         if data.resizeWarnOrderThreshold is not None:

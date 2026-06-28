@@ -2295,15 +2295,37 @@ function ScheduleColorLegendWidget({
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged }) {
   // ── Timeline anchor ────────────────────────────────────────────────────────
-  // Keep the module-level anchor in sync with the project's start date so that
-  // col 0 always maps to the project start rather than drifting with today.
+  // Keep the module-level anchor in sync with the project's creation date so that
+  // col 0 = project creation date (fixed, immutable left boundary of the timeline).
   const _anchor = useMemo(() => {
-    if (!project?.startDate) return null
-    const d = new Date(project.startDate)
+    if (!project?.createdAt) return null
+    // createdAt comes from SQLite as "YYYY-MM-DD HH:MM:SS" — normalise to midnight local
+    const raw = String(project.createdAt).replace(' ', 'T')
+    const d = new Date(raw)
+    if (isNaN(d.getTime())) return null
     d.setHours(0, 0, 0, 0)
     return d
-  }, [project?.startDate])
+  }, [project?.createdAt])
   _timelineAnchor = _anchor
+
+  // Compute today's position in minutes relative to the project creation date.
+  // Result is 0 when there's no anchor (today IS col 0, legacy behaviour).
+  const todayMinute = useMemo(() => {
+    if (!_anchor) return 0
+    const realToday = new Date(); realToday.setHours(0, 0, 0, 0)
+    return Math.round((realToday.getTime() - _anchor.getTime()) / 60000)
+  }, [_anchor])
+  const todayMinuteRef = useRef(todayMinute)
+  todayMinuteRef.current = todayMinute
+
+  // Compute end date position in minutes relative to the anchor.
+  const endDateMinute = useMemo(() => {
+    if (!project?.endDate) return null
+    const anchor = _anchor || (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d })()
+    const endD = new Date(project.endDate + 'T00:00:00')
+    endD.setHours(0, 0, 0, 0)
+    return Math.round((endD.getTime() - anchor.getTime()) / 60000)
+  }, [project?.endDate, _anchor])
 
   // ── API data ───────────────────────────────────────────────────────────────
   const [dimensions,   setDimensions]   = useState([])
@@ -2543,6 +2565,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [visibleNoteFilterIds, setVisibleNoteFilterIds] = useState(new Set())
   const [pendingConflictTimeSlotIds, setPendingConflictTimeSlotIds] = useState(new Set())
   const [warningPrompt, setWarningPrompt] = useState(null)
+  const [nostalgiaMode, setNostalgiaMode] = useState(false)
   const [blinkingDepIds, setBlinkingDepIds] = useState(new Set())
   const [blinkingTimeSlotIds, setBlinkingTimeSlotIds] = useState(new Set())
   const [pendingDependencyResolveIds, setPendingDependencyResolveIds] = useState(new Set())
@@ -2551,6 +2574,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [resizeConfirmDraft, setResizeConfirmDraft] = useState(null)
   const [metricResizeDraft,  setMetricResizeDraft]  = useState(null)
   const warningPromptTimerRef = useRef(null)
+  const nostalgiaModeRef = useRef(false)
   const capturePerspectiveStateRef = useRef(null)
   const restorePerspectiveSnapshotRef = useRef(null)
   const resolveDependencySelectionRef = useRef(null)
@@ -2588,6 +2612,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     }
   }, [onProjectUpdate, project])
 
+  useEffect(() => {
+    if (!isActive) setNostalgiaMode(false)
+  }, [isActive])
+
+  useEffect(() => {
+    setNostalgiaMode(false)
+  }, [project?.id])
+
   useEffect(() => () => {
     if (warningPromptTimerRef.current) window.clearTimeout(warningPromptTimerRef.current)
   }, [])
@@ -2612,6 +2644,20 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       warningPromptTimerRef.current = null
     }, WARNING_PROMPT_TIMEOUT_MS)
   }, [])
+
+  const toggleNostalgiaMode = useCallback(async () => {
+    if (nostalgiaModeRef.current) {
+      setNostalgiaMode(false)
+      return
+    }
+    const ok = await confirmDialog({
+      title: 'Enable nostalgia mode?',
+      message: 'You will be able to create, move, and resize time slots before today. This is temporary, turns off when you leave the schedule page, and is not saved in perspectives.',
+      confirmLabel: 'Enable nostalgia',
+      cancelLabel: 'Cancel',
+    })
+    if (ok) setNostalgiaMode(true)
+  }, [confirmDialog])
 
   const activeCategories = useMemo(
     () => categories.filter(c => c.dimensionId === activeDimId),
@@ -2651,6 +2697,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         collapsedCategories: [],
         hiddenNotesByLane: {},
         scrollLeft: 0,
+        timelineAnchorCreatedAt: project?.createdAt ?? '',
         color: {
           colorDimId: priorityDim?.id ?? '',
           activeFilterIds: [],
@@ -2658,7 +2705,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         },
       },
     })
-  }, [dimensions])
+  }, [dimensions, project?.createdAt])
 
   const perspectiveOptions = useMemo(
     () => [nonePerspective, ...perspectives],
@@ -2986,7 +3033,13 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   deadlinesRef.current       = effectiveDeadlines
   earliestStartsRef.current  = effectiveEarliestStarts
   modeRef.current            = mode
+  nostalgiaModeRef.current   = nostalgiaMode
   timeSlotScaleFilterRef.current = normalizeScaleVisibilityMode(timeSlotScaleFilter)
+
+  // Derived today/end-date columns at the current zoom level (re-evaluated every render)
+  const todayZoomCol        = minuteToZoomCol(todayMinute, timeZoom)
+  const endDateZoomCol      = endDateMinute != null ? minuteToZoomCol(endDateMinute, timeZoom) : null
+  const effectiveTodayZoomCol = Math.max(0, todayZoomCol)
 
   const visualRangeFor = useCallback(item => getRenderedVisualRange(item, timeZoomRef.current, timeSlotScaleFilterRef.current), [])
   const visualColToMinute = useCallback(col => zoomColToMinute(col, timeZoomRef.current), [])
@@ -4182,6 +4235,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       reportEarliestStartViolation([ms.id])
       return
     }
+    if (!nostalgiaModeRef.current && startCol < todayMinuteRef.current) {
+      showWarningPrompt({
+        title: 'Cannot schedule in the past',
+        message: 'Time slots cannot start before today unless nostalgia mode is enabled.',
+        actions: 'close',
+      })
+      return
+    }
     if (startCol < 0 || (dl && startCol + duration > dl.col)) {
       reportDeadlineViolation([ms.id])
       return
@@ -4328,6 +4389,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           const startVisual = minuteToZoomCol(orig.startCol, 'months')
           const span = calendarMonthSpanForRange(orig.startCol, orig.duration)
           minDelta = Math.max(minDelta, -startVisual)
+          if (!nostalgiaModeRef.current && todayMinuteRef.current > 0) {
+            const todayMonthCol = minuteToZoomCol(todayMinuteRef.current, 'months')
+            minDelta = Math.max(minDelta, todayMonthCol - startVisual)
+          }
           if (dl) {
             maxDelta = Math.min(maxDelta, minuteToZoomCol(dl.col, 'months') - span - startVisual)
           }
@@ -4339,6 +4404,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           return
         }
         minDelta = Math.max(minDelta, -orig.startCol)
+        if (!nostalgiaModeRef.current && todayMinuteRef.current > 0) minDelta = Math.max(minDelta, todayMinuteRef.current - orig.startCol)
         if (dl) maxDelta = Math.min(maxDelta, dl.col - orig.duration - orig.startCol)
         if (es) {
           const esD = es.col - orig.startCol
@@ -4594,7 +4660,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         const minRightVisual = minuteEndToZoomCol(origRight, timeZoomRef.current) - 1
         const maxLeft = isMonthResize ? zoomColToMinute(minRightVisual, 'months') : origRight - MIN_TIME_SLOT_DURATION
         const esMinLeft = esResize ? esResize.col : 0
-        const leftCol = Math.min(maxLeft, Math.max(esMinLeft, requested))
+        const minLeft = Math.max(esMinLeft, nostalgiaModeRef.current ? 0 : todayMinuteRef.current)
+        const leftCol = Math.min(maxLeft, Math.max(minLeft, requested))
         if (dragRef.current && leftCol !== requested) {
           if (esMinLeft > 0 && requested < esMinLeft) dragRef.current.hitEarliestBoundary = true
           else dragRef.current.hitBoundary = true
@@ -5251,20 +5318,28 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       activeFilterIds,
       quickFilters,
     },
-    selection: {
-      timeSlotIds: [...selectedIdsRef.current],
-      dependencyIds: [...selectedDepIdsRef.current],
-      pinnedTimeSlotId: pinnedTimeSlotIdRef.current,
-    },
-  }), [
+	    selection: {
+	      timeSlotIds: [...selectedIdsRef.current],
+	      dependencyIds: [...selectedDepIdsRef.current],
+	      pinnedTimeSlotId: pinnedTimeSlotIdRef.current,
+	    },
+	    timelineAnchorCreatedAt: project?.createdAt ?? '',
+	  }), [
     activeDimId, activeFilterIds, activeLaneFilterId, activePerspectiveId, axisMode, colorDimId,
     colorDependencyDirection, hiddenCatIds, hiddenNotesByLane, hideCrossCatDeps,
     mode, timeSlotScaleFilter, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps,
-    showRowScheduleMarker, showRowTimeSlotMeta, spacing, timeSlotLabelMode, timeZoom, visibleNoteFilterIds,
-  ])
-  capturePerspectiveStateRef.current = capturePerspectiveState
-
-  const applyPerspective = useCallback(perspective => {
+	    project?.createdAt, showRowScheduleMarker, showRowTimeSlotMeta, spacing, timeSlotLabelMode, timeZoom, visibleNoteFilterIds,
+	  ])
+	  capturePerspectiveStateRef.current = capturePerspectiveState
+	
+	  const restoredScrollLeftForState = useCallback(state => {
+	    const savedAnchor = state?.timelineAnchorCreatedAt
+	    const currentAnchor = project?.createdAt ?? ''
+	    if (!savedAnchor || savedAnchor !== currentAnchor) return 0
+	    return Math.max(0, Number(state.scrollLeft) || 0)
+	  }, [project?.createdAt])
+	
+	  const applyPerspective = useCallback(perspective => {
     const state = normalizeSchedulePerspectiveState(perspective?.state ?? {})
     const nextActiveDimId = state.group?.activeDimId || ''
     const nextActiveLaneFilterId = state.group?.activeLaneFilterId || ''
@@ -5303,15 +5378,15 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setRevealedConflictNoteIds(new Set())
     setDependencyResolveSnapshot(null)
     setPinnedTimeSlotId(state.selection?.pinnedTimeSlotId ?? null)
-    setActivePerspectiveId(perspective?.id ?? NONE_PERSPECTIVE_ID)
-
-    requestAnimationFrame(() => {
-      const nextLeft = Math.max(0, Number(state.scrollLeft) || 0)
-      if (gridBodyRef.current) gridBodyRef.current.scrollLeft = nextLeft
-      scrollLeftRef.current = gridBodyRef.current?.scrollLeft ?? nextLeft
-      setScrollLeft(scrollLeftRef.current)
-    })
-  }, [activeDimId, activeLaneFilterId, colorDimId])
+	    setActivePerspectiveId(perspective?.id ?? NONE_PERSPECTIVE_ID)
+	
+	    requestAnimationFrame(() => {
+	      const nextLeft = restoredScrollLeftForState(state)
+	      if (gridBodyRef.current) gridBodyRef.current.scrollLeft = nextLeft
+	      scrollLeftRef.current = gridBodyRef.current?.scrollLeft ?? nextLeft
+	      setScrollLeft(scrollLeftRef.current)
+	    })
+	  }, [activeDimId, activeLaneFilterId, colorDimId, restoredScrollLeftForState])
   restorePerspectiveSnapshotRef.current = state => {
     applyPerspective({ id: state?.activePerspectiveId ?? NONE_PERSPECTIVE_ID, state: state ?? {} })
   }
@@ -5361,13 +5436,13 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setPendingDependencyResolveIds(new Set())
     setDependencyResolveSnapshot(null)
 
-    requestAnimationFrame(() => {
-      const nextLeft = Math.max(0, Number(state.scrollLeft) || 0)
-      if (gridBodyRef.current) gridBodyRef.current.scrollLeft = nextLeft
-      scrollLeftRef.current = gridBodyRef.current?.scrollLeft ?? nextLeft
-      setScrollLeft(scrollLeftRef.current)
-    })
-  }, [activeDimId, activeLaneFilterId, activePerspectiveId, colorDimId, dependencyResolveSnapshot])
+	    requestAnimationFrame(() => {
+	      const nextLeft = restoredScrollLeftForState(state)
+	      if (gridBodyRef.current) gridBodyRef.current.scrollLeft = nextLeft
+	      scrollLeftRef.current = gridBodyRef.current?.scrollLeft ?? nextLeft
+	      setScrollLeft(scrollLeftRef.current)
+	    })
+	  }, [activeDimId, activeLaneFilterId, activePerspectiveId, colorDimId, dependencyResolveSnapshot, restoredScrollLeftForState])
 
   const createPerspective = useCallback(async name => {
     try {
@@ -6005,7 +6080,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                   </div>
                 )}
                 {visCols.map(ci => {
-                  const isToday = ci === 0
+                  const isToday = ci === effectiveTodayZoomCol
+                  const isPast  = ci < effectiveTodayZoomCol
                   const date = minuteToDate(zoomColToMinute(ci, timeZoom))
                   const isWeekend = timeZoom === 'days' && (() => { const dow = date.getDay(); return dow === 0 || dow === 6 })()
                   const isDayCut = timeZoom === 'minutes' && ci > 0 && zoomColToMinute(ci, timeZoom) % (60 * 24) === 0
@@ -6019,6 +6095,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                       className={[
                         styles.dayHeader,
                         isToday && styles.dayHeaderToday,
+                        isPast && !isToday && styles.dayHeaderPast,
                         isWeekend && !isToday && styles.dayHeaderWeekend,
                         isHourCut && !isDayCut && styles.dayHeaderHourCut,
                         isDayCut && styles.dayHeaderDayCut,
@@ -6035,9 +6112,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
               {axisMode === 'numbers' && (
                 visCols.map(ci => (
                   <div key={ci}
-                    className={[styles.dayHeader, styles.dayHeaderNumbers, ci === 0 && styles.dayHeaderToday].filter(Boolean).join(' ')}
+                    className={[styles.dayHeader, styles.dayHeaderNumbers, ci === effectiveTodayZoomCol && styles.dayHeaderToday].filter(Boolean).join(' ')}
                     style={{ left: ci * colW, width: colW }}>
-                    <span className={[styles.dayNum, ci === 0 && styles.dayNumToday].filter(Boolean).join(' ')}>
+                    <span className={[styles.dayNum, ci === effectiveTodayZoomCol && styles.dayNumToday].filter(Boolean).join(' ')}>
                       {ci + 1}
                     </span>
                   </div>
@@ -6045,8 +6122,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
               )}
             </div>
 
-            {/* Today + weekend column tints */}
-            <div className={styles.todayCol} style={{ left: 0, width: colW }} />
+            {/* Today + past region + weekend column tints */}
+            {todayZoomCol > 0 && (
+              <div className={styles.pastOverlay} style={{ left: 0, width: todayZoomCol * colW }} />
+            )}
+            <div className={styles.todayCol} style={{ left: effectiveTodayZoomCol * colW, width: colW }} />
             {visibleDayCuts.map(ci => (
               <div key={`day-cut-${ci}`} className={`${styles.scaleCut} ${styles.dayCut}`} style={{ left: ci * colW }} />
             ))}
@@ -6062,6 +6142,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                 ? <div key={`wk-${ci}`} className={styles.weekendCol} style={{ left: ci * colW, width: colW }} />
                 : null
             })}
+
+            {/* Project end date marker */}
+            {endDateZoomCol != null && (
+              <div className={styles.endDateLine} style={{ left: endDateZoomCol * colW }} />
+            )}
 
             {/* Row stripes */}
             {visItems.map((item, idx) => {
@@ -6370,17 +6455,38 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       </div>
 
       <div className={styles.floatingViewTools}>
-        {dependencyResolveSnapshot && (
-          <button
-            type="button"
+	        {dependencyResolveSnapshot && (
+	          <button
+	            type="button"
             className={styles.dependencyResolveReturnBtn}
             onClick={returnToDependencyResolveSnapshot}
           >
             <strong>Resolve view</strong>
-            <span>{scaleLabelForZoom(timeZoom)} scale · Return to previous view</span>
-          </button>
-        )}
-        <PerspectiveMenu
+	            <span>{scaleLabelForZoom(timeZoom)} scale · Return to previous view</span>
+	          </button>
+	        )}
+	        <div className={styles.nostalgiaWrap}>
+	          <button
+	            type="button"
+	            className={`${styles.nostalgiaBtn} ${nostalgiaMode ? styles.nostalgiaBtnActive : ''}`}
+	            onClick={toggleNostalgiaMode}
+	            title={nostalgiaMode ? 'Disable nostalgia mode' : 'Enable temporary editing before today'}
+	            aria-pressed={nostalgiaMode}>
+	            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+	              <path d="M3 12a9 9 0 1 0 3-6.7" />
+	              <path d="M3 3v6h6" />
+	              <path d="M12 7v5l3 2" />
+	            </svg>
+	            <span>Nostalgia</span>
+	          </button>
+	          {!nostalgiaMode && (
+	            <span className={styles.floatingHint}>
+	              <strong>Nostalgia mode</strong>
+	              <small>Temporarily edit before today</small>
+	            </span>
+	          )}
+	        </div>
+	        <PerspectiveMenu
           perspectives={perspectiveOptions}
           activePerspectiveId={activePerspectiveId}
           defaultPerspectiveId={defaultPerspectiveId}

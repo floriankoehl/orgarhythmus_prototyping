@@ -237,6 +237,17 @@
 .dateInput:hover { border-color: #bbb; }
 .dateInput:focus { border-color: #1a73e8; }
 
+.dateReadOnly {
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: Arial, sans-serif;
+  color: #888;
+  background: #f5f5f5;
+  border: 1.5px solid #e8eaed;
+  border-radius: 7px;
+  user-select: none;
+}
+
 /* ── Footer row ────────────────────────────────────────────────────────────── */
 .footerRow {
   display: flex;

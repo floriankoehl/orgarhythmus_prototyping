@@ -52,21 +52,15 @@ function ProjectCard({ project, onOpen, onDelete }) {
     return () => document.removeEventListener('mousedown', handler)
   }, [menuOpen])
 
-  const date = new Date(project.createdAt)
+  const date = new Date(String(project.createdAt).replace(' ', 'T'))
   const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-  const startStr = project.startDate
-    ? new Date(project.startDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-    : null
 
   return (
     <div className={styles.card} onClick={() => onOpen(project)}>
       <div className={styles.cardBody}>
         <div className={styles.cardName}>{project.name}</div>
         <div className={styles.cardMeta}>
-          {startStr
-            ? <span className={styles.cardDate}>Starts {startStr}</span>
-            : <span className={styles.cardDate}>{dateStr}</span>
-          }
+          <span className={styles.cardDate}>Created {dateStr}</span>
         </div>
         {project.description && (
           <div className={styles.cardDesc}>{project.description}</div>
