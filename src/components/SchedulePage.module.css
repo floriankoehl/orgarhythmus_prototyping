@@ -11,7 +11,7 @@
 
 /* ── Toolbar ─────────────────────────────────────────────────────────────── */
 .toolbar {
-  height: 44px;
+  height: 58px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -132,10 +132,43 @@
   box-shadow: 0 1px 3px rgba(0,0,0,0.12);
 }
 
+.cornerControls {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 8px;
+  box-sizing: border-box;
+}
+
+.cornerControls .historyButtons {
+  justify-content: center;
+}
+
+.cornerControls .historyBtn {
+  height: 21px;
+  min-width: 48px;
+  padding: 0 7px;
+  font-size: 10px;
+}
+
+.cornerControls .modePills {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.cornerControls .modePill {
+  flex: 1;
+  padding: 3px 5px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 .scaleQuickSwitch {
   position: absolute;
   left: 50%;
-  top: 6px;
+  top: 13px;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -222,6 +255,230 @@
 }
 
 .dimSelect:focus { outline: 2px solid #1a73e8; outline-offset: 0; }
+
+.groupScroller {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.groupScrollerUnit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+
+.groupScrollerUnit + .groupScrollerUnit {
+  padding-left: 12px;
+  border-left: 1px solid #e6e6e6;
+}
+
+.groupScrollerLabel {
+  color: #999;
+  font: 800 10px Arial, sans-serif;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.groupScrollerRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.groupScrollerArrow {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: #666;
+  background: #f4f4f4;
+  border: 1px solid #e4e4e4;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.groupScrollerArrow:hover:not(:disabled) {
+  color: #222;
+  background: #eaeaea;
+}
+
+.groupScrollerArrow:disabled {
+  color: #bbb;
+  cursor: default;
+}
+
+.groupScrollerName {
+  width: min(220px, 20vw);
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  color: #222;
+  background: #f8f8f8;
+  border: 1px solid #e2e2e2;
+  border-radius: 7px;
+  cursor: pointer;
+  font: 800 12px Arial, sans-serif;
+  overflow: hidden;
+}
+
+.groupScrollerName:hover:not(:disabled) {
+  background: #fff;
+  border-color: #d2d2d2;
+}
+
+.groupScrollerName:disabled {
+  color: #aaa;
+  cursor: default;
+}
+
+.groupScrollerText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.groupScrollerName svg {
+  flex: 0 0 auto;
+  color: #999;
+}
+
+.groupScrollerSwatches,
+.groupScrollerMenuItem span,
+.groupScrollerMenuItemActive span {
+  width: 22px;
+  height: 12px;
+  position: relative;
+  flex: 0 0 22px;
+}
+
+.groupScrollerSwatches b,
+.groupScrollerMenuItem b,
+.groupScrollerMenuItemActive b {
+  position: absolute;
+  top: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.08), 0 0 0 2px #fff;
+}
+
+.groupScrollerSwatches b:nth-child(1),
+.groupScrollerMenuItem b:nth-child(1),
+.groupScrollerMenuItemActive b:nth-child(1) {
+  left: 0;
+}
+
+.groupScrollerSwatches b:nth-child(2),
+.groupScrollerMenuItem b:nth-child(2),
+.groupScrollerMenuItemActive b:nth-child(2) {
+  left: 6px;
+}
+
+.groupScrollerSwatches b:nth-child(3),
+.groupScrollerMenuItem b:nth-child(3),
+.groupScrollerMenuItemActive b:nth-child(3) {
+  left: 12px;
+}
+
+.groupScrollerCatDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.08);
+}
+
+.groupScrollerMenu {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 31px;
+  z-index: 120;
+  width: min(260px, 48vw);
+  max-height: min(280px, 48vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 5px;
+  background: #fff;
+  border: 1px solid #dedede;
+  border-radius: 8px;
+  box-shadow: 0 10px 26px rgba(0,0,0,0.16);
+}
+
+.groupScrollerMenuItem,
+.groupScrollerMenuItemActive {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  color: #333;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.groupScrollerMenuItem:hover {
+  background: #f4f7ff;
+}
+
+.groupScrollerMenuItemActive {
+  color: #1a73e8;
+  background: #e8f0fe;
+}
+
+.groupScrollerMenuItem strong,
+.groupScrollerMenuItemActive strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 800 12px Arial, sans-serif;
+}
+
+.groupScrollerSingleSwatch b {
+  left: 0 !important;
+}
+
+.groupScrollerDots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+}
+
+.groupScrollerDot {
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  background: #ddd;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.groupScrollerDot:hover {
+  background: #bbb;
+}
+
+.groupScrollerDotActive {
+  background: #1a73e8;
+  transform: scale(1.3);
+}
 
 .categoryFilterWrap {
   position: relative;

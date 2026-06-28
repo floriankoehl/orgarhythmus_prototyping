@@ -1454,12 +1454,264 @@ function LaneNoteFilter({ laneKey, notes, hiddenNoteIds, onToggleNote, onShowAll
   )
 }
 
+function ScheduleGroupScroller({
+  dimensions,
+  categories,
+  savedFilters = [],
+  activeDimId,
+  activeLaneFilterId,
+  hiddenCatIds,
+  onDimensionChange,
+  onFilterChange,
+  onShowOnlyCategory,
+}) {
+  const wheelAtRef = useRef(0)
+  const categoryWheelAtRef = useRef(0)
+  const pickerRef = useRef(null)
+  const categoryPickerRef = useRef(null)
+  const [dimensionMenuOpen, setDimensionMenuOpen] = useState(false)
+  const [categoryMenuOpen, setCategoryMenuOpen] = useState(false)
+
+  const activeIndex = activeDimId ? dimensions.findIndex(dim => dim.id === activeDimId) : -1
+  const currentDim = activeIndex >= 0 ? dimensions[activeIndex] : null
+  const currentFilter = activeLaneFilterId ? savedFilters.find(filter => filter.id === activeLaneFilterId) : null
+  const activeCats = currentDim ? categories.filter(cat => cat.dimensionId === currentDim.id) : []
+  const visibleActiveCats = activeCats.filter(cat => !hiddenCatIds.has(cat.id))
+  const focusedCategory = visibleActiveCats.length === 1 ? visibleActiveCats[0] : null
+  const focusedCategoryIndex = focusedCategory
+    ? activeCats.findIndex(cat => cat.id === focusedCategory.id)
+    : -1
+  const canCycleDimension = dimensions.length > 0
+  const canCycleCategory = activeCats.length > 0
+
+  const dimensionSwatches = dim => categories
+    .filter(cat => cat.dimensionId === dim.id)
+    .slice(0, 3)
+
+  const selectDimensionIndex = idx => {
+    if (!dimensions.length) return
+    const dim = dimensions[(idx + dimensions.length) % dimensions.length]
+    onDimensionChange?.(dim.id)
+  }
+  const prevDimension = () => {
+    if (!canCycleDimension) return
+    selectDimensionIndex(activeIndex >= 0 ? activeIndex - 1 : dimensions.length - 1)
+  }
+  const nextDimension = () => {
+    if (!canCycleDimension) return
+    selectDimensionIndex(activeIndex >= 0 ? activeIndex + 1 : 0)
+  }
+  const selectCategoryIndex = idx => {
+    if (!canCycleCategory) return
+    const cat = activeCats[(idx + activeCats.length) % activeCats.length]
+    onShowOnlyCategory?.(cat.id)
+  }
+  const prevCategory = () => {
+    if (!canCycleCategory) return
+    selectCategoryIndex(focusedCategoryIndex >= 0 ? focusedCategoryIndex - 1 : activeCats.length - 1)
+  }
+  const nextCategory = () => {
+    if (!canCycleCategory) return
+    selectCategoryIndex(focusedCategoryIndex >= 0 ? focusedCategoryIndex + 1 : 0)
+  }
+
+  const onWheel = e => {
+    e.preventDefault()
+    const now = Date.now()
+    if (now - wheelAtRef.current < 180) return
+    wheelAtRef.current = now
+    e.deltaY > 0 ? nextDimension() : prevDimension()
+  }
+  const onCategoryWheel = e => {
+    if (!canCycleCategory) return
+    e.preventDefault()
+    const now = Date.now()
+    if (now - categoryWheelAtRef.current < 180) return
+    categoryWheelAtRef.current = now
+    e.deltaY > 0 ? nextCategory() : prevCategory()
+  }
+
+  useEffect(() => {
+    if (!dimensionMenuOpen && !categoryMenuOpen) return
+    const close = e => {
+      if (!pickerRef.current?.contains(e.target)) setDimensionMenuOpen(false)
+      if (!categoryPickerRef.current?.contains(e.target)) setCategoryMenuOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [categoryMenuOpen, dimensionMenuOpen])
+
+  return (
+    <div className={styles.groupScroller}>
+      <div className={styles.groupScrollerUnit} onWheel={onWheel}>
+        <span className={styles.groupScrollerLabel}>Dimension</span>
+        <div ref={pickerRef} className={styles.groupScrollerRow}>
+          <button className={styles.groupScrollerArrow} onClick={prevDimension} disabled={!canCycleDimension} title="Previous dimension">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <button
+            className={styles.groupScrollerName}
+            onClick={() => setDimensionMenuOpen(open => !open)}
+            disabled={!canCycleDimension}
+            title="Pick dimension"
+          >
+            <span className={styles.groupScrollerSwatches}>
+              {(currentDim ? dimensionSwatches(currentDim) : []).map(cat => (
+                <b key={cat.id} style={{ background: cat.color || '#aaa' }} />
+              ))}
+              {(!currentDim || dimensionSwatches(currentDim).length === 0) && <b style={{ background: '#9ca3af' }} />}
+            </span>
+            <span className={styles.groupScrollerText}>{currentDim?.name ?? currentFilter?.name ?? 'None'}</span>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+          </button>
+          <button className={styles.groupScrollerArrow} onClick={nextDimension} disabled={!canCycleDimension} title="Next dimension">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M9 18l6-6-6-6"/></svg>
+          </button>
+          {dimensionMenuOpen && (
+            <div className={styles.groupScrollerMenu}>
+              <button
+                className={!activeDimId && !activeLaneFilterId ? styles.groupScrollerMenuItemActive : styles.groupScrollerMenuItem}
+                onClick={() => {
+                  onDimensionChange?.('')
+                  setDimensionMenuOpen(false)
+                }}
+              >
+                <span className={styles.groupScrollerSingleSwatch}>
+                  <b style={{ background: '#9ca3af' }} />
+                </span>
+                <strong>None</strong>
+              </button>
+              {dimensions.map(dim => (
+                <button
+                  key={dim.id}
+                  className={dim.id === activeDimId ? styles.groupScrollerMenuItemActive : styles.groupScrollerMenuItem}
+                  onClick={() => {
+                    onDimensionChange?.(dim.id)
+                    setDimensionMenuOpen(false)
+                  }}
+                >
+                  <span>
+                    {dimensionSwatches(dim).map(cat => (
+                      <b key={cat.id} style={{ background: cat.color || '#aaa' }} />
+                    ))}
+                    {dimensionSwatches(dim).length === 0 && <b style={{ background: '#9ca3af' }} />}
+                  </span>
+                  <strong>{dim.name}</strong>
+                </button>
+              ))}
+              {savedFilters.map(filter => (
+                <button
+                  key={filter.id}
+                  className={filter.id === activeLaneFilterId ? styles.groupScrollerMenuItemActive : styles.groupScrollerMenuItem}
+                  onClick={() => {
+                    onFilterChange?.(filter.id)
+                    setDimensionMenuOpen(false)
+                  }}
+                >
+                  <span className={styles.groupScrollerSingleSwatch}>
+                    <b style={{ background: filter.color || '#64748b' }} />
+                  </span>
+                  <strong>{filter.name}</strong>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className={styles.groupScrollerDots}>
+          {dimensions.map(dim => (
+            <button
+              key={dim.id}
+              className={`${styles.groupScrollerDot} ${dim.id === activeDimId ? styles.groupScrollerDotActive : ''}`}
+              onClick={() => onDimensionChange?.(dim.id)}
+              title={dim.name}
+            />
+          ))}
+        </div>
+      </div>
+
+      {currentDim && (
+        <div className={styles.groupScrollerUnit} onWheel={onCategoryWheel}>
+          <span className={styles.groupScrollerLabel}>Category</span>
+          <div ref={categoryPickerRef} className={styles.groupScrollerRow}>
+            <button className={styles.groupScrollerArrow} onClick={prevCategory} disabled={!canCycleCategory} title="Previous category">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <button
+              className={styles.groupScrollerName}
+              onClick={() => setCategoryMenuOpen(open => !open)}
+              disabled={!canCycleCategory}
+              title="Pick category"
+            >
+              <span className={styles.groupScrollerCatDot} style={{ background: focusedCategory?.color || '#9ca3af' }} />
+              <span className={styles.groupScrollerText}>{focusedCategory?.name ?? 'All visible'}</span>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+            </button>
+            <button className={styles.groupScrollerArrow} onClick={nextCategory} disabled={!canCycleCategory} title="Next category">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+            {categoryMenuOpen && (
+              <div className={styles.groupScrollerMenu}>
+                {activeCats.map(cat => (
+                  <button
+                    key={cat.id}
+                    className={cat.id === focusedCategory?.id ? styles.groupScrollerMenuItemActive : styles.groupScrollerMenuItem}
+                    onClick={() => {
+                      onShowOnlyCategory?.(cat.id)
+                      setCategoryMenuOpen(false)
+                    }}
+                  >
+                    <span className={styles.groupScrollerSingleSwatch}>
+                      <b style={{ background: cat.color || '#aaa' }} />
+                    </span>
+                    <strong>{cat.name}</strong>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className={styles.groupScrollerDots}>
+            {activeCats.map(cat => (
+              <button
+                key={cat.id}
+                className={`${styles.groupScrollerDot} ${cat.id === focusedCategory?.id ? styles.groupScrollerDotActive : ''}`}
+                onClick={() => onShowOnlyCategory?.(cat.id)}
+                title={cat.name}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CornerGanttControls({ canUndo, canRedo, onUndo, onRedo, mode, onModeChange }) {
+  return (
+    <div className={styles.cornerControls}>
+      <div className={styles.historyButtons}>
+        <button className={styles.historyBtn} disabled={!canUndo} onClick={onUndo} title="Undo last Gantt transaction">
+          Undo
+        </button>
+        <button className={styles.historyBtn} disabled={!canRedo} onClick={onRedo} title="Redo last undone Gantt transaction">
+          Redo
+        </button>
+      </div>
+      <div className={styles.modePills}>
+        <button className={`${styles.modePill} ${mode === 'timeSlot' ? styles.modePillActive : ''}`}
+          onClick={() => onModeChange('timeSlot')}>Time slot</button>
+        <button className={`${styles.modePill} ${mode === 'dependency' ? styles.modePillActive : ''}`}
+          onClick={() => onModeChange('dependency')}>Dependency</button>
+      </div>
+    </div>
+  )
+}
+
 // ── Toolbar ───────────────────────────────────────────────────────────────────
 function GanttToolbar({
   dimensions, activeDimId, activeCategories, hiddenCatIds,
-  onToggleCategory, onShowAllCategories,
+  categories, onToggleCategory, onShowAllCategories, onShowOnlyCategory,
   savedFilters, activeLaneFilterId, onLaneGroupChange,
-  spacing, onSpacingChange, mode, onModeChange,
+  spacing, onSpacingChange,
   axisMode, onAxisModeChange,
   timeZoom, onTimeZoomChange,
   showDepLabels, onShowDepLabelsChange,
@@ -1472,7 +1724,6 @@ function GanttToolbar({
   warningSettings, onWarningSettingsChange,
   canDeleteSelection, onDeleteSelection,
   canFilterToSelection, onFilterToSelectedNotes, onExpandEverything,
-  canUndo, canRedo, onUndo, onRedo,
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [warningSettingsOpen, setWarningSettingsOpen] = useState(false)
@@ -1489,20 +1740,6 @@ function GanttToolbar({
         onClick={onDeleteSelection}>
         Delete
       </button>
-      <div className={styles.historyButtons}>
-        <button className={styles.historyBtn} disabled={!canUndo} onClick={onUndo} title="Undo last Gantt transaction">
-          Undo
-        </button>
-        <button className={styles.historyBtn} disabled={!canRedo} onClick={onRedo} title="Redo last undone Gantt transaction">
-          Redo
-        </button>
-      </div>
-      <div className={styles.modePills}>
-        <button className={`${styles.modePill} ${mode === 'timeSlot' ? styles.modePillActive : ''}`}
-          onClick={() => onModeChange('timeSlot')}>Time slot</button>
-        <button className={`${styles.modePill} ${mode === 'dependency' ? styles.modePillActive : ''}`}
-          onClick={() => onModeChange('dependency')}>Dependency</button>
-      </div>
       <div className={styles.scaleQuickSwitch} aria-label="Gantt planning scale">
         <span className={styles.scaleQuickLabel}>Scale</span>
         <div className={styles.scaleQuickPills}>
@@ -1517,24 +1754,17 @@ function GanttToolbar({
           ))}
         </div>
       </div>
-      <div className={styles.toolbarDiv} />
-      <span className={styles.toolbarLabel}>Group by</span>
-      <select
-        className={styles.dimSelect}
-        value={activeDimId ? `d:${activeDimId}` : activeLaneFilterId ? `f:${activeLaneFilterId}` : ''}
-        onChange={e => onLaneGroupChange(e.target.value)}>
-        <option value="">None</option>
-        {dimensions.length > 0 && (
-          <optgroup label="Dimensions">
-            {dimensions.map(d => <option key={d.id} value={`d:${d.id}`}>{d.name}</option>)}
-          </optgroup>
-        )}
-        {savedFilters.length > 0 && (
-          <optgroup label="Filters">
-            {savedFilters.map(f => <option key={f.id} value={`f:${f.id}`}>{f.name}</option>)}
-          </optgroup>
-        )}
-      </select>
+      <ScheduleGroupScroller
+        dimensions={dimensions}
+        categories={categories}
+        savedFilters={savedFilters}
+        activeDimId={activeDimId}
+        activeLaneFilterId={activeLaneFilterId}
+        hiddenCatIds={hiddenCatIds}
+        onDimensionChange={dimId => onLaneGroupChange(dimId ? `d:${dimId}` : '')}
+        onFilterChange={filterId => onLaneGroupChange(filterId ? `f:${filterId}` : '')}
+        onShowOnlyCategory={onShowOnlyCategory}
+      />
       {activeDimId && (
         <CategoryVisibilityDropdown
           categories={[...activeCategories, { id: UNASSIGNED_LANE, name: 'Unassigned', color: '#bbb' }]}
@@ -2440,6 +2670,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }, [])
 
   const showAllCategories = useCallback(() => setHiddenCatIds(new Set()), [])
+
+  const showOnlyCategory = useCallback(catId => {
+    if (!activeDimId || !catId) return
+    const next = new Set(activeCategories.map(cat => cat.id))
+    next.add(UNASSIGNED_LANE)
+    next.delete(catId)
+    setHiddenCatIds(next)
+  }, [activeCategories, activeDimId])
 
   const presentConflictTimeSlots = useCallback(ids => {
     const idSet = new Set(ids)
@@ -5294,9 +5532,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       <GanttToolbar
         dimensions={dimensions} activeDimId={activeDimId}
         activeCategories={activeCategories}
+        categories={categories}
         hiddenCatIds={hiddenCatIds}
         onToggleCategory={toggleCategoryVisibility}
         onShowAllCategories={showAllCategories}
+        onShowOnlyCategory={showOnlyCategory}
         savedFilters={savedFilters}
         activeLaneFilterId={activeLaneFilterId}
         onLaneGroupChange={handleLaneGroupChange}
@@ -5330,7 +5570,16 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         {/* ── Left panel ──────────────────────────────────────────────────── */}
         <div className={styles.leftPanel} style={{ width: leftPanelWidth }}>
           <div className={styles.panelResizeHandle} onMouseDown={handlePanelResizeStart} />
-          <div className={styles.corner} />
+          <div className={styles.corner}>
+            <CornerGanttControls
+              canUndo={transactionHistory.undo.length > 0}
+              canRedo={transactionHistory.redo.length > 0}
+              onUndo={undoGanttTransaction}
+              onRedo={redoGanttTransaction}
+              mode={mode}
+              onModeChange={setMode}
+            />
+          </div>
           <div className={styles.leftBodyClip}>
             <div ref={leftBodyInnerRef} className={styles.leftBodyInner} style={{ height: totalContentH }}>
               {visItems.map((item, idx) => {
