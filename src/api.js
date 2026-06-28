@@ -91,6 +91,12 @@ async function req(method, path, body) {
   return fetchJson(method, url, body)
 }
 
+function qContext(path, contextId) {
+  return contextId
+    ? `${path}${path.includes('?') ? '&' : '?'}context_id=${encodeURIComponent(contextId)}`
+    : path
+}
+
 async function baseReq(method, path, body) {
   return fetchJson(method, `${BASE}${path}`, body)
 }
@@ -175,20 +181,20 @@ export const api = {
   deleteFilter:  (id)         => req('DELETE', `/filters/${id}`),
 
   // Schedule perspectives
-  getSchedulePerspectives:    ()              => req('GET',    '/schedule-perspectives'),
-  createSchedulePerspective:  (perspective)   => req('POST',   '/schedule-perspectives', perspective),
+  getSchedulePerspectives:    (contextId)     => req('GET',    qContext('/schedule-perspectives', contextId)),
+  createSchedulePerspective:  (perspective, contextId) => req('POST', qContext('/schedule-perspectives', contextId), perspective),
   updateSchedulePerspective:  (id, patch)     => req('PATCH',  `/schedule-perspectives/${id}`, patch),
   deleteSchedulePerspective:  (id)            => req('DELETE', `/schedule-perspectives/${id}`),
 
   // Classification perspectives
-  getClassificationPerspectives:    ()              => req('GET',    '/classification-perspectives'),
-  createClassificationPerspective:  (perspective)   => req('POST',   '/classification-perspectives', perspective),
+  getClassificationPerspectives:    (contextId)     => req('GET',    qContext('/classification-perspectives', contextId)),
+  createClassificationPerspective:  (perspective, contextId) => req('POST', qContext('/classification-perspectives', contextId), perspective),
   updateClassificationPerspective:  (id, patch)     => req('PATCH',  `/classification-perspectives/${id}`, patch),
   deleteClassificationPerspective:  (id)            => req('DELETE', `/classification-perspectives/${id}`),
 
   // Calendar perspectives
-  getCalendarPerspectives:    ()              => req('GET',    '/calendar-perspectives'),
-  createCalendarPerspective:  (perspective)   => req('POST',   '/calendar-perspectives', perspective),
+  getCalendarPerspectives:    (contextId)     => req('GET',    qContext('/calendar-perspectives', contextId)),
+  createCalendarPerspective:  (perspective, contextId) => req('POST', qContext('/calendar-perspectives', contextId), perspective),
   updateCalendarPerspective:  (id, patch)     => req('PATCH',  `/calendar-perspectives/${id}`, patch),
   deleteCalendarPerspective:  (id)            => req('DELETE', `/calendar-perspectives/${id}`),
 

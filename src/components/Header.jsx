@@ -40,7 +40,7 @@ function computeWordRects(el) {
   return result
 }
 
-export default function Header({ view, onNavigate, onQuickAdd, projectName, onBack, notes = [], onNoteOpen, onApplyContext }) {
+export default function Header({ view, onNavigate, onQuickAdd, projectName, onBack, notes = [], onNoteOpen, activeContextId = '', onApplyContext }) {
   // quick-add state
   const [open, setOpen]               = useState(false)
   const [titleVal, setTitleVal]       = useState('')
@@ -65,12 +65,14 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
     classification: NONE_PERSPECTIVE_ID,
     schedule: NONE_PERSPECTIVE_ID,
     calendar: NONE_PERSPECTIVE_ID,
+    archivedDimensionIds: [],
   })
   const [contextPerspectives, setContextPerspectives] = useState({
     classification: [],
     schedule: [],
     calendar: [],
   })
+  const [contextDimensions, setContextDimensions] = useState([])
 
   const editorRef      = useRef(null)
   const titleInputRef  = useRef(null)
@@ -173,19 +175,38 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
   const ensureContextData = () => {
     Promise.all([
       api.getProjectContexts(),
-      api.getClassificationPerspectives(),
-      api.getSchedulePerspectives(),
-      api.getCalendarPerspectives(),
+      api.getClassificationPerspectives(activeContextId),
+      api.getSchedulePerspectives(activeContextId),
+      api.getCalendarPerspectives(activeContextId),
+      api.getDimensions(),
     ])
-      .then(([loadedContexts, classification, schedule, calendar]) => {
+      .then(([loadedContexts, classification, schedule, calendar, loadedDimensions]) => {
         setContexts(loadedContexts || [])
         setContextPerspectives({
           classification: classification || [],
           schedule: schedule || [],
           calendar: calendar || [],
         })
+        setContextDimensions(loadedDimensions || [])
+        if (!activeContextId && loadedContexts?.[0]) {
+          onApplyContext?.(loadedContexts[0])
+        }
       })
       .catch(console.error)
+  }
+
+  useEffect(() => {
+    if (!projectName) return
+    ensureContextData()
+  }, [projectName]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleContextDimensionArchive = dimId => {
+    setContextChoices(prev => {
+      const ids = new Set(prev.archivedDimensionIds || [])
+      if (ids.has(dimId)) ids.delete(dimId)
+      else ids.add(dimId)
+      return { ...prev, archivedDimensionIds: [...ids] }
+    })
   }
 
   const openContextMenu = () => {
@@ -197,6 +218,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
         classification: window.localStorage.getItem('classification.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
         schedule: window.localStorage.getItem('schedule.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
         calendar: window.localStorage.getItem('calendar.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
+        archivedDimensionIds: [],
       })
       setEditingContextId('')
       setContextName('')
@@ -208,11 +230,12 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
     classificationPerspectiveId: contextChoices.classification,
     schedulePerspectiveId: contextChoices.schedule,
     calendarPerspectiveId: contextChoices.calendar,
+    archivedDimensionIds: contextChoices.archivedDimensionIds || [],
   })
 
   const applyContext = context => {
     playSound('perspectiveLoad')
-    onApplyContext?.(context.state || {})
+    onApplyContext?.(context)
     setContextOpen(false)
   }
 
@@ -228,9 +251,11 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
     const currentSchedule = window.localStorage.getItem('schedule.defaultPerspectiveId') || NONE_PERSPECTIVE_ID
     const currentCalendar = window.localStorage.getItem('calendar.defaultPerspectiveId') || NONE_PERSPECTIVE_ID
     const currentIndex = Math.max(0, contexts.findIndex(context => (
-      (context.state?.classificationPerspectiveId || NONE_PERSPECTIVE_ID) === currentClassification
-      && (context.state?.schedulePerspectiveId || NONE_PERSPECTIVE_ID) === currentSchedule
-      && (context.state?.calendarPerspectiveId || NONE_PERSPECTIVE_ID) === currentCalendar
+      activeContextId
+        ? context.id === activeContextId
+        : (context.state?.classificationPerspectiveId || NONE_PERSPECTIVE_ID) === currentClassification
+          && (context.state?.schedulePerspectiveId || NONE_PERSPECTIVE_ID) === currentSchedule
+          && (context.state?.calendarPerspectiveId || NONE_PERSPECTIVE_ID) === currentCalendar
     )))
     const direction = delta > 0 ? 1 : -1
     const nextContext = contexts[(currentIndex + direction + contexts.length) % contexts.length]
@@ -258,6 +283,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
       classification: context.state?.classificationPerspectiveId || NONE_PERSPECTIVE_ID,
       schedule: context.state?.schedulePerspectiveId || NONE_PERSPECTIVE_ID,
       calendar: context.state?.calendarPerspectiveId || NONE_PERSPECTIVE_ID,
+      archivedDimensionIds: context.state?.archivedDimensionIds || [],
     })
   }
 
@@ -268,6 +294,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
       classification: window.localStorage.getItem('classification.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
       schedule: window.localStorage.getItem('schedule.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
       calendar: window.localStorage.getItem('calendar.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
+      archivedDimensionIds: [],
     })
   }
 
@@ -281,6 +308,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
       setContexts(prev => prev
         .map(context => context.id === saved.id ? saved : context)
         .sort((a, b) => a.name.localeCompare(b.name)))
+      if (saved.id === activeContextId) onApplyContext?.(saved)
       setEditingContextId('')
       setContextName('')
     } catch (err) {
@@ -360,6 +388,23 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
                     </select>
                   </label>
                 ))}
+                <div className={styles.contextArchiveBlock}>
+                  <span className={styles.contextArchiveTitle}>Archived dimensions</span>
+                  <div className={styles.contextArchiveList}>
+                    {contextDimensions.length ? contextDimensions.map(dim => (
+                      <label key={dim.id} className={styles.contextArchiveItem}>
+                        <input
+                          type="checkbox"
+                          checked={(contextChoices.archivedDimensionIds || []).includes(dim.id)}
+                          onChange={() => toggleContextDimensionArchive(dim.id)}
+                        />
+                        <span>{dim.name}</span>
+                      </label>
+                    )) : (
+                      <span className={styles.contextArchiveEmpty}>No dimensions yet</span>
+                    )}
+                  </div>
+                </div>
                 <div className={styles.contextFormActions}>
                   <button type="button" onClick={saveContextEdit}>
                     {editingContextId ? 'Save context' : 'Create context'}
@@ -371,7 +416,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
               </div>
               <div className={styles.contextList}>
                 {contexts.length ? contexts.map(context => (
-                  <div key={context.id} className={`${styles.contextItem} ${editingContextId === context.id ? styles.contextItemEditing : ''}`}>
+                  <div key={context.id} className={`${styles.contextItem} ${editingContextId === context.id ? styles.contextItemEditing : ''} ${activeContextId === context.id ? styles.contextItemActive : ''}`}>
                     <button type="button" className={styles.contextApplyBtn} onClick={() => applyContext(context)}>
                       <strong>{context.name}</strong>
                       <span>
@@ -380,6 +425,9 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
                           const name = contextPerspectives[page.id].find(p => p.id === id)?.name || 'None'
                           return `${page.label}: ${name}`
                         }).join(' · ')}
+                        {(context.state?.archivedDimensionIds || []).length
+                          ? ` · ${(context.state?.archivedDimensionIds || []).length} archived`
+                          : ''}
                       </span>
                     </button>
                     <button type="button" className={styles.contextEditBtn} onClick={() => editContext(context)}>Edit</button>

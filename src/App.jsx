@@ -68,6 +68,8 @@ export default function App() {
   const [calendarResolveRequest, setCalendarResolveRequest] = useState(null)
   const [calendarRestoreRequest, setCalendarRestoreRequest] = useState(null)
   const [contextDefaults, setContextDefaults] = useState({})
+  const [activeContextId, setActiveContextId] = useState('')
+  const [activeContextState, setActiveContextState] = useState({})
   const [popupNoteId, setPopupNoteId] = useState(null)
   const [toast, setToast]             = useState(null)
 
@@ -87,7 +89,10 @@ export default function App() {
     setView(6)
   }
 
-  const applyProjectContext = state => {
+  const applyProjectContext = contextOrState => {
+    const state = contextOrState?.state || contextOrState || {}
+    if (contextOrState?.id) setActiveContextId(contextOrState.id)
+    setActiveContextState(state)
     const defaults = {
       classification: state?.classificationPerspectiveId || NONE_PERSPECTIVE_ID,
       schedule: state?.schedulePerspectiveId || NONE_PERSPECTIVE_ID,
@@ -132,6 +137,8 @@ export default function App() {
     setCalendarResolveRequest(null)
     setCalendarRestoreRequest(null)
     setContextDefaults({})
+    setActiveContextId('')
+    setActiveContextState({})
     setAppScreen('home')
     setAuthState('authenticated')
   }
@@ -148,6 +155,9 @@ export default function App() {
     setNoteDataVersion(0)
     setCalendarResolveRequest(null)
     setCalendarRestoreRequest(null)
+    setContextDefaults({})
+    setActiveContextId('')
+    setActiveContextState({})
     setAppScreen('home')
     setAuthState('anonymous')
   }
@@ -164,6 +174,8 @@ export default function App() {
     setCalendarResolveRequest(null)
     setCalendarRestoreRequest(null)
     setContextDefaults({})
+    setActiveContextId('')
+    setActiveContextState({})
     setAppScreen('workspace')
   }
 
@@ -178,6 +190,8 @@ export default function App() {
     setCalendarResolveRequest(null)
     setCalendarRestoreRequest(null)
     setContextDefaults({})
+    setActiveContextId('')
+    setActiveContextState({})
     setAppScreen('home')
   }
 
@@ -287,6 +301,7 @@ export default function App() {
         view={view} onNavigate={setView} onQuickAdd={handleQuickAdd}
         projectName={activeProject.name} onBack={backToHome}
         notes={notes} onNoteOpen={openNotePopup}
+        activeContextId={activeContextId}
         onApplyContext={applyProjectContext}
       />
 
@@ -319,6 +334,8 @@ export default function App() {
             onPeopleChanged={() => setPeopleVersion(v => v + 1)}
             contextDefaultPerspectiveId={contextDefaults.classification}
             contextApplyToken={contextDefaults.token}
+            activeContextId={activeContextId}
+            archivedDimensionIds={activeContextState.archivedDimensionIds || []}
           />
         </div>
         <div className={styles.view} style={{ display: view === 3 ? 'flex' : 'none' }}>
@@ -339,6 +356,8 @@ export default function App() {
             onExternalResolveReturn={returnToCalendarFromResolver}
             contextDefaultPerspectiveId={contextDefaults.schedule}
             contextApplyToken={contextDefaults.token}
+            activeContextId={activeContextId}
+            archivedDimensionIds={activeContextState.archivedDimensionIds || []}
           />
         </div>
         <div className={styles.view} style={{ display: view === 4 ? 'flex' : 'none' }}>
@@ -367,6 +386,8 @@ export default function App() {
             onRequestScheduleResolve={openScheduleResolverFromCalendar}
             contextDefaultPerspectiveId={contextDefaults.calendar}
             contextApplyToken={contextDefaults.token}
+            activeContextId={activeContextId}
+            archivedDimensionIds={activeContextState.archivedDimensionIds || []}
           />
         </div>
       </div>

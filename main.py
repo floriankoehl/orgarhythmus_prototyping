@@ -222,6 +222,7 @@ def _init_db():
             CREATE TABLE IF NOT EXISTS schedule_perspectives (
                 id         TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL DEFAULT 'default',
+                context_id TEXT,
                 name       TEXT NOT NULL,
                 state_json TEXT NOT NULL DEFAULT '{}'
             )
@@ -230,6 +231,7 @@ def _init_db():
             CREATE TABLE IF NOT EXISTS classification_perspectives (
                 id         TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL DEFAULT 'default',
+                context_id TEXT,
                 name       TEXT NOT NULL,
                 state_json TEXT NOT NULL DEFAULT '{}'
             )
@@ -238,6 +240,7 @@ def _init_db():
             CREATE TABLE IF NOT EXISTS calendar_perspectives (
                 id         TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL DEFAULT 'default',
+                context_id TEXT,
                 name       TEXT NOT NULL,
                 state_json TEXT NOT NULL DEFAULT '{}'
             )
@@ -453,6 +456,11 @@ def _migrate():
             cols = [r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()]
             if 'project_id' not in cols:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default'")
+
+        for table in ['schedule_perspectives', 'classification_perspectives', 'calendar_perspectives']:
+            cols = [r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()]
+            if 'context_id' not in cols:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN context_id TEXT")
 
         note_cols = [r[1] for r in con.execute("PRAGMA table_info(notes)").fetchall()]
         if 'created_at' not in note_cols:
@@ -1004,6 +1012,36 @@ def _project_context(row) -> dict:
     except json.JSONDecodeError:
         state = {}
     return {"id": d["id"], "name": d["name"], "state": state}
+
+def _ensure_default_context(con, project_id: str) -> dict:
+    row = con.execute(
+        "SELECT * FROM project_contexts WHERE project_id = ? ORDER BY rowid LIMIT 1",
+        (project_id,),
+    ).fetchone()
+    if not row:
+        context_id = str(uuid.uuid4())
+        con.execute(
+            "INSERT INTO project_contexts (id, project_id, name, state_json) VALUES (?, ?, ?, ?)",
+            (context_id, project_id, "Default context", json.dumps({"archivedDimensionIds": []})),
+        )
+        row = con.execute("SELECT * FROM project_contexts WHERE id = ?", (context_id,)).fetchone()
+    for table in ("schedule_perspectives", "classification_perspectives", "calendar_perspectives"):
+        con.execute(
+            f"UPDATE {table} SET context_id = ? WHERE project_id = ? AND (context_id IS NULL OR context_id = '')",
+            (row["id"], project_id),
+        )
+    return _project_context(row)
+
+def _context_id_for_project(con, project_id: str, context_id: str | None = None) -> str:
+    if context_id:
+        row = con.execute(
+            "SELECT id FROM project_contexts WHERE id = ? AND project_id = ?",
+            (context_id, project_id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Context not found")
+        return row["id"]
+    return _ensure_default_context(con, project_id)["id"]
 
 def _normalize_filter_payload(data) -> tuple[str, str, str | None]:
     gate = data.gate if data.gate in ("AND", "OR") else "AND"
@@ -3044,25 +3082,28 @@ def delete_filter(filter_id: str, user: dict = Depends(current_user)):
 
 # ── Schedule perspectives ─────────────────────────────────────────────────────
 @app.get("/schedule-perspectives")
-def list_schedule_perspectives(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+def list_schedule_perspectives(project_id: str = Query(default='default'), context_id: str | None = Query(default=None), user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     with _db() as con:
+        scoped_context_id = _context_id_for_project(con, project_id, context_id)
         rows = con.execute(
-            "SELECT * FROM schedule_perspectives WHERE project_id = ? ORDER BY name COLLATE NOCASE", (project_id,)
+            "SELECT * FROM schedule_perspectives WHERE project_id = ? AND context_id = ? ORDER BY name COLLATE NOCASE",
+            (project_id, scoped_context_id),
         ).fetchall()
     return [_schedule_perspective(r) for r in rows]
 
 @app.post("/schedule-perspectives", status_code=201)
-def create_schedule_perspective(data: SchedulePerspectiveIn, project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+def create_schedule_perspective(data: SchedulePerspectiveIn, project_id: str = Query(default='default'), context_id: str | None = Query(default=None), user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     pid = data.id or str(uuid.uuid4())
     name = data.name.strip() or "Untitled perspective"
     with _db() as con:
+        scoped_context_id = _context_id_for_project(con, project_id, context_id)
         if con.execute("SELECT id FROM schedule_perspectives WHERE id = ?", (pid,)).fetchone():
             raise HTTPException(409, "Perspective already exists")
         con.execute(
-            "INSERT INTO schedule_perspectives (id, project_id, name, state_json) VALUES (?, ?, ?, ?)",
-            (pid, project_id, name, json.dumps(data.state or {})),
+            "INSERT INTO schedule_perspectives (id, project_id, context_id, name, state_json) VALUES (?, ?, ?, ?, ?)",
+            (pid, project_id, scoped_context_id, name, json.dumps(data.state or {})),
         )
         row = con.execute("SELECT * FROM schedule_perspectives WHERE id = ?", (pid,)).fetchone()
     return _schedule_perspective(row)
@@ -3092,25 +3133,28 @@ def delete_schedule_perspective(perspective_id: str, user: dict = Depends(curren
 
 # ── Classification perspectives ───────────────────────────────────────────────
 @app.get("/classification-perspectives")
-def list_classification_perspectives(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+def list_classification_perspectives(project_id: str = Query(default='default'), context_id: str | None = Query(default=None), user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     with _db() as con:
+        scoped_context_id = _context_id_for_project(con, project_id, context_id)
         rows = con.execute(
-            "SELECT * FROM classification_perspectives WHERE project_id = ? ORDER BY name COLLATE NOCASE", (project_id,)
+            "SELECT * FROM classification_perspectives WHERE project_id = ? AND context_id = ? ORDER BY name COLLATE NOCASE",
+            (project_id, scoped_context_id),
         ).fetchall()
     return [_classification_perspective(r) for r in rows]
 
 @app.post("/classification-perspectives", status_code=201)
-def create_classification_perspective(data: ClassificationPerspectiveIn, project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+def create_classification_perspective(data: ClassificationPerspectiveIn, project_id: str = Query(default='default'), context_id: str | None = Query(default=None), user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     pid = data.id or str(uuid.uuid4())
     name = data.name.strip() or "Untitled perspective"
     with _db() as con:
+        scoped_context_id = _context_id_for_project(con, project_id, context_id)
         if con.execute("SELECT id FROM classification_perspectives WHERE id = ?", (pid,)).fetchone():
             raise HTTPException(409, "Perspective already exists")
         con.execute(
-            "INSERT INTO classification_perspectives (id, project_id, name, state_json) VALUES (?, ?, ?, ?)",
-            (pid, project_id, name, json.dumps(data.state or {})),
+            "INSERT INTO classification_perspectives (id, project_id, context_id, name, state_json) VALUES (?, ?, ?, ?, ?)",
+            (pid, project_id, scoped_context_id, name, json.dumps(data.state or {})),
         )
         row = con.execute("SELECT * FROM classification_perspectives WHERE id = ?", (pid,)).fetchone()
     return _classification_perspective(row)
@@ -3140,25 +3184,28 @@ def delete_classification_perspective(perspective_id: str, user: dict = Depends(
 
 # ── Calendar perspectives ─────────────────────────────────────────────────────
 @app.get("/calendar-perspectives")
-def list_calendar_perspectives(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+def list_calendar_perspectives(project_id: str = Query(default='default'), context_id: str | None = Query(default=None), user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     with _db() as con:
+        scoped_context_id = _context_id_for_project(con, project_id, context_id)
         rows = con.execute(
-            "SELECT * FROM calendar_perspectives WHERE project_id = ? ORDER BY name COLLATE NOCASE", (project_id,)
+            "SELECT * FROM calendar_perspectives WHERE project_id = ? AND context_id = ? ORDER BY name COLLATE NOCASE",
+            (project_id, scoped_context_id),
         ).fetchall()
     return [_calendar_perspective(row) for row in rows]
 
 @app.post("/calendar-perspectives", status_code=201)
-def create_calendar_perspective(data: CalendarPerspectiveIn, project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+def create_calendar_perspective(data: CalendarPerspectiveIn, project_id: str = Query(default='default'), context_id: str | None = Query(default=None), user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     perspective_id = data.id or str(uuid.uuid4())
     name = data.name.strip() or "Untitled perspective"
     with _db() as con:
+        scoped_context_id = _context_id_for_project(con, project_id, context_id)
         if con.execute("SELECT id FROM calendar_perspectives WHERE id = ?", (perspective_id,)).fetchone():
             raise HTTPException(409, "Perspective already exists")
         con.execute(
-            "INSERT INTO calendar_perspectives (id, project_id, name, state_json) VALUES (?, ?, ?, ?)",
-            (perspective_id, project_id, name, json.dumps(data.state or {})),
+            "INSERT INTO calendar_perspectives (id, project_id, context_id, name, state_json) VALUES (?, ?, ?, ?, ?)",
+            (perspective_id, project_id, scoped_context_id, name, json.dumps(data.state or {})),
         )
         row = con.execute("SELECT * FROM calendar_perspectives WHERE id = ?", (perspective_id,)).fetchone()
     return _calendar_perspective(row)
@@ -3191,6 +3238,7 @@ def delete_calendar_perspective(perspective_id: str, user: dict = Depends(curren
 def list_project_contexts(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     with _db() as con:
+        _ensure_default_context(con, project_id)
         rows = con.execute(
             "SELECT * FROM project_contexts WHERE project_id = ? ORDER BY name COLLATE NOCASE", (project_id,)
         ).fetchall()
