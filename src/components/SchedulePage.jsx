@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import styles from './SchedulePage.module.css'
-import { api, projectsApi } from '../api'
+import { api } from '../api'
 import DimensionDropUp from './DimensionDropUp'
 import PeopleWidget from './PeopleWidget'
 import PersonaAvatarStack from './PersonaAvatarStack'
@@ -974,23 +974,17 @@ function SpacingPanel({
   )
 }
 
-function WarningSettingsPanel({
-  settings,
-  onSettingsChange,
+function WarningSystemPanel({
+  nostalgiaMode,
+  onToggleNostalgia,
   onClose,
   anchorRef,
 }) {
-  const [draft, setDraft] = useState(settings)
-  const [pendingSettingChange, setPendingSettingChange] = useState(null)
   const panelRef = useRef()
-  const pendingSettingRef = useRef(null)
   const closeRef = useRef(onClose)
-  useEffect(() => { setDraft(settings) }, [settings])
   useEffect(() => { closeRef.current = onClose })
-  useEffect(() => { pendingSettingRef.current = pendingSettingChange }, [pendingSettingChange])
   useEffect(() => {
     const handler = e => {
-      if (pendingSettingRef.current) return
       if (panelRef.current?.contains(e.target)) return
       if (anchorRef?.current?.contains(e.target)) return
       closeRef.current?.()
@@ -999,103 +993,24 @@ function WarningSettingsPanel({
     return () => document.removeEventListener('mousedown', handler)
   }, [anchorRef])
 
-  const setDraftNumber = (key, raw) => {
-    const value = Math.max(0, Number(raw) || 0)
-    setDraft(prev => ({ ...prev, [key]: value }))
-  }
-
-  const requestNumberChange = key => {
-    const value = Math.max(0, Number(draft[key]) || 0)
-    const current = Math.max(0, Number(settings[key]) || 0)
-    if (value === current) return
-    setPendingSettingChange({
-      key,
-      value,
-      previousValue: current,
-      nextSettings: { ...settings, [key]: value },
-      label: key === 'resizeWarnOrderThreshold' ? 'warning threshold' : 'extra confirmation threshold',
-    })
-  }
-
-  const cancelPendingSettingChange = () => {
-    setDraft(settings)
-    setPendingSettingChange(null)
-  }
-
   return (
-    <>
-      <div ref={panelRef} className={`${styles.spacingPanel} ${styles.warningSettingsPanel}`}>
-        <div className={styles.spacingPanelHdr}>
-          <span>Warning settings</span>
-          <button className={styles.spacingClose} onClick={onClose}>×</button>
-        </div>
-        <div className={styles.warningSettingsText}>
-          Resize protection compares the new duration with the original duration using log10 of the ratio.
-        </div>
-        <label className={styles.warningSettingsToggle}>
-          <input
-            type="checkbox"
-            checked={settings.resizeScaleCrossingWarningEnabled}
-            onChange={e => onSettingsChange({ ...settings, resizeScaleCrossingWarningEnabled: e.target.checked })}
-          />
-          <span>Warn when resize crosses minute/day/month scale</span>
-        </label>
-        <label className={styles.warningSettingsRow}>
-          <span>Warn at</span>
-          <input
-            type="number"
-            min="0"
-            step="0.1"
-            value={draft.resizeWarnOrderThreshold}
-            onChange={e => setDraftNumber('resizeWarnOrderThreshold', e.target.value)}
-            onBlur={() => requestNumberChange('resizeWarnOrderThreshold')}
-            onKeyDown={e => {
-              if (e.key === 'Enter') e.currentTarget.blur()
-              if (e.key === 'Escape') setDraft(settings)
-            }}
-          />
-          <small>orders</small>
-        </label>
-        <label className={styles.warningSettingsRow}>
-          <span>Extra confirm at</span>
-          <input
-            type="number"
-            min="0"
-            step="0.1"
-            value={draft.resizeBlockOrderThreshold}
-            onChange={e => setDraftNumber('resizeBlockOrderThreshold', e.target.value)}
-            onBlur={() => requestNumberChange('resizeBlockOrderThreshold')}
-            onKeyDown={e => {
-              if (e.key === 'Enter') e.currentTarget.blur()
-              if (e.key === 'Escape') setDraft(settings)
-            }}
-          />
-          <small>orders</small>
-        </label>
+    <div ref={panelRef} className={`${styles.spacingPanel} ${styles.warningSettingsPanel}`}>
+      <div className={styles.spacingPanelHdr}>
+        <span>Warning system</span>
+        <button className={styles.spacingClose} onClick={onClose}>×</button>
       </div>
-      {pendingSettingChange && createPortal(
-        <div className={styles.deleteModalBackdrop} onMouseDown={cancelPendingSettingChange}>
-          <div className={styles.deleteModal} role="dialog" aria-modal="true" onMouseDown={e => e.stopPropagation()}>
-            <div className={styles.deleteModalTitle}>Change warning threshold?</div>
-            <div className={styles.deleteModalText}>
-              This resize warning metric is important for keeping the schedule dimensions stable. Changing the {pendingSettingChange.label} from {pendingSettingChange.previousValue} to {pendingSettingChange.value} can make accidental large duration changes easier to miss.
-            </div>
-            <div className={styles.deleteModalActions}>
-              <button className={styles.modalSafePrimaryBtn} autoFocus onClick={cancelPendingSettingChange}>
-                Cancel
-              </button>
-              <button className={styles.modalDangerMutedBtn} onClick={() => {
-                onSettingsChange(pendingSettingChange.nextSettings)
-                setPendingSettingChange(null)
-              }}>
-                Accept setting change
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-    </>
+      <div className={styles.warningSettingsText}>
+        Past dates are locked by default. Nostalgia mode temporarily allows editing before today and turns off when you leave the schedule page.
+      </div>
+      <button
+        type="button"
+        className={`${styles.warningModeBtn} ${nostalgiaMode ? styles.warningModeBtnActive : ''}`}
+        onClick={onToggleNostalgia}
+        aria-pressed={nostalgiaMode}>
+        <span>Nostalgia mode</span>
+        <strong>{nostalgiaMode ? 'On' : 'Off'}</strong>
+      </button>
+    </div>
   )
 }
 
@@ -1749,8 +1664,8 @@ function GanttToolbar({
   showRowScheduleMarker, onShowRowScheduleMarkerChange,
   showRowTimeSlotMeta, onShowRowTimeSlotMetaChange,
   timeSlotLabelMode, onTimeSlotLabelModeChange,
-  timeSlotScaleFilter, onTimeSlotScaleFilterChange,
-  warningSettings, onWarningSettingsChange,
+	  timeSlotScaleFilter, onTimeSlotScaleFilterChange,
+	  nostalgiaMode, onToggleNostalgia,
   canDeleteSelection, onDeleteSelection,
   canFilterToSelection, onFilterToSelectedNotes, onExpandEverything,
 }) {
@@ -1813,22 +1728,22 @@ function GanttToolbar({
         />
       )}
       <div style={{ flex: 1 }} />
-      <div className={styles.spacingWrap}>
-        <button ref={warningSettingsBtnRef}
-          className={`${styles.toolbarToggleBtn} ${warningSettingsOpen ? styles.toolbarToggleBtnActive : ''}`}
-          onClick={() => setWarningSettingsOpen(v => !v)}
-          title="Configure resize and dependency warning behavior">
-          Warning settings
-        </button>
-        {warningSettingsOpen && (
-          <WarningSettingsPanel
-            settings={warningSettings}
-            onSettingsChange={onWarningSettingsChange}
-            onClose={closeWarningSettings}
-            anchorRef={warningSettingsBtnRef}
-          />
-        )}
-      </div>
+	      <div className={styles.spacingWrap}>
+	        <button ref={warningSettingsBtnRef}
+	          className={`${styles.toolbarToggleBtn} ${warningSettingsOpen ? styles.toolbarToggleBtnActive : ''}`}
+	          onClick={() => setWarningSettingsOpen(v => !v)}
+	          title="Warning system">
+	          Warnings
+	        </button>
+	        {warningSettingsOpen && (
+	          <WarningSystemPanel
+	            nostalgiaMode={nostalgiaMode}
+	            onToggleNostalgia={onToggleNostalgia}
+	            onClose={closeWarningSettings}
+	            anchorRef={warningSettingsBtnRef}
+	          />
+	        )}
+	      </div>
       <div className={styles.spacingWrap}>
         <button ref={settingsBtnRef}
           className={`${styles.spacingBtn} ${settingsOpen ? styles.spacingBtnOpen : ''}`}
@@ -2319,13 +2234,15 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   todayMinuteRef.current = todayMinute
 
   // Compute end date position in minutes relative to the anchor.
-  const endDateMinute = useMemo(() => {
-    if (!project?.endDate) return null
-    const anchor = _anchor || (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d })()
-    const endD = new Date(project.endDate + 'T00:00:00')
-    endD.setHours(0, 0, 0, 0)
-    return Math.round((endD.getTime() - anchor.getTime()) / 60000)
-  }, [project?.endDate, _anchor])
+	  const endDateMinute = useMemo(() => {
+	    if (!project?.endDate) return null
+	    const anchor = _anchor || (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d })()
+	    const endD = new Date(project.endDate + 'T00:00:00')
+	    endD.setHours(0, 0, 0, 0)
+	    return Math.round((endD.getTime() - anchor.getTime()) / 60000)
+	  }, [project?.endDate, _anchor])
+  const endDateMinuteRef = useRef(endDateMinute)
+  endDateMinuteRef.current = endDateMinute
 
   // ── API data ───────────────────────────────────────────────────────────────
   const [dimensions,   setDimensions]   = useState([])
@@ -2596,22 +2513,6 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       : DEFAULT_WARNING_SETTINGS.resizeScaleCrossingWarningEnabled,
   }), [project?.resizeBlockOrderThreshold, project?.resizeScaleCrossingWarningEnabled, project?.resizeWarnOrderThreshold])
 
-  const updateWarningSettings = useCallback(async next => {
-    const normalized = {
-      resizeWarnOrderThreshold: Math.max(0, Number(next.resizeWarnOrderThreshold) || 0),
-      resizeBlockOrderThreshold: Math.max(0, Number(next.resizeBlockOrderThreshold) || 0),
-      resizeScaleCrossingWarningEnabled: next.resizeScaleCrossingWarningEnabled !== false,
-    }
-    onProjectUpdate?.({ ...(project ?? {}), ...normalized })
-    if (!project?.id) return
-    try {
-      const saved = await projectsApi.updateProject(project.id, normalized)
-      onProjectUpdate?.(saved)
-    } catch (err) {
-      console.error(err)
-    }
-  }, [onProjectUpdate, project])
-
   useEffect(() => {
     if (!isActive) setNostalgiaMode(false)
   }, [isActive])
@@ -2658,6 +2559,33 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     })
     if (ok) setNostalgiaMode(true)
   }, [confirmDialog])
+
+	  const showPastWorkWarning = useCallback((message = 'This part of the schedule is before today. Enable nostalgia mode if you intentionally need to edit the past.') => {
+	    showWarningPrompt({
+	      title: 'You are in the past',
+	      message,
+	      actions: 'confirm',
+	      confirmLabel: 'Enable nostalgia',
+	      onConfirm: toggleNostalgiaMode,
+	    })
+	  }, [showWarningPrompt, toggleNostalgiaMode])
+
+  const showProjectEndWarningIfNeeded = useCallback(timeSlotsToCheck => {
+    const endMinute = endDateMinuteRef.current
+    if (endMinute == null) return false
+    const items = Array.isArray(timeSlotsToCheck) ? timeSlotsToCheck : [timeSlotsToCheck]
+    const isPastEnd = items.some(item => item && Number(item.startCol) > endMinute)
+    if (!isPastEnd) return false
+    const label = project?.endDate
+      ? new Date(`${project.endDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : 'the project end date'
+    showWarningPrompt({
+      title: 'Past project end date',
+      message: `This time slot starts after ${label}. You can keep working there, but it is outside the current project window.`,
+      actions: 'close',
+    })
+    return true
+  }, [project?.endDate, showWarningPrompt])
 
   const activeCategories = useMemo(
     () => categories.filter(c => c.dimensionId === activeDimId),
@@ -3041,9 +2969,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const endDateZoomCol      = endDateMinute != null ? minuteToZoomCol(endDateMinute, timeZoom) : null
   const effectiveTodayZoomCol = Math.max(0, todayZoomCol)
 
-  const visualRangeFor = useCallback(item => getRenderedVisualRange(item, timeZoomRef.current, timeSlotScaleFilterRef.current), [])
-  const visualColToMinute = useCallback(col => zoomColToMinute(col, timeZoomRef.current), [])
-  const minuteLabel = useCallback(minute => minuteToLabel(minute, timeZoomRef.current), [])
+	  const visualRangeFor = useCallback(item => getRenderedVisualRange(item, timeZoomRef.current, timeSlotScaleFilterRef.current), [])
+	  const visualColToMinute = useCallback(col => zoomColToMinute(col, timeZoomRef.current), [])
+	  const minuteLabel = useCallback(minute => minuteToLabel(minute, timeZoomRef.current), [])
+	  const defaultScrollLeftForZoom = useCallback((zoom = timeZoomRef.current, colW = spacingRef.current.colW) => {
+	    const normalizedZoom = normalizeTimeZoom(zoom)
+	    const todayCol = minuteToZoomColExact(todayMinuteRef.current, normalizedZoom)
+	    return Math.max(0, Math.round(todayCol * colW))
+	  }, [])
 
   // Live refs that closures read — no useEffect needed
   const timeSlotsRef  = useRef([])
@@ -4099,9 +4032,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       .map(id => timeSlotsRef.current.find(m => m.id === id))
       .find(Boolean)
     const anchor = pinned ?? selectedAnchor
-    const currentMinute = anchor
-      ? anchor.startCol + anchor.duration / 2
-      : zoomColToMinute(scrollLeftRef.current / sp.colW, prevZoom)
+	    const currentMinute = anchor
+	      ? anchor.startCol + anchor.duration / 2
+	      : todayMinuteRef.current
     const anchorLeft = minuteToZoomColExact(currentMinute, nextZoom) * nextColW
     const nextScrollLeft = Math.max(0, Math.round(anchor ? anchorLeft - vpRef.current.w / 2 : anchorLeft))
     const needed = Math.ceil((nextScrollLeft + vpRef.current.w) / nextColW) + COL_BUF + EDGE_COLS + 1
@@ -4188,12 +4121,17 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const cell = getNoteCellFromPointer(e)
     if (!cell) return
 
-    if (cell.type === 'header') {
-      const { col } = cell
-      setContextMenu({ type: 'header', x: e.clientX, y: e.clientY, col, unitLabel: TIME_ZOOM_BY_VALUE[timeZoomRef.current]?.label.toLowerCase() ?? 'unit' })
-      return
-    }
-    if (e.target.closest('[data-ms-id]')) return  // right-click on timeSlot — skip for now
+	    if (cell.type === 'header') {
+	      const { col } = cell
+	      setContextMenu({ type: 'header', x: e.clientX, y: e.clientY, col, unitLabel: TIME_ZOOM_BY_VALUE[timeZoomRef.current]?.label.toLowerCase() ?? 'unit' })
+	      return
+	    }
+	    if (e.target.closest('[data-ms-id]')) return  // right-click on timeSlot — skip for now
+	    if (!nostalgiaModeRef.current && cell.col < todayMinuteRef.current) {
+	      showPastWorkWarning('This canvas position is before today. Enable nostalgia mode if you intentionally want to work in the past.')
+	      return
+	    }
+	    showProjectEndWarningIfNeeded({ startCol: cell.col })
 
     const hasDeadline = deadlines.some(d => d.noteId === cell.noteId)
     const hasEarliestStart = earliestStarts.some(e => e.noteId === cell.noteId)
@@ -4204,7 +4142,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setContextMenu({ type: 'cell', x: e.clientX, y: e.clientY, col: cell.col,
       noteId: cell.noteId, noteTitle: cell.noteTitle, color: cell.color, hasDeadline, hasEarliestStart,
       isReadOnly: readOnly, readOnlyLabel, hasTimeSlot: !!rowMs })
-  }, [deadlines, earliestStarts, getNoteCellFromPointer])
+	  }, [deadlines, earliestStarts, getNoteCellFromPointer, showPastWorkWarning, showProjectEndWarningIfNeeded])
 
   // ── TimeSlot CRUD ─────────────────────────────────────────────────────────
   const handleCreateTimeSlot = useCallback(async (noteId, startCol, color) => {
@@ -4236,25 +4174,22 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       return
     }
     if (!nostalgiaModeRef.current && startCol < todayMinuteRef.current) {
-      showWarningPrompt({
-        title: 'Cannot schedule in the past',
-        message: 'Time slots cannot start before today unless nostalgia mode is enabled.',
-        actions: 'close',
-      })
+      showPastWorkWarning('This canvas position is before today. Enable nostalgia mode if you intentionally want to create a time slot in the past.')
       return
     }
     if (startCol < 0 || (dl && startCol + duration > dl.col)) {
       reportDeadlineViolation([ms.id])
       return
     }
-    await commitTransaction({
-      id: newClientId('tx'),
-      type: 'timeSlot.create',
-      label: 'Create time slot',
-      before: { timeSlots: [], dependencies: [] },
-      after: { timeSlots: [ms], dependencies: [] },
-    })
-  }, [clearWarningPrompt, commitTransaction, reportDeadlineViolation, reportEarliestStartViolation, showWarningPrompt])
+	    await commitTransaction({
+	      id: newClientId('tx'),
+	      type: 'timeSlot.create',
+	      label: 'Create time slot',
+	      before: { timeSlots: [], dependencies: [] },
+	      after: { timeSlots: [ms], dependencies: [] },
+	    })
+	    showProjectEndWarningIfNeeded(ms)
+	  }, [clearWarningPrompt, commitTransaction, reportDeadlineViolation, reportEarliestStartViolation, showPastWorkWarning, showProjectEndWarningIfNeeded, showWarningPrompt])
 
   const handleGridDoubleClick = useCallback(e => {
     if (modeRef.current !== 'timeSlot') return
@@ -4291,9 +4226,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       }
       const nextTimeSlots = timeSlotsRef.current.map(m => after.find(candidate => candidate.id === m.id) ?? m)
       if (maybeBlockDependencyWarning(nextTimeSlots, dependenciesRef.current)) return
-      await commitTransaction(tx)
-    }
-  }, [commitTransaction, maybeBlockDependencyWarning])
+	      await commitTransaction(tx)
+	      showProjectEndWarningIfNeeded(after)
+	    }
+	  }, [commitTransaction, maybeBlockDependencyWarning, showProjectEndWarningIfNeeded])
 
   const handleDeleteTimeUnit = useCallback(async col => {
     const unit = getZoomUnit(timeZoomRef.current)
@@ -4324,9 +4260,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         after: { timeSlots: after, dependencies: [] },
       }
       if (maybeBlockDependencyWarning(updated, dependenciesRef.current)) return
-      await commitTransaction(tx)
-    }
-  }, [commitTransaction, maybeBlockDependencyWarning])
+	      await commitTransaction(tx)
+	      showProjectEndWarningIfNeeded(after)
+	    }
+	  }, [commitTransaction, maybeBlockDependencyWarning, showProjectEndWarningIfNeeded])
 
   // ── Drag helpers ───────────────────────────────────────────────────────────
   const showScaleEditBlocked = useCallback((timeSlot) => {
@@ -4378,10 +4315,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     }
 
     const getBounds = () => {
-      let minDelta = -Infinity
-      let maxDelta = Infinity
-      let minDeltaFromEarliest = -Infinity
-      Object.entries(originals).forEach(([id, orig]) => {
+	      let minDelta = -Infinity
+	      let maxDelta = Infinity
+	      let minDeltaFromEarliest = -Infinity
+	      let minDeltaFromPast = -Infinity
+	      Object.entries(originals).forEach(([id, orig]) => {
         const ms = timeSlotsRef.current.find(m => m.id === id)
         const dl = findApplicableDeadline(deadlinesRef.current, ms)
         const es = findApplicableEarliestStart(earliestStartsRef.current, ms)
@@ -4389,10 +4327,12 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           const startVisual = minuteToZoomCol(orig.startCol, 'months')
           const span = calendarMonthSpanForRange(orig.startCol, orig.duration)
           minDelta = Math.max(minDelta, -startVisual)
-          if (!nostalgiaModeRef.current && todayMinuteRef.current > 0) {
-            const todayMonthCol = minuteToZoomCol(todayMinuteRef.current, 'months')
-            minDelta = Math.max(minDelta, todayMonthCol - startVisual)
-          }
+	          if (!nostalgiaModeRef.current && todayMinuteRef.current > 0) {
+	            const todayMonthCol = minuteToZoomCol(todayMinuteRef.current, 'months')
+	            const todayD = todayMonthCol - startVisual
+	            minDelta = Math.max(minDelta, todayD)
+	            minDeltaFromPast = Math.max(minDeltaFromPast, todayD)
+	          }
           if (dl) {
             maxDelta = Math.min(maxDelta, minuteToZoomCol(dl.col, 'months') - span - startVisual)
           }
@@ -4404,7 +4344,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           return
         }
         minDelta = Math.max(minDelta, -orig.startCol)
-        if (!nostalgiaModeRef.current && todayMinuteRef.current > 0) minDelta = Math.max(minDelta, todayMinuteRef.current - orig.startCol)
+	        if (!nostalgiaModeRef.current && todayMinuteRef.current > 0) {
+	          const todayD = todayMinuteRef.current - orig.startCol
+	          minDelta = Math.max(minDelta, todayD)
+	          minDeltaFromPast = Math.max(minDeltaFromPast, todayD)
+	        }
         if (dl) maxDelta = Math.min(maxDelta, dl.col - orig.duration - orig.startCol)
         if (es) {
           const esD = es.col - orig.startCol
@@ -4412,7 +4356,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           minDeltaFromEarliest = Math.max(minDeltaFromEarliest, esD)
         }
       })
-      return { minDelta, maxDelta, minDeltaFromEarliest }
+	      return { minDelta, maxDelta, minDeltaFromEarliest, minDeltaFromPast }
     }
 
     const getSnappedColDelta = clientX => {
@@ -4424,7 +4368,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       let colDelta = isMonthMove
         ? requestedVisual - firstVisualStart
         : (requestedVisual - firstVisualStart) * getZoomUnit(timeZoomRef.current)
-      const { minDelta, maxDelta, minDeltaFromEarliest } = getBounds()
+	      const { minDelta, maxDelta, minDeltaFromEarliest, minDeltaFromPast } = getBounds()
       const clamped = Math.max(minDelta, Math.min(maxDelta, colDelta))
       if (dragRef.current) {
         dragRef.current.hitBoundary = false
@@ -4433,13 +4377,15 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       if (dragRef.current && clamped !== colDelta) {
         if (colDelta > maxDelta) {
           dragRef.current.hitBoundary = true
-        } else {
-          // Left boundary hit — earliest start or today
-          if (minDeltaFromEarliest > -Infinity && colDelta < minDeltaFromEarliest) {
-            dragRef.current.hitEarliestBoundary = true
-          } else {
-            dragRef.current.hitBoundary = true
-          }
+	        } else {
+	          // Left boundary hit — earliest start or today
+	          if (minDeltaFromEarliest > -Infinity && colDelta < minDeltaFromEarliest) {
+	            dragRef.current.hitEarliestBoundary = true
+	          } else if (minDeltaFromPast > -Infinity && colDelta < minDeltaFromPast) {
+	            dragRef.current.hitPastBoundary = true
+	          } else {
+	            dragRef.current.hitBoundary = true
+	          }
         }
       }
       return clamped
@@ -4549,7 +4495,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       stopAutoScroll()
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
-      const { hasMoved, hitBoundary, hitEarliestBoundary } = dragRef.current || {}
+	      const { hasMoved, hitBoundary, hitEarliestBoundary, hitPastBoundary } = dragRef.current || {}
       dragRef.current = null
       const resetToOriginal = () => {
         Object.entries(originals).forEach(([id, orig]) => {
@@ -4572,7 +4518,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       const movedNextTimeSlots = buildMovedTimeSlots(colDelta).filter(candidate => movedTimeSlotIdSet.has(candidate.id))
       const deadlineContactIds = getHardDeadlineContactIds(movedNextTimeSlots)
       const earliestStartContactIds = getEarliestStartContactIds(movedNextTimeSlots)
-      if (hitBoundary) reportDeadlineViolation(movedTimeSlotIds)
+	      if (hitPastBoundary) showPastWorkWarning('This move would place the time slot before today. Enable nostalgia mode if you intentionally want to work in the past.')
+	      else if (hitBoundary) reportDeadlineViolation(movedTimeSlotIds)
       else if (deadlineContactIds.length) reportDeadlineViolation(deadlineContactIds)
       if (hitEarliestBoundary) reportEarliestStartViolation(movedTimeSlotIds)
       else if (earliestStartContactIds.length) reportEarliestStartViolation(earliestStartContactIds)
@@ -4596,14 +4543,15 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
             .map(([id]) => timeSlotsRef.current.find(m => m.id === id))
             .filter(Boolean)
           const after = before.map(m => next.find(candidate => candidate.id === m.id)).filter(Boolean)
-          await commitTransaction({
+	          await commitTransaction({
             id: newClientId('tx'),
             type: before.length > 1 ? 'timeSlot.move-many' : 'timeSlot.move',
             label: before.length > 1 ? 'Move time slots' : 'Move time slot',
             before: { timeSlots: before, dependencies: [] },
             after: { timeSlots: after, dependencies: [] },
-          })
-        }
+	          })
+	          showProjectEndWarningIfNeeded(after)
+	        }
         const blocked = maybeBlockDependencyWarning(next, dependenciesRef.current)
         if (blocked) {
           resetToOriginal()
@@ -4660,12 +4608,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         const minRightVisual = minuteEndToZoomCol(origRight, timeZoomRef.current) - 1
         const maxLeft = isMonthResize ? zoomColToMinute(minRightVisual, 'months') : origRight - MIN_TIME_SLOT_DURATION
         const esMinLeft = esResize ? esResize.col : 0
-        const minLeft = Math.max(esMinLeft, nostalgiaModeRef.current ? 0 : todayMinuteRef.current)
-        const leftCol = Math.min(maxLeft, Math.max(minLeft, requested))
-        if (dragRef.current && leftCol !== requested) {
-          if (esMinLeft > 0 && requested < esMinLeft) dragRef.current.hitEarliestBoundary = true
-          else dragRef.current.hitBoundary = true
-        }
+	        const pastMinLeft = nostalgiaModeRef.current ? 0 : todayMinuteRef.current
+	        const minLeft = Math.max(esMinLeft, pastMinLeft)
+	        const leftCol = Math.min(maxLeft, Math.max(minLeft, requested))
+	        if (dragRef.current && leftCol !== requested) {
+	          if (esMinLeft > 0 && requested < esMinLeft) dragRef.current.hitEarliestBoundary = true
+	          else if (!nostalgiaModeRef.current && requested < pastMinLeft) dragRef.current.hitPastBoundary = true
+	          else dragRef.current.hitBoundary = true
+	        }
         return { startCol: leftCol, duration: origRight - leftCol }
       }
       const origVisualRight = minuteEndToZoomCol(origRight, timeZoomRef.current)
@@ -4734,7 +4684,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       }
       const deadlineContactIds = getHardDeadlineContactIds([{ ...ms, startCol: newStart, duration: newDur }])
       const earliestStartContactIds = getEarliestStartContactIds([{ ...ms, startCol: newStart, duration: newDur }])
-      if (dragState.hitBoundary) reportDeadlineViolation([timeSlotId])
+	      if (dragState.hitPastBoundary) showPastWorkWarning('This resize would extend the time slot before today. Enable nostalgia mode if you intentionally want to work in the past.')
+	      else if (dragState.hitBoundary) reportDeadlineViolation([timeSlotId])
       else if (deadlineContactIds.length) reportDeadlineViolation(deadlineContactIds)
       if (dragState.hitEarliestBoundary) reportEarliestStartViolation([timeSlotId])
       else if (earliestStartContactIds.length) reportEarliestStartViolation(earliestStartContactIds)
@@ -4749,14 +4700,15 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         const applyResize = async () => {
           const current = timeSlotsRef.current.find(m => m.id === timeSlotId)
           const next = nextAll.find(m => m.id === timeSlotId)
-          await commitTransaction({
+	          await commitTransaction({
             id: newClientId('tx'),
             type: 'timeSlot.resize',
             label: 'Resize time slot',
             before: { timeSlots: current ? [current] : [], dependencies: [] },
             after: { timeSlots: next ? [next] : [], dependencies: [] },
-          })
-        }
+	          })
+	          showProjectEndWarningIfNeeded(next)
+	        }
         const applyResizeIfValid = async () => {
           const blocked = maybeBlockDependencyWarning(nextAll, dependenciesRef.current)
           if (blocked) {
@@ -5335,9 +5287,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 	  const restoredScrollLeftForState = useCallback(state => {
 	    const savedAnchor = state?.timelineAnchorCreatedAt
 	    const currentAnchor = project?.createdAt ?? ''
-	    if (!savedAnchor || savedAnchor !== currentAnchor) return 0
-	    return Math.max(0, Number(state.scrollLeft) || 0)
-	  }, [project?.createdAt])
+	    if (!savedAnchor || savedAnchor !== currentAnchor) return defaultScrollLeftForZoom(state?.timeZoom, state?.spacing?.colW)
+	    return Math.max(0, Number(state.scrollLeft) || defaultScrollLeftForZoom(state?.timeZoom, state?.spacing?.colW))
+	  }, [defaultScrollLeftForZoom, project?.createdAt])
 	
 	  const applyPerspective = useCallback(perspective => {
     const state = normalizeSchedulePerspectiveState(perspective?.state ?? {})
@@ -5382,6 +5334,13 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 	
 	    requestAnimationFrame(() => {
 	      const nextLeft = restoredScrollLeftForState(state)
+	      const nextColW = state.spacing?.colW ?? spacingRef.current.colW
+	      const needed = Math.ceil((nextLeft + vpRef.current.w) / nextColW) + COL_BUF + EDGE_COLS + 1
+	      if (needed > totalColsRef.current) {
+	        totalColsRef.current = needed
+	        setTotalCols(needed)
+	        if (gridInnerRef.current) gridInnerRef.current.style.width = `${needed * nextColW}px`
+	      }
 	      if (gridBodyRef.current) gridBodyRef.current.scrollLeft = nextLeft
 	      scrollLeftRef.current = gridBodyRef.current?.scrollLeft ?? nextLeft
 	      setScrollLeft(scrollLeftRef.current)
@@ -5438,6 +5397,13 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
 	    requestAnimationFrame(() => {
 	      const nextLeft = restoredScrollLeftForState(state)
+	      const nextColW = state.spacing?.colW ?? spacingRef.current.colW
+	      const needed = Math.ceil((nextLeft + vpRef.current.w) / nextColW) + COL_BUF + EDGE_COLS + 1
+	      if (needed > totalColsRef.current) {
+	        totalColsRef.current = needed
+	        setTotalCols(needed)
+	        if (gridInnerRef.current) gridInnerRef.current.style.width = `${needed * nextColW}px`
+	      }
 	      if (gridBodyRef.current) gridBodyRef.current.scrollLeft = nextLeft
 	      scrollLeftRef.current = gridBodyRef.current?.scrollLeft ?? nextLeft
 	      setScrollLeft(scrollLeftRef.current)
@@ -5608,11 +5574,17 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       }
       return
     }
-    const rect = gridBodyRef.current?.getBoundingClientRect(); if (!rect) return
-    if (e.clientY - rect.top < HEADER_H) return  // in time axis
-    if (e.target.closest('[data-ms-id]')) return  // handled by timeSlot
-    startMarqueeDrag(e.clientX, e.clientY)
-  }, [getNoteCellFromPointer]) // eslint-disable-line
+	    const rect = gridBodyRef.current?.getBoundingClientRect(); if (!rect) return
+	    if (e.clientY - rect.top < HEADER_H) return  // in time axis
+	    if (e.target.closest('[data-ms-id]')) return  // handled by timeSlot
+	    const cell = getNoteCellFromPointer(e)
+	    if (!nostalgiaModeRef.current && cell?.type === 'cell' && cell.col < todayMinuteRef.current) {
+	      showPastWorkWarning('This canvas position is before today. Enable nostalgia mode if you intentionally want to work in the past.')
+	      return
+	    }
+	    if (cell?.type === 'cell') showProjectEndWarningIfNeeded({ startCol: cell.col })
+	    startMarqueeDrag(e.clientX, e.clientY)
+	  }, [getNoteCellFromPointer, showPastWorkWarning, showProjectEndWarningIfNeeded]) // eslint-disable-line
 
   // ── Virtual ranges ─────────────────────────────────────────────────────────
   const { colW, rowH } = spacing
@@ -5733,9 +5705,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         showRowScheduleMarker={showRowScheduleMarker} onShowRowScheduleMarkerChange={setShowRowScheduleMarker}
         showRowTimeSlotMeta={showRowTimeSlotMeta} onShowRowTimeSlotMetaChange={setShowRowTimeSlotMeta}
         timeSlotLabelMode={timeSlotLabelMode} onTimeSlotLabelModeChange={setTimeSlotLabelMode}
-        warningSettings={warningSettings}
-        onWarningSettingsChange={updateWarningSettings}
-      />
+	        nostalgiaMode={nostalgiaMode}
+	        onToggleNostalgia={toggleNostalgiaMode}
+	      />
 
       <div className={styles.canvasRow}>
 
@@ -6143,10 +6115,18 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                 : null
             })}
 
-            {/* Project end date marker */}
-            {endDateZoomCol != null && (
-              <div className={styles.endDateLine} style={{ left: endDateZoomCol * colW }} />
-            )}
+	            {/* Project end date marker */}
+	            {endDateZoomCol != null && (
+	              <>
+	                <div
+	                  className={styles.afterEndOverlay}
+	                  style={{ left: endDateZoomCol * colW, width: Math.max(0, totalCols - endDateZoomCol) * colW }}
+	                />
+	                <div className={styles.endDateLine} style={{ left: endDateZoomCol * colW }}>
+	                  <span>Project end</span>
+	                </div>
+	              </>
+	            )}
 
             {/* Row stripes */}
             {visItems.map((item, idx) => {
@@ -6465,27 +6445,6 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 	            <span>{scaleLabelForZoom(timeZoom)} scale · Return to previous view</span>
 	          </button>
 	        )}
-	        <div className={styles.nostalgiaWrap}>
-	          <button
-	            type="button"
-	            className={`${styles.nostalgiaBtn} ${nostalgiaMode ? styles.nostalgiaBtnActive : ''}`}
-	            onClick={toggleNostalgiaMode}
-	            title={nostalgiaMode ? 'Disable nostalgia mode' : 'Enable temporary editing before today'}
-	            aria-pressed={nostalgiaMode}>
-	            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-	              <path d="M3 12a9 9 0 1 0 3-6.7" />
-	              <path d="M3 3v6h6" />
-	              <path d="M12 7v5l3 2" />
-	            </svg>
-	            <span>Nostalgia</span>
-	          </button>
-	          {!nostalgiaMode && (
-	            <span className={styles.floatingHint}>
-	              <strong>Nostalgia mode</strong>
-	              <small>Temporarily edit before today</small>
-	            </span>
-	          )}
-	        </div>
 	        <PerspectiveMenu
           perspectives={perspectiveOptions}
           activePerspectiveId={activePerspectiveId}
