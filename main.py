@@ -3249,13 +3249,33 @@ def create_project_context(data: ProjectContextIn, project_id: str = Query(defau
     assert_project_access(project_id, user)
     context_id = data.id or str(uuid.uuid4())
     name = data.name.strip() or "Untitled context"
+    perspective_ids = {
+        "classification": str(uuid.uuid4()),
+        "schedule": str(uuid.uuid4()),
+        "calendar": str(uuid.uuid4()),
+    }
+    state = dict(data.state or {})
+    state.update({
+        "classificationPerspectiveId": perspective_ids["classification"],
+        "schedulePerspectiveId": perspective_ids["schedule"],
+        "calendarPerspectiveId": perspective_ids["calendar"],
+    })
     with _db() as con:
         if con.execute("SELECT id FROM project_contexts WHERE id = ?", (context_id,)).fetchone():
             raise HTTPException(409, "Context already exists")
         con.execute(
             "INSERT INTO project_contexts (id, project_id, name, state_json) VALUES (?, ?, ?, ?)",
-            (context_id, project_id, name, json.dumps(data.state or {})),
+            (context_id, project_id, name, json.dumps(state)),
         )
+        for page, table in (
+            ("classification", "classification_perspectives"),
+            ("schedule", "schedule_perspectives"),
+            ("calendar", "calendar_perspectives"),
+        ):
+            con.execute(
+                f"INSERT INTO {table} (id, project_id, context_id, name, state_json) VALUES (?, ?, ?, ?, ?)",
+                (perspective_ids[page], project_id, context_id, name, "{}"),
+            )
         row = con.execute("SELECT * FROM project_contexts WHERE id = ?", (context_id,)).fetchone()
     return _project_context(row)
 
@@ -3279,6 +3299,9 @@ def update_project_context(context_id: str, data: ProjectContextPatch, user: dic
 def delete_project_context(context_id: str, user: dict = Depends(current_user)):
     with _db() as con:
         assert_project_access(_project_id_for_context(con, context_id), user)
+        con.execute("DELETE FROM schedule_perspectives WHERE context_id = ?", (context_id,))
+        con.execute("DELETE FROM classification_perspectives WHERE context_id = ?", (context_id,))
+        con.execute("DELETE FROM calendar_perspectives WHERE context_id = ?", (context_id,))
         con.execute("DELETE FROM project_contexts WHERE id = ?", (context_id,))
 
 

@@ -89,7 +89,14 @@
   background: #e8f0fe;
 }
 
+.contextSwitcher {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .contextBtn {
+  max-width: min(220px, calc(100vw - 240px));
   height: 30px;
   padding: 0 10px;
   color: #555;
@@ -98,6 +105,33 @@
   border-radius: 6px;
   cursor: pointer;
   font: 800 12px Arial, sans-serif;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contextArrowBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 30px;
+  padding: 0;
+  color: #64748b;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.contextArrowBtn:hover:not(:disabled) {
+  color: #1a73e8;
+  background: #e8f0fe;
+}
+
+.contextArrowBtn:disabled {
+  color: #cbd5e1;
+  cursor: default;
 }
 .contextBtn:hover,
 .contextBtnActive {
@@ -119,6 +153,21 @@
   box-shadow: 0 14px 34px rgba(15,23,42,0.18);
   transform: translateX(-50%);
   z-index: 4501;
+}
+
+.contextNewBtn {
+  width: 100%;
+  height: 32px;
+  color: #1a73e8;
+  background: #eef5ff;
+  border: 1px solid #c5d8f8;
+  border-radius: 6px;
+  cursor: pointer;
+  font: 800 12px Arial, sans-serif;
+}
+
+.contextNewBtn:hover {
+  background: #dceaff;
 }
 
 .contextCreate {
@@ -157,6 +206,57 @@
   gap: 8px;
   color: #64748b;
   font: 800 11px Arial, sans-serif;
+}
+
+.contextArchiveBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px;
+  background: #f8fafc;
+  border: 1px solid #e5edf5;
+  border-radius: 6px;
+}
+
+.contextArchiveTitle {
+  color: #475569;
+  font: 900 11px Arial, sans-serif;
+}
+
+.contextArchiveList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 8px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.contextCreate .contextArchiveItem {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: #334155;
+  font: 700 11px Arial, sans-serif;
+}
+
+.contextArchiveItem input {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+}
+
+.contextArchiveItem span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contextArchiveEmpty {
+  grid-column: 1 / -1;
+  color: #94a3b8;
+  font: 700 11px Arial, sans-serif;
 }
 
 .contextFormActions {
@@ -199,7 +299,7 @@
 
 .contextItem {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: stretch;
   gap: 4px;
   border-radius: 5px;
@@ -207,6 +307,10 @@
 
 .contextItemEditing {
   background: #f0f7ff;
+}
+
+.contextItemActive {
+  background: #eef5ff;
 }
 
 .contextApplyBtn {
@@ -239,6 +343,23 @@
 .contextEditBtn:hover {
   color: #1a73e8;
   background: #eef5ff;
+}
+
+.contextDeleteBtn {
+  width: 30px;
+  margin: 0;
+  padding: 0;
+  color: #94a3b8;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font: 700 18px/1 Arial, sans-serif;
+}
+
+.contextDeleteBtn:hover {
+  color: #dc2626;
+  background: #fef2f2;
 }
 
 .contextList strong { font: 900 12px Arial, sans-serif; }

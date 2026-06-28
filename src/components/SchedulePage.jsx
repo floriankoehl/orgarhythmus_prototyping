@@ -2210,7 +2210,7 @@ function ScheduleColorLegendWidget({
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, externalResolveRequest = null, onExternalResolveReturn, contextDefaultPerspectiveId, contextApplyToken }) {
+export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, externalResolveRequest = null, onExternalResolveReturn, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [] }) {
   // ── Timeline anchor ────────────────────────────────────────────────────────
   // Keep the module-level anchor in sync with the project's creation date so that
   // col 0 = project creation date (fixed, immutable left boundary of the timeline).
@@ -2304,7 +2304,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (!isActive) return
     Promise.all([
       api.getDimensions(), api.getAllCategories(), api.getAssignments(),
-      api.getTimeSlots(), api.getDependencies(), api.getDeadlines(), api.getEarliestStarts(), api.getNoteInheritance(), api.getFilters(), api.getSchedulePerspectives(),
+      api.getTimeSlots(), api.getDependencies(), api.getDeadlines(), api.getEarliestStarts(), api.getNoteInheritance(), api.getFilters(), api.getSchedulePerspectives(activeContextId),
       api.getTransactionHistory(), api.getPersonas(), api.getDirectPersonaNoteAssignments(), api.getDirectPersonaAssignments(),
     ]).then(([dims, cats, assigns, mss, deps, dls, ess, inherited, filters, loadedPerspectives, history, ps, pnas, pcas]) => {
       setDimensions(dims); setCategories(cats)
@@ -2321,7 +2321,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       setPersonaNoteAssignments(pnas)
       setPersonaCatAssignments(pcas)
     }).catch(console.error)
-  }, [isActive])
+  }, [isActive, activeContextId])
 
   useEffect(() => {
     if (!refreshKey) return
@@ -2595,13 +2595,24 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     [categories, activeDimId]
   )
 
+  const archivedDimensionSet = useMemo(() => new Set(archivedDimensionIds || []), [archivedDimensionIds])
+  const visibleDimensions = useMemo(
+    () => dimensions.filter(dim => !archivedDimensionSet.has(dim.id)),
+    [dimensions, archivedDimensionSet]
+  )
+
+  useEffect(() => {
+    if (activeDimId && archivedDimensionSet.has(activeDimId)) setActiveDimId('')
+    if (colorDimId && archivedDimensionSet.has(colorDimId)) setColorDimId('')
+  }, [activeDimId, archivedDimensionSet, colorDimId])
+
   const activeLaneFilter = useMemo(
     () => savedFilters.find(f => f.id === activeLaneFilterId) ?? null,
     [savedFilters, activeLaneFilterId]
   )
 
   const nonePerspective = useMemo(() => {
-    const priorityDim = dimensions.find(d => d.name === 'Priority')
+    const priorityDim = visibleDimensions.find(d => d.name === 'Priority')
     return normalizePerspective({
       id: NONE_PERSPECTIVE_ID,
       name: 'None',
@@ -2636,7 +2647,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         },
       },
     })
-  }, [dimensions, project?.createdAt])
+  }, [project?.createdAt, visibleDimensions])
 
   const perspectiveOptions = useMemo(
     () => [nonePerspective, ...perspectives],
@@ -3243,8 +3254,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     [savedFilters]
   )
   const colorDimensions = useMemo(
-    () => [...dimensions, { id: FILTER_DIMENSION_ID, name: 'Filters', dynamic: true }],
-    [dimensions]
+    () => [...visibleDimensions, { id: FILTER_DIMENSION_ID, name: 'Filters', dynamic: true }],
+    [visibleDimensions]
   )
   const colorCategories = useMemo(
     () => [...categories, ...filterCategories],
@@ -3607,8 +3618,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setDependencyResolveSnapshot(null)
     if (externalResolveRequest.mode === 'inspect') {
       const context = externalResolveRequest.calendarContext ?? {}
-      const nextDimId = dimensions.some(dimension => dimension.id === context.canvasDimId) ? context.canvasDimId : ''
-      const nextColorDimId = dimensions.some(dimension => dimension.id === context.colorDimId) ? context.colorDimId : ''
+      const nextDimId = visibleDimensions.some(dimension => dimension.id === context.canvasDimId) ? context.canvasDimId : ''
+      const nextColorDimId = visibleDimensions.some(dimension => dimension.id === context.colorDimId) ? context.colorDimId : ''
       const hidden = new Set(Array.isArray(context.hiddenCatIds) ? context.hiddenCatIds : [])
       if (context.focusedCatId && nextDimId) {
         categories
@@ -5518,12 +5529,12 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
   const createPerspective = useCallback(async name => {
     try {
-      const created = normalizePerspective(await api.createSchedulePerspective({ name, state: capturePerspectiveState() }))
+      const created = normalizePerspective(await api.createSchedulePerspective({ name, state: capturePerspectiveState() }, activeContextId))
       playSound('perspectiveSave')
       setPerspectives(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
       setActivePerspectiveId(created.id)
     } catch (err) { console.error(err) }
-  }, [capturePerspectiveState])
+  }, [activeContextId, capturePerspectiveState])
 
   const updatePerspectiveSnapshot = useCallback(async perspectiveId => {
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
@@ -5586,7 +5597,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const defaultPerspective = perspectiveOptions.find(p => p.id === defaultPerspectiveId) ?? nonePerspective
     appliedDefaultRef.current = true
     applyPerspective(defaultPerspective)
-  }, [applyPerspective, defaultPerspectiveId, dimensions.length, isActive, nonePerspective, perspectiveOptions, externalResolveRequest])
+  }, [applyPerspective, defaultPerspectiveId, visibleDimensions.length, isActive, nonePerspective, perspectiveOptions, externalResolveRequest])
 
   const handlePanelResizeStart = useCallback(e => {
     if (e.button !== 0) return
@@ -5795,7 +5806,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       style={paintCat ? { cursor: makeColorCursor(paintCat.color) } : personaCursor ? { cursor: personaCursor } : undefined}
       onClick={(paintCat || paintPersonaId) ? () => { setPaintCat(null); setPaintPersonaId(null) } : undefined}>
       <GanttToolbar
-        dimensions={dimensions} activeDimId={activeDimId}
+        dimensions={visibleDimensions} activeDimId={activeDimId}
         activeCategories={activeCategories}
         categories={categories}
         hiddenCatIds={hiddenCatIds}
@@ -6642,7 +6653,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           timeSlots={timeSlots}
           noteInheritance={noteInheritance}
           assignments={assignments}
-          dimensions={dimensions}
+          dimensions={visibleDimensions}
           categories={categories}
           onUnlink={removeInheritanceLink}
           onClose={() => setInheritanceInspectorNoteId(null)}
@@ -6786,7 +6797,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       {editingFilter && (
         <ScheduleFilterEditorModal
           filter={editingFilter}
-          dimensions={dimensions}
+          dimensions={visibleDimensions}
           categories={categories}
           onSave={saveFilter}
           onDelete={deleteFilter}

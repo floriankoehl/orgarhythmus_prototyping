@@ -816,7 +816,7 @@ function SpanningEvent({ event, start, end, lane = null, onNoteOpen, paintCat, o
   )
 }
 
-export default function CalendarPage({ notes = [], project = null, isActive = false, onNoteOpen, onNoteCreated, onNoteUpdated, refreshKey = 0, peopleRefreshKey = 0, onPeopleChanged, restoreRequest = null, onRestoreConsumed, onRequestScheduleResolve, contextDefaultPerspectiveId, contextApplyToken }) {
+export default function CalendarPage({ notes = [], project = null, isActive = false, onNoteOpen, onNoteCreated, onNoteUpdated, refreshKey = 0, peopleRefreshKey = 0, onPeopleChanged, restoreRequest = null, onRestoreConsumed, onRequestScheduleResolve, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [] }) {
   const dateWheelAtRef = useRef(0)
   const [view, setView] = useState('today')
   const [focusDate, setFocusDate] = useState(() => localMidnight())
@@ -841,6 +841,11 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   const [canvasDimId, setCanvasDimId] = useState('')
   const [focusedCatId, setFocusedCatId] = useState('')
   const [colorDimId, setColorDimId] = useState('')
+  const archivedDimensionSet = useMemo(() => new Set(archivedDimensionIds || []), [archivedDimensionIds])
+  const visibleDimensions = useMemo(
+    () => dimensions.filter(dim => !archivedDimensionSet.has(dim.id)),
+    [dimensions, archivedDimensionSet]
+  )
   const [legendOpen, setLegendOpen] = useState(false)
   const [hiddenCatIds, setHiddenCatIds] = useState(() => new Set())
   const [visibleScales, setVisibleScales] = useState(() => new Set(SCALE_OPTIONS.map(option => option.id)))
@@ -875,7 +880,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
       api.getAssignments(),
       api.getPersonas(),
       api.getDirectPersonaNoteAssignments(),
-      api.getCalendarPerspectives(),
+      api.getCalendarPerspectives(activeContextId),
       api.getNoteInheritance(),
     ])
       .then(([slots, dims, cats, rows, loadedPersonas, loadedPersonaAssignments, loadedPerspectives, loadedInheritance]) => {
@@ -895,7 +900,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
       })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
-  }, [isActive, refreshKey, project?.id])
+  }, [isActive, refreshKey, project?.id, activeContextId])
 
   useEffect(() => {
     if (!isActive || !peopleRefreshKey) return
@@ -908,10 +913,15 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   }, [isActive, peopleRefreshKey])
 
   useEffect(() => {
-    if (!dimensions.length) return
-    setCanvasDimId(prev => prev || dimensions[0]?.id || '')
-    setColorDimId(prev => prev || dimensions[0]?.id || '')
-  }, [dimensions])
+    if (!visibleDimensions.length) return
+    setCanvasDimId(prev => prev || visibleDimensions[0]?.id || '')
+    setColorDimId(prev => prev || visibleDimensions[0]?.id || '')
+  }, [visibleDimensions])
+
+  useEffect(() => {
+    if (canvasDimId && archivedDimensionSet.has(canvasDimId)) setCanvasDimId(visibleDimensions[0]?.id || '')
+    if (colorDimId && archivedDimensionSet.has(colorDimId)) setColorDimId(visibleDimensions[0]?.id || '')
+  }, [archivedDimensionSet, canvasDimId, colorDimId, visibleDimensions])
 
   useEffect(() => {
     if (restoringPerspectiveRef.current) {
@@ -1109,10 +1119,10 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     name: 'None',
     readOnly: true,
     state: {
-      canvasDimId: dimensions[0]?.id || '',
+      canvasDimId: visibleDimensions[0]?.id || '',
       focusedCatId: '',
       hiddenCatIds: [],
-      colorDimId: dimensions[0]?.id || '',
+      colorDimId: visibleDimensions[0]?.id || '',
       view: 'today',
       visibleScales: SCALE_OPTIONS.map(option => option.id),
       focusDate: dayKey(actualToday),
@@ -1142,12 +1152,12 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   const applyPerspective = perspective => {
     playSound('perspectiveLoad')
     const state = perspective?.state ?? {}
-    const nextCanvasDimId = dimensions.some(dimension => dimension.id === state.canvasDimId)
+    const nextCanvasDimId = visibleDimensions.some(dimension => dimension.id === state.canvasDimId)
       ? state.canvasDimId
-      : dimensions[0]?.id || ''
-    const nextColorDimId = dimensions.some(dimension => dimension.id === state.colorDimId)
+      : visibleDimensions[0]?.id || ''
+    const nextColorDimId = visibleDimensions.some(dimension => dimension.id === state.colorDimId)
       ? state.colorDimId
-      : dimensions[0]?.id || ''
+      : visibleDimensions[0]?.id || ''
     const dimensionCategoryIds = new Set([
       ...categories.filter(category => category.dimensionId === nextCanvasDimId).map(category => category.id),
       UNASSIGNED_CATEGORY_ID,
@@ -1195,7 +1205,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
 
   const createPerspective = async name => {
     try {
-      const created = normalizePerspective(await api.createCalendarPerspective({ name, state: capturePerspectiveState() }))
+      const created = normalizePerspective(await api.createCalendarPerspective({ name, state: capturePerspectiveState() }, activeContextId))
       playSound('perspectiveSave')
       setPerspectives(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
       setActivePerspectiveId(created.id)
@@ -1791,7 +1801,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     >
       <div className={styles.toolbar}>
         <CalendarGroupScroller
-          dimensions={dimensions}
+          dimensions={visibleDimensions}
           categories={categories}
           activeCategories={visibleActiveCategories}
           activeDimId={canvasDimId}
@@ -2272,7 +2282,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
           onSetDefault={setCalendarDefaultPerspective}
         />
         <ColorLegendWidget
-          dimensions={dimensions}
+          dimensions={visibleDimensions}
           categories={categories}
           colorDimId={colorDimId}
           onColorDimension={setColorDimId}

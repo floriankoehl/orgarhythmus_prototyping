@@ -1465,7 +1465,7 @@ function LegendWidget({
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ClassificationPage({ notes = [], isActive = false, onNoteOpen, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, contextDefaultPerspectiveId, contextApplyToken }) {
+export default function ClassificationPage({ notes = [], isActive = false, onNoteOpen, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [] }) {
   const [dimensions, setDimensions]         = useState([])
   const [categories, setCategories]         = useState([])
   const [timeSlots, setTimeSlots]           = useState([])
@@ -1528,7 +1528,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   }
 
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getFilters(), api.getClassificationPerspectives(), api.getTimeSlots(), api.getPersonas(), api.getDirectPersonaNoteAssignments(), api.getDirectPersonaAssignments()])
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getFilters(), api.getClassificationPerspectives(activeContextId), api.getTimeSlots(), api.getPersonas(), api.getDirectPersonaNoteAssignments(), api.getDirectPersonaAssignments()])
       .then(([dims, cats, assigns, filters, loadedPerspectives, loadedTimeSlots, ps, pnas, pcas]) => {
         setDimensions(dims)
         setCategories(cats)
@@ -1545,7 +1545,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
         if (priorityDim) setLegendDimId(priorityDim.id)
       })
       .catch(console.error)
-  }, [])
+  }, [activeContextId])
 
   const catPersonasMap = useMemo(() => {
     const map = {}
@@ -1715,7 +1715,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
 
   const createPerspective = async name => {
     try {
-      const created = normalizePerspective(await api.createClassificationPerspective({ name, state: capturePerspectiveState() }))
+      const created = normalizePerspective(await api.createClassificationPerspective({ name, state: capturePerspectiveState() }, activeContextId))
       playSound('perspectiveSave')
       setPerspectives(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
       setActivePerspectiveId(created.id)
@@ -2030,7 +2030,16 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     { id: FILTER_DIMENSION_ID, name: 'Filters', dynamic: true, dynamicType: 'filter', dynamicLabel: 'Filter' },
     { id: TIME_DIMENSION_ID, name: 'Time', dynamic: true, dynamicType: 'time', dynamicLabel: 'Time' },
   ]
-  const dynamicDimensions = [...dimensions, ...systemDynamicDimensions]
+  const archivedDimensionSet = useMemo(() => new Set(archivedDimensionIds || []), [archivedDimensionIds])
+  const visibleDimensions = useMemo(
+    () => dimensions.filter(dim => !archivedDimensionSet.has(dim.id)),
+    [dimensions, archivedDimensionSet]
+  )
+  useEffect(() => {
+    if (containerDimId && archivedDimensionSet.has(containerDimId)) setContainerDimId('')
+    if (legendDimId && archivedDimensionSet.has(legendDimId)) setLegendDimId('')
+  }, [archivedDimensionSet, containerDimId, legendDimId])
+  const dynamicDimensions = [...visibleDimensions, ...systemDynamicDimensions]
   const dynamicCategories = [...categories, ...filterCategories, ...timeCategories]
   const containerDim = dynamicDimensions.find(d => d.id === containerDimId)
   const isDynamicContainerDimension = isDynamicDimensionId(containerDimId)
@@ -2419,7 +2428,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
       {editingFilter && (
         <FilterEditorModal
           filter={editingFilter.id ? editingFilter : null}
-          dimensions={dimensions}
+          dimensions={visibleDimensions}
           categories={categories}
           onSave={saveNamedFilter}
           onDelete={deleteNamedFilter}

@@ -59,6 +59,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
   // context state
   const [contextOpen, setContextOpen] = useState(false)
   const [contexts, setContexts] = useState([])
+  const [contextFormOpen, setContextFormOpen] = useState(false)
   const [editingContextId, setEditingContextId] = useState('')
   const [contextName, setContextName] = useState('')
   const [contextChoices, setContextChoices] = useState({
@@ -200,7 +201,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
     ensureContextData()
   }, [projectName]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const toggleContextDimensionArchive = dimId => {
+  const toggleContextDimensionShown = dimId => {
     setContextChoices(prev => {
       const ids = new Set(prev.archivedDimensionIds || [])
       if (ids.has(dimId)) ids.delete(dimId)
@@ -214,10 +215,11 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
     setContextOpen(next)
     playSound(next ? 'perspectiveLoad' : 'collapseToggle')
     if (next) {
+      setContextFormOpen(false)
       setContextChoices({
-        classification: window.localStorage.getItem('classification.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
-        schedule: window.localStorage.getItem('schedule.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
-        calendar: window.localStorage.getItem('calendar.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
+        classification: NONE_PERSPECTIVE_ID,
+        schedule: NONE_PERSPECTIVE_ID,
+        calendar: NONE_PERSPECTIVE_ID,
         archivedDimensionIds: [],
       })
       setEditingContextId('')
@@ -239,14 +241,8 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
     setContextOpen(false)
   }
 
-  const cycleContext = event => {
+  const selectAdjacentContext = direction => {
     if (!contexts.length) return
-    event.preventDefault()
-    const now = Date.now()
-    if (now - contextWheelAtRef.current < 180) return
-    contextWheelAtRef.current = now
-    const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
-    if (delta === 0) return
     const currentClassification = window.localStorage.getItem('classification.defaultPerspectiveId') || NONE_PERSPECTIVE_ID
     const currentSchedule = window.localStorage.getItem('schedule.defaultPerspectiveId') || NONE_PERSPECTIVE_ID
     const currentCalendar = window.localStorage.getItem('calendar.defaultPerspectiveId') || NONE_PERSPECTIVE_ID
@@ -257,9 +253,19 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
           && (context.state?.schedulePerspectiveId || NONE_PERSPECTIVE_ID) === currentSchedule
           && (context.state?.calendarPerspectiveId || NONE_PERSPECTIVE_ID) === currentCalendar
     )))
-    const direction = delta > 0 ? 1 : -1
     const nextContext = contexts[(currentIndex + direction + contexts.length) % contexts.length]
     if (nextContext) applyContext(nextContext)
+  }
+
+  const cycleContext = event => {
+    if (!contexts.length) return
+    event.preventDefault()
+    const now = Date.now()
+    if (now - contextWheelAtRef.current < 180) return
+    contextWheelAtRef.current = now
+    const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
+    if (delta === 0) return
+    selectAdjacentContext(delta > 0 ? 1 : -1)
   }
 
   const createContext = async () => {
@@ -270,13 +276,15 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
       playSound('perspectiveSave')
       setContexts(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
       setContextName('')
+      setContextFormOpen(false)
     } catch (err) {
       console.error('Failed to create context', err)
     }
   }
 
-  const editContext = context => {
+  const editContext = async context => {
     playSound('select')
+    setContextFormOpen(true)
     setEditingContextId(context.id)
     setContextName(context.name)
     setContextChoices({
@@ -285,15 +293,30 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
       calendar: context.state?.calendarPerspectiveId || NONE_PERSPECTIVE_ID,
       archivedDimensionIds: context.state?.archivedDimensionIds || [],
     })
+    try {
+      const [classification, schedule, calendar] = await Promise.all([
+        api.getClassificationPerspectives(context.id),
+        api.getSchedulePerspectives(context.id),
+        api.getCalendarPerspectives(context.id),
+      ])
+      setContextPerspectives({
+        classification: classification || [],
+        schedule: schedule || [],
+        calendar: calendar || [],
+      })
+    } catch (err) {
+      console.error('Failed to load context perspectives', err)
+    }
   }
 
   const cancelContextEdit = () => {
+    setContextFormOpen(false)
     setEditingContextId('')
     setContextName('')
     setContextChoices({
-      classification: window.localStorage.getItem('classification.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
-      schedule: window.localStorage.getItem('schedule.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
-      calendar: window.localStorage.getItem('calendar.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
+      classification: NONE_PERSPECTIVE_ID,
+      schedule: NONE_PERSPECTIVE_ID,
+      calendar: NONE_PERSPECTIVE_ID,
       archivedDimensionIds: [],
     })
   }
@@ -309,10 +332,42 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
         .map(context => context.id === saved.id ? saved : context)
         .sort((a, b) => a.name.localeCompare(b.name)))
       if (saved.id === activeContextId) onApplyContext?.(saved)
+      setContextFormOpen(false)
       setEditingContextId('')
       setContextName('')
     } catch (err) {
       console.error('Failed to update context', err)
+    }
+  }
+
+  const startContextCreate = () => {
+    playSound('select')
+    setContextFormOpen(true)
+    setEditingContextId('')
+    setContextName('')
+    setContextChoices({
+      classification: NONE_PERSPECTIVE_ID,
+      schedule: NONE_PERSPECTIVE_ID,
+      calendar: NONE_PERSPECTIVE_ID,
+      archivedDimensionIds: [],
+    })
+  }
+
+  const deleteContext = async context => {
+    if (!window.confirm(`Delete context "${context.name}"?`)) return
+    const deletedIndex = contexts.findIndex(item => item.id === context.id)
+    try {
+      await api.deleteProjectContext(context.id)
+      playSound('perspectiveDelete')
+      const loadedContexts = await api.getProjectContexts()
+      setContexts(loadedContexts || [])
+      if (editingContextId === context.id) cancelContextEdit()
+      if (activeContextId === context.id && loadedContexts?.length) {
+        const nextIndex = Math.min(Math.max(0, deletedIndex), loadedContexts.length - 1)
+        onApplyContext?.(loadedContexts[nextIndex])
+      }
+    } catch (err) {
+      console.error('Failed to delete context', err)
     }
   }
 
@@ -338,6 +393,8 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
     onNoteOpen?.(noteId)
   }
 
+  const activeContextName = contexts.find(context => context.id === activeContextId)?.name || 'Context'
+
   return (
     <header className={styles.header}>
       {onBack && (
@@ -349,23 +406,48 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
         </button>
       )}
       {projectName && (
-        <div ref={contextWrapRef} className={styles.projectCenter} onWheel={cycleContext}>
+        <div ref={contextWrapRef} className={styles.projectCenter}>
           <button
             className={`${styles.projectNameBtn} ${view === 0 ? styles.projectNameBtnActive : ''}`}
             onClick={() => { playSound('viewChange'); onNavigate(0) }}
             title="Open project overview">
             {projectName}
           </button>
-          <button
-            type="button"
-            className={`${styles.contextBtn} ${contextOpen ? styles.contextBtnActive : ''}`}
-            onClick={openContextMenu}
-            title="Project contexts">
-            Context
-          </button>
+          <div className={styles.contextSwitcher} onWheel={cycleContext}>
+            <button
+              type="button"
+              className={styles.contextArrowBtn}
+              onClick={() => selectAdjacentContext(-1)}
+              disabled={!contexts.length}
+              title="Previous context"
+              aria-label="Previous context">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <button
+              type="button"
+              className={`${styles.contextBtn} ${contextOpen ? styles.contextBtnActive : ''}`}
+              onClick={openContextMenu}
+              title="Scroll to switch context; click to manage contexts">
+              {activeContextName}
+            </button>
+            <button
+              type="button"
+              className={styles.contextArrowBtn}
+              onClick={() => selectAdjacentContext(1)}
+              disabled={!contexts.length}
+              title="Next context"
+              aria-label="Next context">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+          </div>
           {contextOpen && (
             <div className={styles.contextPanel}>
-              <div className={styles.contextCreate}>
+              {!contextFormOpen && (
+                <button type="button" className={styles.contextNewBtn} onClick={startContextCreate}>
+                  + New context
+                </button>
+              )}
+              {contextFormOpen && <div className={styles.contextCreate}>
                 <input
                   value={contextName}
                   onChange={event => setContextName(event.target.value)}
@@ -375,7 +457,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
                   }}
                   placeholder="Context name"
                 />
-                {CONTEXT_PAGES.map(page => (
+                {editingContextId && CONTEXT_PAGES.map(page => (
                   <label key={page.id}>
                     <span>{page.label}</span>
                     <select
@@ -389,14 +471,14 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
                   </label>
                 ))}
                 <div className={styles.contextArchiveBlock}>
-                  <span className={styles.contextArchiveTitle}>Archived dimensions</span>
+                  <span className={styles.contextArchiveTitle}>Shown dimensions</span>
                   <div className={styles.contextArchiveList}>
                     {contextDimensions.length ? contextDimensions.map(dim => (
                       <label key={dim.id} className={styles.contextArchiveItem}>
                         <input
                           type="checkbox"
-                          checked={(contextChoices.archivedDimensionIds || []).includes(dim.id)}
-                          onChange={() => toggleContextDimensionArchive(dim.id)}
+                          checked={!(contextChoices.archivedDimensionIds || []).includes(dim.id)}
+                          onChange={() => toggleContextDimensionShown(dim.id)}
                         />
                         <span>{dim.name}</span>
                       </label>
@@ -409,11 +491,9 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
                   <button type="button" onClick={saveContextEdit}>
                     {editingContextId ? 'Save context' : 'Create context'}
                   </button>
-                  {editingContextId && (
-                    <button type="button" className={styles.contextSecondaryBtn} onClick={cancelContextEdit}>Cancel</button>
-                  )}
+                  <button type="button" className={styles.contextSecondaryBtn} onClick={cancelContextEdit}>Cancel</button>
                 </div>
-              </div>
+              </div>}
               <div className={styles.contextList}>
                 {contexts.length ? contexts.map(context => (
                   <div key={context.id} className={`${styles.contextItem} ${editingContextId === context.id ? styles.contextItemEditing : ''} ${activeContextId === context.id ? styles.contextItemActive : ''}`}>
@@ -431,6 +511,9 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
                       </span>
                     </button>
                     <button type="button" className={styles.contextEditBtn} onClick={() => editContext(context)}>Edit</button>
+                    <button type="button" className={styles.contextDeleteBtn} onClick={() => deleteContext(context)} title={`Delete ${context.name}`} aria-label={`Delete ${context.name}`}>
+                      ×
+                    </button>
                   </div>
                 )) : (
                   <div className={styles.contextEmpty}>No contexts yet</div>
