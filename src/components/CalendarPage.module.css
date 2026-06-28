@@ -27,6 +27,67 @@
   backdrop-filter: blur(8px);
 }
 
+.dateNavigator {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dateNavigator > button {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 0;
+  color: #555;
+  background: #f4f4f4;
+  border: 1px solid #e0e0e0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.dateNavigator > button:hover {
+  color: #1a73e8;
+  background: #e8f0fe;
+  border-color: rgba(26,115,232,0.3);
+}
+
+.dateNavigator > div {
+  width: 250px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.dateNavigator span {
+  color: #999;
+  font: 800 9px Arial, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dateNavigator strong {
+  color: #222;
+  font: 900 14px Arial, sans-serif;
+  white-space: nowrap;
+}
+
+.toolbarRight {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 .titleBlock {
   min-width: 170px;
   display: flex;
@@ -80,26 +141,60 @@
   box-shadow: 0 1px 4px rgba(0,0,0,0.10);
 }
 
-.todayChip {
-  margin-left: auto;
+.scaleFilters {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.scaleFilter {
   height: 30px;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 0 10px;
-  color: #1a73e8;
-  background: #e8f0fe;
-  border: 1px solid rgba(26,115,232,0.22);
+  gap: 5px;
+  padding: 0 9px;
+  color: #666;
+  background: #fff;
+  border: 1px solid #ddd;
   border-radius: 7px;
-  font: 800 12px Arial, sans-serif;
+  cursor: pointer;
+  font: 800 11px Arial, sans-serif;
+  white-space: nowrap;
 }
 
-.todayChip span {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+.scaleFilter:hover {
+  color: #222;
+  background: #f5f5f5;
+}
+
+.scaleFilter span {
+  width: 13px;
+  height: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: #fff;
+  border: 1px solid #bbb;
+  border-radius: 3px;
+  font: 900 10px/1 Arial, sans-serif;
+}
+
+.scaleFilterActive {
+  color: #1a73e8;
+  background: #e8f0fe;
+  border-color: rgba(26,115,232,0.45);
+}
+
+.scaleFilterActive:hover {
+  color: #1765cc;
+  background: #dce9fd;
+}
+
+.scaleFilterActive span {
   background: #1a73e8;
-  box-shadow: 0 0 0 3px rgba(26,115,232,0.14);
+  border-color: #1a73e8;
 }
 
 .groupScroller {
@@ -576,10 +671,18 @@
   font: 800 10px Arial, sans-serif;
 }
 
+.timelineEventsLayer {
+  position: absolute;
+  top: 0;
+  left: 92px;
+  right: 18px;
+  z-index: 4;
+  pointer-events: none;
+}
+
 .timelineEvent {
   position: absolute;
-  left: 92px;
-  z-index: 4;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -594,6 +697,7 @@
   border-left: 5px solid var(--event-color);
   border-radius: 7px;
   cursor: pointer;
+  pointer-events: auto;
   text-align: left;
   overflow: hidden;
 }
@@ -936,11 +1040,29 @@
 }
 
 .legendItem {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 9px 12px;
+  color: inherit;
+  background: transparent;
+  border: none;
   border-bottom: 1px solid #f3f3f3;
+  cursor: pointer;
+  text-align: left;
+}
+
+.legendItem:hover {
+  background: #f5f9ff;
+}
+
+.legendItemActive {
+  background: #e8f0fe;
+}
+
+.legendItemActive .legendName {
+  color: #1a73e8;
 }
 
 .legendDot {
@@ -1057,6 +1179,54 @@
   min-height: 0;
 }
 
+.monthScaleLane {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e8e8e8;
+  background: #fbfcff;
+}
+
+.monthScaleHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 5px 2px;
+}
+
+.monthScaleHeader strong {
+  color: #475569;
+  font: 900 11px Arial, sans-serif;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.monthScaleHeader span {
+  color: #8a94a3;
+  font: 700 11px Arial, sans-serif;
+}
+
+.monthScaleEvents {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 6px;
+  min-width: 0;
+  max-height: 104px;
+  overflow-y: auto;
+}
+
+.monthScaleEmpty {
+  padding: 9px 10px;
+  color: #9aa2ad;
+  background: #fff;
+  border: 1px dashed #dfe4ea;
+  border-radius: 7px;
+  font: 700 12px Arial, sans-serif;
+}
+
 .monthWeekdays {
   height: 34px;
   display: grid;
@@ -1077,10 +1247,30 @@
 .monthGrid {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+
+.monthWeekRow {
+  position: relative;
+  flex: 1 0 160px;
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  grid-template-rows: repeat(6, minmax(96px, 1fr));
-  overflow: hidden;
+  min-width: 0;
+}
+
+.monthDaySpanLayer {
+  position: absolute;
+  top: 30px;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.monthDaySpanLayer .spanningEvent {
+  pointer-events: auto;
 }
 
 .monthDay {
@@ -1122,7 +1312,7 @@
 .monthEvents {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -1131,14 +1321,57 @@
   font: 800 11px Arial, sans-serif;
 }
 
+@media (max-width: 1500px) and (min-width: 821px) {
+  .toolbar {
+    min-height: 118px;
+    align-items: flex-start;
+  }
+
+  .dateNavigator {
+    top: auto;
+    bottom: 9px;
+    transform: translateX(-50%);
+  }
+
+  .calendarShell {
+    margin-top: 154px;
+  }
+}
+
+@media (max-width: 1200px) and (min-width: 821px) {
+  .segment {
+    min-width: 56px;
+    padding: 0 8px;
+  }
+
+  .scaleFilter {
+    padding: 0 6px;
+    font-size: 10px;
+  }
+}
+
 @media (max-width: 820px) {
   .toolbar {
     align-items: flex-start;
     flex-wrap: wrap;
   }
 
-  .todayChip {
+  .dateNavigator {
+    position: static;
+    order: 3;
+    width: 100%;
+    transform: none;
+    justify-content: center;
+  }
+
+  .dateNavigator > div {
+    width: min(250px, calc(100vw - 180px));
+  }
+
+  .toolbarRight {
+    width: 100%;
     margin-left: 0;
+    flex-wrap: wrap;
   }
 
   .groupScroller {
