@@ -329,6 +329,8 @@ export default function App() {
             project={activeProject}
             isActive={view === 6}
             onNoteOpen={openNotePopup}
+            onNoteCreated={handleNoteCreated}
+            onNoteUpdated={handleNoteUpdated}
             refreshKey={refreshKey}
             peopleRefreshKey={peopleVersion}
             onPeopleChanged={() => setPeopleVersion(v => v + 1)}

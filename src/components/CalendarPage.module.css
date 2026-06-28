@@ -767,6 +767,25 @@
   font: 900 13px Arial, sans-serif;
 }
 
+.timelineTitleInput {
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  padding: 2px 6px;
+  color: #1f2937;
+  background: rgba(255,255,255,0.86);
+  border: 1px solid color-mix(in srgb, var(--event-color) 42%, #cbd5e1);
+  border-radius: 5px;
+  outline: none;
+  font: 900 13px Arial, sans-serif;
+}
+
+.timelineTitleInput:focus {
+  background: #fff;
+  border-color: var(--event-color);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--event-color) 18%, transparent);
+}
+
 .timelineEvent em {
   max-width: 100%;
   overflow: hidden;
@@ -984,6 +1003,7 @@
   padding: 12px;
   border-bottom: 1px solid #ececec;
   box-sizing: border-box;
+  cursor: pointer;
 }
 
 .dayHeader span {
@@ -1390,6 +1410,32 @@
   background: #eef5ff;
 }
 
+.calendarCreateMenu {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.calendarCreateMenu input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 9px;
+  color: #1f2937;
+  background: #f8fafc;
+  border: 1px solid #d9e1ea;
+  border-radius: 5px;
+  outline: none;
+  font: 700 12px Arial, sans-serif;
+  box-sizing: border-box;
+}
+
+.calendarCreateMenu input:focus {
+  background: #fff;
+  border-color: #1a73e8;
+  box-shadow: 0 0 0 2px rgba(26,115,232,0.12);
+}
+
 .floatingHint {
   position: absolute;
   right: 0;
@@ -1685,10 +1731,11 @@
 
 .monthWeekRow {
   position: relative;
-  flex: 1 0 160px;
+  flex: 1 1 0;
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   min-width: 0;
+  min-height: max(88px, calc(72px + var(--month-span-height, 0px)));
 }
 
 .monthDaySpanLayer {
@@ -1709,7 +1756,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 8px;
+  padding: 6px;
   border-right: 1px solid #ececec;
   border-bottom: 1px solid #ececec;
   background: #fff;
@@ -1722,11 +1769,12 @@
 
 .monthDayHeader {
   flex: 0 0 auto;
-  height: 22px;
+  height: 18px;
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 5px;
+  margin-bottom: 3px;
+  cursor: pointer;
 }
 
 .monthDaySpanSpacer {
@@ -1752,12 +1800,27 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
   padding-right: 2px;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
+}
+
+.monthEvents .eventPillMinimal {
+  min-height: 20px;
+  gap: 4px;
+  padding: 2px 4px;
+}
+
+.monthEvents .eventTime,
+.monthEvents .eventMeta {
+  font-size: 9px;
+}
+
+.monthEvents .eventPillMinimal .eventTitle {
+  font-size: 10px;
 }
 
 @media (max-width: 1500px) and (min-width: 821px) {
