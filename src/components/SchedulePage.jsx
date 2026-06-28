@@ -2272,6 +2272,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [transactionHistory, setTransactionHistory] = useState({ undo: [], redo: [] })
   const [savedFilters, setSavedFilters] = useState([])
   const [perspectives, setPerspectives] = useState([])
+  const [perspectivesReady, setPerspectivesReady] = useState(false)
   const [activePerspectiveId, setActivePerspectiveId] = useState(NONE_PERSPECTIVE_ID)
   const [defaultPerspectiveId, setDefaultPerspectiveId] = useState(NONE_PERSPECTIVE_ID)
   const appliedDefaultRef = useRef(false)
@@ -2312,6 +2313,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
   useEffect(() => {
     if (!isActive) return
+    setPerspectivesReady(false)
     Promise.all([
       api.getDimensions(), api.getAllCategories(), api.getAssignments(),
       api.getTimeSlots(), api.getDependencies(), api.getDeadlines(), api.getEarliestStarts(), api.getNoteInheritance(), api.getFilters(), api.getSchedulePerspectives(activeContextId),
@@ -2320,6 +2322,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       setDimensions(dims); setCategories(cats)
       setSavedFilters(filters)
       setPerspectives(loadedPerspectives.map(normalizePerspective))
+      setPerspectivesReady(true)
       applyAssignments(assigns)
       setTimeSlots(mss)
       setDependencies(deps)
@@ -2330,7 +2333,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       setPersonas(ps)
       setPersonaNoteAssignments(pnas)
       setPersonaCatAssignments(pcas)
-    }).catch(console.error)
+    }).catch(err => {
+      setPerspectivesReady(true)
+      console.error(err)
+    })
   }, [isActive, activeContextId])
 
   useEffect(() => {
@@ -5604,26 +5610,26 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const updatePerspectiveSnapshot = useCallback(async perspectiveId => {
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
-      const saved = normalizePerspective(await api.updateSchedulePerspective(perspectiveId, { state: capturePerspectiveState() }))
+      const saved = normalizePerspective(await api.updateSchedulePerspective(perspectiveId, { state: capturePerspectiveState() }, activeContextId))
       playSound('perspectiveUpdate')
       setPerspectives(prev => prev.map(p => p.id === saved.id ? saved : p))
       setActivePerspectiveId(saved.id)
     } catch (err) { console.error(err) }
-  }, [capturePerspectiveState])
+  }, [activeContextId, capturePerspectiveState])
 
   const renamePerspective = useCallback(async (perspectiveId, name) => {
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
-      const saved = normalizePerspective(await api.updateSchedulePerspective(perspectiveId, { name }))
+      const saved = normalizePerspective(await api.updateSchedulePerspective(perspectiveId, { name }, activeContextId))
       playSound('perspectiveRename')
       setPerspectives(prev => prev.map(p => p.id === saved.id ? saved : p).sort((a, b) => a.name.localeCompare(b.name)))
     } catch (err) { console.error(err) }
-  }, [])
+  }, [activeContextId])
 
   const deletePerspective = useCallback(async perspectiveId => {
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
-      await api.deleteSchedulePerspective(perspectiveId)
+      await api.deleteSchedulePerspective(perspectiveId, activeContextId)
       playSound('perspectiveDelete')
       setPerspectives(prev => prev.filter(p => p.id !== perspectiveId))
       if (activePerspectiveId === perspectiveId) applyPerspective(nonePerspective)
@@ -5632,7 +5638,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         await onSetContextDefaultPerspective?.('schedule', NONE_PERSPECTIVE_ID)
       }
     } catch (err) { console.error(err) }
-  }, [activePerspectiveId, applyPerspective, defaultPerspectiveId, nonePerspective, onSetContextDefaultPerspective])
+  }, [activeContextId, activePerspectiveId, applyPerspective, defaultPerspectiveId, nonePerspective, onSetContextDefaultPerspective])
 
   const setScheduleDefaultPerspective = useCallback(async perspectiveId => {
     const nextId = perspectiveId || NONE_PERSPECTIVE_ID
@@ -5662,11 +5668,11 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       appliedDefaultRef.current = true
       return
     }
-    if (appliedDefaultRef.current || dimensions.length === 0) return
+    if (appliedDefaultRef.current || dimensions.length === 0 || !perspectivesReady) return
     const defaultPerspective = perspectiveOptions.find(p => p.id === defaultPerspectiveId) ?? nonePerspective
     appliedDefaultRef.current = true
     applyPerspective(defaultPerspective)
-  }, [applyPerspective, defaultPerspectiveId, visibleDimensions.length, isActive, nonePerspective, perspectiveOptions, externalResolveRequest])
+  }, [applyPerspective, defaultPerspectiveId, visibleDimensions.length, isActive, nonePerspective, perspectiveOptions, externalResolveRequest, perspectivesReady])
 
   const handlePanelResizeStart = useCallback(e => {
     if (e.button !== 0) return

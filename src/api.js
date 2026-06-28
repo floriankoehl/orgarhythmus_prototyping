@@ -183,20 +183,20 @@ export const api = {
   // Schedule perspectives
   getSchedulePerspectives:    (contextId)     => req('GET',    qContext('/schedule-perspectives', contextId)),
   createSchedulePerspective:  (perspective, contextId) => req('POST', qContext('/schedule-perspectives', contextId), perspective),
-  updateSchedulePerspective:  (id, patch)     => req('PATCH',  `/schedule-perspectives/${id}`, patch),
-  deleteSchedulePerspective:  (id)            => req('DELETE', `/schedule-perspectives/${id}`),
+  updateSchedulePerspective:  (id, patch, contextId)     => req('PATCH',  qContext(`/schedule-perspectives/${id}`, contextId), patch),
+  deleteSchedulePerspective:  (id, contextId)            => req('DELETE', qContext(`/schedule-perspectives/${id}`, contextId)),
 
   // Classification perspectives
   getClassificationPerspectives:    (contextId)     => req('GET',    qContext('/classification-perspectives', contextId)),
   createClassificationPerspective:  (perspective, contextId) => req('POST', qContext('/classification-perspectives', contextId), perspective),
-  updateClassificationPerspective:  (id, patch)     => req('PATCH',  `/classification-perspectives/${id}`, patch),
-  deleteClassificationPerspective:  (id)            => req('DELETE', `/classification-perspectives/${id}`),
+  updateClassificationPerspective:  (id, patch, contextId)     => req('PATCH',  qContext(`/classification-perspectives/${id}`, contextId), patch),
+  deleteClassificationPerspective:  (id, contextId)            => req('DELETE', qContext(`/classification-perspectives/${id}`, contextId)),
 
   // Calendar perspectives
   getCalendarPerspectives:    (contextId)     => req('GET',    qContext('/calendar-perspectives', contextId)),
   createCalendarPerspective:  (perspective, contextId) => req('POST', qContext('/calendar-perspectives', contextId), perspective),
-  updateCalendarPerspective:  (id, patch)     => req('PATCH',  `/calendar-perspectives/${id}`, patch),
-  deleteCalendarPerspective:  (id)            => req('DELETE', `/calendar-perspectives/${id}`),
+  updateCalendarPerspective:  (id, patch, contextId)     => req('PATCH',  qContext(`/calendar-perspectives/${id}`, contextId), patch),
+  deleteCalendarPerspective:  (id, contextId)            => req('DELETE', qContext(`/calendar-perspectives/${id}`, contextId)),
 
   // Project contexts
   getProjectContexts:    ()          => req('GET',    '/project-contexts'),

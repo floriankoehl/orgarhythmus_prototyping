@@ -1281,7 +1281,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   const updatePerspectiveSnapshot = async perspectiveId => {
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
-      const saved = normalizePerspective(await api.updateCalendarPerspective(perspectiveId, { state: capturePerspectiveState() }))
+      const saved = normalizePerspective(await api.updateCalendarPerspective(perspectiveId, { state: capturePerspectiveState() }, activeContextId))
       playSound('perspectiveUpdate')
       setPerspectives(prev => prev.map(perspective => perspective.id === saved.id ? saved : perspective))
       setActivePerspectiveId(saved.id)
@@ -1291,7 +1291,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   const renamePerspective = async (perspectiveId, name) => {
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
-      const saved = normalizePerspective(await api.updateCalendarPerspective(perspectiveId, { name }))
+      const saved = normalizePerspective(await api.updateCalendarPerspective(perspectiveId, { name }, activeContextId))
       playSound('perspectiveRename')
       setPerspectives(prev => prev
         .map(perspective => perspective.id === saved.id ? saved : perspective)
@@ -1321,7 +1321,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   const deletePerspective = async perspectiveId => {
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
-      await api.deleteCalendarPerspective(perspectiveId)
+      await api.deleteCalendarPerspective(perspectiveId, activeContextId)
       playSound('perspectiveDelete')
       setPerspectives(prev => prev.filter(perspective => perspective.id !== perspectiveId))
       if (activePerspectiveId === perspectiveId) applyPerspective(nonePerspective)

@@ -1687,7 +1687,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const updatePerspectiveSnapshot = async perspectiveId => {
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
-      const saved = normalizePerspective(await api.updateClassificationPerspective(perspectiveId, { state: capturePerspectiveState() }))
+      const saved = normalizePerspective(await api.updateClassificationPerspective(perspectiveId, { state: capturePerspectiveState() }, activeContextId))
       playSound('perspectiveUpdate')
       setPerspectives(prev => prev.map(p => p.id === saved.id ? saved : p))
       setActivePerspectiveId(saved.id)
@@ -1697,7 +1697,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const renamePerspective = async (perspectiveId, name) => {
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
-      const saved = normalizePerspective(await api.updateClassificationPerspective(perspectiveId, { name }))
+      const saved = normalizePerspective(await api.updateClassificationPerspective(perspectiveId, { name }, activeContextId))
       playSound('perspectiveRename')
       setPerspectives(prev => prev.map(p => p.id === saved.id ? saved : p).sort((a, b) => a.name.localeCompare(b.name)))
     } catch (e) { console.error(e) }
@@ -1706,7 +1706,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const deletePerspective = async perspectiveId => {
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
-      await api.deleteClassificationPerspective(perspectiveId)
+      await api.deleteClassificationPerspective(perspectiveId, activeContextId)
       playSound('perspectiveDelete')
       setPerspectives(prev => prev.filter(p => p.id !== perspectiveId))
       if (activePerspectiveId === perspectiveId) applyPerspective(nonePerspective)
