@@ -996,6 +996,7 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, paintPersona, onP
 
   return (
     <div ref={boxRef} className={cls}
+      style={{ '--cat-color': cat?.color ?? '#cbd5e1' }}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
