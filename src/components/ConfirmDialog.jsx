@@ -1,12 +1,14 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import styles from './ConfirmDialog.module.css'
+import { playSound } from '../sounds/sound_registry'
 
 export function useConfirmDialog() {
   const [config, setConfig] = useState(null)
   const resolverRef = useRef(null)
 
   const close = useCallback(result => {
+    playSound(result ? 'confirmDialogConfirm' : 'confirmDialogCancel')
     resolverRef.current?.(result)
     resolverRef.current = null
     setConfig(null)
@@ -16,6 +18,10 @@ export function useConfirmDialog() {
     resolverRef.current = resolve
     setConfig(options)
   }), [])
+
+  useEffect(() => {
+    if (config) playSound('confirmDialogOpen')
+  }, [config])
 
   const dialog = config ? createPortal(
     <div className={styles.backdrop} onMouseDown={() => close(false)}>

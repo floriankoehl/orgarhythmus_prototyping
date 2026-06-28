@@ -7,6 +7,7 @@ import { api } from '../api'
 import { useConfirmDialog } from './ConfirmDialog'
 import DimensionDropUp from './DimensionDropUp'
 import styles from './PeoplePage.module.css'
+import { playSound } from '../sounds/sound_registry'
 
 const CHAR_KEYS = 'abcdefghijklmnopqr'.split('')
 const RETRO_KEY_FALLBACKS = {
@@ -1120,6 +1121,7 @@ function AddPersonaPanel({ onClose, onCreate }) {
       const persona = await api.createPersona({
         name: name.trim(), model_key: modelKey, pos_x: 0, pos_z: 0,
       })
+      playSound('personaCreate')
       onCreate(persona)
       onClose()
     } catch (e) {
@@ -1201,6 +1203,7 @@ function ProtopersonaModal({ persona, assignments = [], categories = [], dimensi
     setSaving(true)
     try {
       await onSave(persona.id, { name: name.trim(), modelKey })
+      playSound('personaSave')
       onClose()
     } catch (e) {
       console.error(e)
@@ -1213,6 +1216,7 @@ function ProtopersonaModal({ persona, assignments = [], categories = [], dimensi
     setDeleting(true)
     try {
       await onDelete(persona.id)
+      playSound('personaDelete')
       onClose()
     } catch (e) {
       console.error(e)
@@ -2306,6 +2310,7 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
     const optimistic = { personaId, dimensionId: dimId, categoryId: catId }
     const nextAssignments = [...currentAssignments, optimistic]
     replacePersonaAssignments(nextAssignments, { immediate: true })
+    playSound('personaAssign')
     try {
       const saved = await api.assignPersona(personaId, dimId, catId)
       const savedAssignments = personaAssignmentsRef.current.map(a =>
@@ -2376,6 +2381,7 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
     const previousNoteAssignments = personaNoteAssignments
     const fromNoteIds = await confirmCategoryRemoval(personaId, dimId, fromCatId, 'Move')
     if (!fromNoteIds) return
+    playSound('personaDragDrop')
     const nextAssignment = { personaId, dimensionId: dimId, categoryId: toCatId }
     const withoutOld = previousAssignments.filter(a => !(
       a.personaId === personaId &&
@@ -2408,6 +2414,7 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
 
   const handleAssignLeader = async (personaId, catId) => {
     if (categoryLeaders.some(l => l.personaId === personaId && l.categoryId === catId)) return
+    playSound('personaLeaderAssign')
     setCategoryLeaders(prev => [...prev, { personaId, categoryId: catId }])
     try {
       await api.addCategoryLeader(catId, personaId)
@@ -2419,6 +2426,7 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
   }
 
   const handleRemoveLeader = async (personaId, catId) => {
+    playSound('personaRemove')
     setCategoryLeaders(prev => prev.filter(l => !(l.personaId === personaId && l.categoryId === catId)))
     try {
       await api.removeCategoryLeader(catId, personaId)
@@ -2431,6 +2439,7 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
 
   const handleAssignPersonaToNote = async (personaId, noteId) => {
     if (personaNoteAssignments.some(a => a.personaId === personaId && a.noteId === noteId)) return
+    playSound('personaAssign')
     setPersonaNoteAssignments(prev => [...prev, { personaId, noteId }])
     try {
       await api.assignPersonaToNote(personaId, noteId)
@@ -2442,6 +2451,7 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
   }
 
   const handleUnassignPersonaFromNote = async (personaId, noteId) => {
+    playSound('personaRemove')
     setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.noteId === noteId)))
     try {
       await api.unassignPersonaFromNote(personaId, noteId)
@@ -2460,6 +2470,7 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
     ))
     try {
       const saved = await api.updatePersona(id, { name: patch.name, model_key: patch.modelKey })
+      playSound('personaSave')
       setPersonas(prev => prev.map(p => p.id === id ? saved : p))
       onPeopleChanged?.()
     } catch (e) {
@@ -2479,6 +2490,7 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
     setEditPersonaId(null)
     try {
       await api.deletePersona(id)
+      playSound('personaDelete')
       onPeopleChanged?.()
     } catch (e) {
       setPersonas(previousPersonas)

@@ -9,6 +9,7 @@ import PersonaAvatarStack from './PersonaAvatarStack'
 import { usePersonaCursor } from '../hooks/usePersonaCursor'
 import { categoryMatchesForHashtags, mergeSelectionsWithHashtags } from '../categoryHashtags'
 import { useProgressiveNoteSearch } from '../useProgressiveNoteSearch'
+import { playSound } from '../sounds/sound_registry'
 
 const DRIFT_VARIANTS = 6
 
@@ -211,6 +212,7 @@ function PostIt({
     const onUp = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      playSound('noteResize')
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
@@ -236,6 +238,7 @@ function PostIt({
   }
 
   const startInlineEdit = () => {
+    playSound('noteEditStart')
     const card = cardRef.current
     if (card) setInlineEditSize({ w: card.offsetWidth, h: card.offsetHeight })
     setDraftTitle(note.title || '')
@@ -251,6 +254,7 @@ function PostIt({
     setInlineEditing(false)
     setInlineEditSize(null)
     if (nextTitle === (note.title || '') && nextHtml === (note.html || '')) return
+    playSound('noteEditCommit')
     try {
       await onInlineUpdate?.(note.id, { title: nextTitle, html: nextHtml })
     } catch (e) {
@@ -652,6 +656,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
 
   const applyCatToAll = async (catId) => {
     if (!colorDimId || !catId) return
+    playSound('paintApplyAll')
     const ids = [...openNoteIds]
     await Promise.all(ids.map(id => api.assign(id, colorDimId, catId).catch(console.error)))
     setAllAssignments(prev => [
@@ -678,6 +683,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   const arrangeInGrid = (cols, height) => {
     const ids = [...openNoteIds]
     if (ids.length === 0) return
+    playSound('noteGridArrange')
     const GAP_X = 10
     const GAP_Y = 10
     const PAD_X = 20
@@ -701,10 +707,13 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   }
 
   const activatePaint = (catId, color) => {
+    const deactivating = paintCat?.id === catId
+    playSound(deactivating ? 'paintModeDeactivate' : 'paintModeActivate')
     setPaintCat(prev => prev?.id === catId ? null : { id: catId, color })
   }
 
   const changeInteractionMode = mode => {
+    playSound('modeSwitch')
     setInteractionMode(mode)
     setMergeCandidate(null)
     setMergeProposal(null)
@@ -712,6 +721,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
 
   const paintNote = async noteId => {
     if (!paintCat || !colorDimId) return
+    playSound('paintApply')
     try {
       await api.assign(noteId, colorDimId, paintCat.id)
       setAllAssignments(prev => [
@@ -834,6 +844,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   const descriptionFindResults = findResults.filter(result => result.matchType === 'weak')
 
   const collapseNote = (id) => {
+    playSound('noteClose')
     setOpenNoteIds(prev => { const n = new Set(prev); n.delete(id); return n })
   }
 
@@ -874,6 +885,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   // ── Merge ────────────────────────────────────────────────────────────────────
   const confirmMerge = async () => {
     if (!mergeProposal) return
+    playSound('noteMerge')
     const { sourceId, targetId } = mergeProposal
     setMergeProposal(null)
     const src = notes.find(n => n.id === sourceId)
@@ -895,6 +907,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
 
   // ── Split ────────────────────────────────────────────────────────────────────
   const handleSplitNote = async (noteId, text1, text2) => {
+    playSound('noteSplit')
     const original = notes.find(n => n.id === noteId)
     if (!original) return
     const title2 = deriveTitle(text2) || 'Untitled'
@@ -926,8 +939,8 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     if (e.ctrlKey || e.metaKey) {
       setSelectedIds(prev => {
         const next = new Set(prev)
-        if (next.has(id)) next.delete(id)
-        else next.add(id)
+        if (next.has(id)) { next.delete(id); playSound('noteDeselect') }
+        else { next.add(id); playSound('noteSelect') }
         return next
       })
       return
@@ -975,6 +988,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     }
 
     // Empty canvas — deselect all, start marquee
+    playSound('noteDeselect')
     setSelectedIds(new Set())
     const canvasRect = canvasRef.current.getBoundingClientRect()
     const scrollTop = canvasRef.current.scrollTop
@@ -1091,6 +1105,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
 
     if (dragging?.type === 'marquee') {
       setMarquee(null)
+      if (selectedIds.size > 0) playSound('noteMarqueeSelect')
       return
     }
 
@@ -1189,6 +1204,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
           .filter(([, catId]) => Boolean(catId))
           .map(([dimensionId, categoryId]) => ({ noteId: newNote.id, dimensionId, categoryId })),
       ])
+      playSound('noteCreate')
       const out = saved || newNote
       openOnCanvas(out.id)
       onNoteCreated?.(out)
@@ -1255,7 +1271,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
               interactionMode={interactionMode}
               onDragStart={e => handlePointerDown(e, id)}
               onCollapse={() => collapseNote(id)}
-              onOpen={() => { if (!wasDraggedRef.current) onNoteOpen?.(id) }}
+              onOpen={() => { if (!wasDraggedRef.current) { playSound('noteOpen'); onNoteOpen?.(id) } }}
               onSplit={(t1, t2) => handleSplitNote(id, t1, t2)}
               onResize={(w, h) => setNoteSizes(prev => ({ ...prev, [id]: { w, h } }))}
               onRegisterCard={registerCard}
@@ -1362,14 +1378,14 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
           onPaintActivate={(catId, color) => { setPaintPersonaId(null); activatePaint(catId, color) }}
           onExpandCategory={expandCategoryOnCanvas}
           expanded={floatingPanel === 'color'}
-          onExpandedChange={open => setFloatingPanel(open ? 'color' : null)}
+          onExpandedChange={open => { playSound('collapseToggle'); setFloatingPanel(open ? 'color' : null) }}
         />
         <PeopleWidget
           paintPersonaId={paintPersonaId}
           onPaintPersonaChange={id => { setPaintCat(null); setPaintPersonaId(id) }}
           onApplyQuickFilter={filterNotesCanvasToPersona}
           expanded={floatingPanel === 'people'}
-          onExpandedChange={open => setFloatingPanel(open ? 'people' : null)}
+          onExpandedChange={open => { playSound('collapseToggle'); setFloatingPanel(open ? 'people' : null) }}
           refreshKey={peopleRefreshKey}
         />
       </div>
@@ -1470,7 +1486,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
         <div className={styles.center}>
           <button
             className={styles.centerCollapseBtn}
-            onClick={() => setAddPanelOpen(false)}
+            onClick={() => { playSound('notePanelToggle'); setAddPanelOpen(false) }}
             title="Collapse"
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
@@ -1540,7 +1556,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
       ) : (
         <button
           className={styles.centerCollapsed}
-          onClick={() => { setAddPanelOpen(true); setTimeout(() => editorRef.current?.focus(), 50) }}
+          onClick={() => { playSound('notePanelToggle'); setAddPanelOpen(true); setTimeout(() => editorRef.current?.focus(), 50) }}
           title="Add a note"
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { projectsApi } from '../api'
 import styles from './ProjectsPage.module.css'
+import { playSound } from '../sounds/sound_registry'
 
 function CreateProjectModal({ onClose, onCreate }) {
   const [name,   setName]   = useState('')
@@ -56,7 +57,7 @@ function ProjectCard({ project, onOpen, onDelete }) {
   const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 
   return (
-    <div className={styles.card} onClick={() => onOpen(project)}>
+    <div className={styles.card} onClick={() => { playSound('projectOpen'); onOpen(project) }}>
       <div className={styles.cardBody}>
         <div className={styles.cardName}>{project.name}</div>
         <div className={styles.cardMeta}>
@@ -69,7 +70,7 @@ function ProjectCard({ project, onOpen, onDelete }) {
       <div className={styles.cardMenu} ref={menuRef}>
         <button
           className={styles.cardMenuBtn}
-          onClick={e => { e.stopPropagation(); setMenuOpen(v => !v) }}
+          onClick={e => { e.stopPropagation(); playSound('projectMenuOpen'); setMenuOpen(v => !v) }}
           title="Project options">
           ···
         </button>
@@ -77,7 +78,7 @@ function ProjectCard({ project, onOpen, onDelete }) {
           <div className={styles.cardMenuDropdown}>
             <button
               className={`${styles.cardMenuItem} ${styles.cardMenuItemDanger}`}
-              onClick={e => { e.stopPropagation(); setMenuOpen(false); onDelete(project) }}>
+              onClick={e => { e.stopPropagation(); setMenuOpen(false); playSound('projectDelete'); onDelete(project) }}>
               Delete project
             </button>
           </div>
@@ -120,7 +121,7 @@ function ProfileMenu({ user, onLogout }) {
             <span className={styles.profileEmail}>{user?.email}</span>
             {user?.isSuperuser && <span className={styles.profileBadge}>Superuser</span>}
           </div>
-          <button className={styles.profileAction} type="button" onClick={onLogout}>
+          <button className={styles.profileAction} type="button" onClick={() => { playSound('logout'); onLogout() }}>
             Logout
           </button>
         </div>
@@ -144,12 +145,14 @@ export default function ProjectsPage({ onOpenProject, currentUser, onLogout }) {
 
   const handleCreate = async (data) => {
     const project = await projectsApi.createProject(data)
+    playSound('projectCreate')
     setProjects(prev => [...prev, project])
     onOpenProject(project)
   }
 
   const handleDelete = async (project) => {
     await projectsApi.deleteProject(project.id)
+    playSound('projectDelete')
     setProjects(prev => prev.filter(p => p.id !== project.id))
     setDeleteConfirm(null)
   }

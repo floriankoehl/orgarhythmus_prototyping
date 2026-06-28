@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../api'
 import styles from './DimensionDropUp.module.css'
+import { playSound } from '../sounds/sound_registry'
 
 const PRESET_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#64748b']
 
@@ -87,7 +88,7 @@ export default function DimensionDropUp({
     arr.splice(toIdx, 0, item)
     const ids = arr.map(d => d.id)
     setDragIdx(null); setOverIdx(null)
-    try { await api.reorderDimensions(ids); notify(); onReorder?.(ids) }
+    try { await api.reorderDimensions(ids); playSound('dimensionReorder'); notify(); onReorder?.(ids) }
     catch (e) { console.error(e) }
   }
 
@@ -96,6 +97,7 @@ export default function DimensionDropUp({
     if (!newDimName.trim()) return
     try {
       await api.createDimension({ name: newDimName.trim() })
+      playSound('dimensionCreate')
       setNewDimName(''); setAddingDim(false)
       notify()
     } catch (e) { console.error(e) }
@@ -106,6 +108,7 @@ export default function DimensionDropUp({
     if (!newCatName.trim()) return
     try {
       await api.createCategory(dimId, { name: newCatName.trim(), color: newCatColor })
+      playSound('categoryCreate')
       setNewCatName(''); setNewCatColor(PRESET_COLORS[0]); setAddingCat(false)
       notify()
     } catch (e) { console.error(e) }
@@ -122,17 +125,19 @@ export default function DimensionDropUp({
     if (!editingCatId || !editCatName.trim()) return
     try {
       await api.updateCategory(editingCatId, { name: editCatName.trim(), color: editCatColor })
+      playSound('categoryRename')
       setEditingCatId(null)
       notify()
     } catch (e) { console.error(e) }
   }
 
   const handleDeleteCat = async catId => {
-    try { await api.deleteCategory(catId); notify() }
+    try { await api.deleteCategory(catId); playSound('categoryDelete'); notify() }
     catch (e) { console.error(e) }
   }
 
   const toggleExpand = dimId => {
+    playSound('collapseToggle')
     setExpandedDimId(prev => prev === dimId ? null : dimId)
     setAddingCat(false); setEditingCatId(null)
   }

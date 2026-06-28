@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
 import styles from './PeopleWidget.module.css'
+import { playSound } from '../sounds/sound_registry'
 
 const CHAR_KEYS = 'abcdefghijklmnopqr'.split('')
 const RETRO_KEY_FALLBACKS = { humanFemaleA: 'a', humanMaleA: 'b', zombieFemaleA: 'c', zombieMaleA: 'd' }
@@ -34,7 +35,9 @@ export default function PeopleWidget({
 
   const activePersona = personas.find(p => p.id === paintPersonaId) ?? null
   const activatePersona = personaId => {
-    onPaintPersonaChange(paintPersonaId === personaId ? null : personaId)
+    const deactivating = paintPersonaId === personaId
+    playSound(deactivating ? 'personaPaintDeactivate' : 'personaPaintActivate')
+    onPaintPersonaChange(deactivating ? null : personaId)
   }
 
   return (
@@ -90,6 +93,7 @@ export default function PeopleWidget({
                     title={`Filter now to notes involving ${persona.name}`}
                     onClick={e => {
                       e.stopPropagation()
+                      playSound('personaPaintActivate')
                       onApplyQuickFilter(persona.id)
                     }}
                     onKeyDown={e => e.stopPropagation()}>
@@ -102,12 +106,12 @@ export default function PeopleWidget({
             )
           })}
           {paintPersonaId && (
-            <button className={styles.cancelBtn} onClick={() => onPaintPersonaChange(null)}>
+            <button className={styles.cancelBtn} onClick={() => { playSound('personaPaintDeactivate'); onPaintPersonaChange(null) }}>
               Cancel
             </button>
           )}
           {appliedFilterActive && onClearAppliedFilter && (
-            <button className={styles.cancelBtn} onClick={onClearAppliedFilter}>
+            <button className={styles.cancelBtn} onClick={() => { playSound('settingToggle'); onClearAppliedFilter() }}>
               Show all notes
             </button>
           )}
@@ -120,7 +124,7 @@ export default function PeopleWidget({
           expanded ? styles.toggleActive : '',
           paintPersonaId ? styles.togglePainting : '',
         ].filter(Boolean).join(' ')}
-        onClick={() => onExpandedChange(!expanded)}
+        onClick={() => { playSound('collapseToggle'); onExpandedChange(!expanded) }}
         title={expanded ? 'Collapse people panel' : 'Assign people or filter notes by responsibility'}
       >
         <PeopleIcon size={16} />

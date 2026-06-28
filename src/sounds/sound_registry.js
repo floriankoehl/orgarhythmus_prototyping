@@ -3,10 +3,10 @@
 // ==========================================
 // Change any sound mapping here — no need to touch component files.
 //
-// Usage:  import { playSound } from '../assets/sound_registry';
-//         playSound('milestoneMove');
+// Usage:  import { playSound } from '../sounds/sound_registry';
+//         playSound('noteCreate');
 //
-// To swap a sound: just change the import path below.
+// To swap a sound: just change the right-hand side below.
 // To disable a sound: set it to null.
 // ==========================================
 
@@ -22,39 +22,44 @@ import error2Sound from './dependency/error_2.wav';
 import connectionDragSound from './dependency/connection_drag.wav';
 import connectionSound from './dependency/connection.wav';
 import collapseSound from './dependency/collapse.wav';
-import snapSound from './snap.mp3';
-import clackSound from './clack.mp3';
-import penDownSound from './pen_down.mp3';
-import whipSound from './whip.mp3';
-import whip2Sound from './whip_2.mp3';
 
-// -- New sounds --
-import settingToneSound from './new/change_any_setting_tone.mp3';
-import refactorModeSound from './new/change_to_refractor_mode.wav';
-import changeViewSound from './new/change_view.wav';
-// import changeViewSound from './new/second_camera.wav';
-import collapseIdeaSound from './new/collapse_idea_container.wav';
-import collapseTeamSound from './new/collapse_team.wav';
-import deletingSound from './new/delete_perfect.mp3';
-import phaseDropResizeSound from './new/dropping_and_resizing_phase.wav';
-import dropIdeaSound from './new/drop_idea.wav';
-import filterTeamSound from './new/filter_for_team.wav';
-import phaseAddedSound from './new/phase_added.wav';
-import saveViewSound from './new/safe_view.wav';
-import safe_snapshot from './new/second_camera.wav';
-import taskReorderSound from './new/task_reordering.wav';
-import teamReorderSound from './new/team_reordering.wav';
 
-// -- Idea sounds --
-import ideaSound from './ideas/idea.wav';
-import idea2Sound from './ideas/idea_2.wav';
-import ideaConvertSound from './ideas/convert_idea_to_task.wav';
-import ideaCoinSound from './ideas/mixkit-space-coin-win-notification-271.wav';
-import ideaNotifSound from './ideas/mixkit-quick-positive-video-game-notification-interface-265.wav';
+// -- other sounds --
+import snapSound from './other/snap.mp3';
+import clackSound from './other/clack.mp3';
+import penDownSound from './other/pen_down.mp3';
+import whipSound from './other/whip.mp3';
+import whip2Sound from './other/whip_2.mp3';
+import settingToneSound from './other/change_any_setting_tone.mp3';
+import refactorModeSound from './other/change_to_refractor_mode.wav';
+import changeViewSound from './other/change_view.wav';
+import collapseIdeaSound from './other/collapse_idea_container.wav';
+import collapseTeamSound from './other/collapse_team.wav';
+import deletingSound from './other/delete_perfect.mp3';
+import phaseDropResizeSound from './other/dropping_and_resizing_phase.wav';
+import dropIdeaSound from './other/drop_idea.wav';
+import filterTeamSound from './other/filter_for_team.wav';
+import phaseAddedSound from './other/phase_added.wav';
+import saveViewSound from './other/safe_view.wav';
+import safe_snapshot from './other/second_camera.wav';
+import taskReorderSound from './other/task_reordering.wav';
+import teamReorderSound from './other/team_reordering.wav';
 
-// -- Human / Orbit-mode sounds --
-import breathingSound from './human/cutted_breathing.wav';
-import heartbeatSound from './human/single_heart_beat.wav';
+
+
+
+// -- Idea/note sounds --
+import ideaSound from './notes/idea.wav';
+import idea2Sound from './notes/idea_2.wav';
+import ideaConvertSound from './notes/convert_idea_to_task.wav';
+import ideaCoinSound from './notes/mixkit-space-coin-win-notification-271.wav';
+import ideaNotifSound from './notes/mixkit-quick-positive-video-game-notification-interface-265.wav';
+
+
+
+
+
+
 
 // ==========================================
 //  SOUND MAP — edit this to reassign sounds
@@ -63,70 +68,178 @@ import heartbeatSound from './human/single_heart_beat.wav';
 // Each value = an imported sound file (or null to disable).
 //
 const SOUND_FILES = {
-  // ── Milestone interactions ──
-  milestoneSelect:       selectSound,            // clicking a milestone
-  milestoneDeselect:     subtleSound,            // deselecting / escape
-  // milestoneMove:         snapSound,              // drag-drop milestone to new day
-  milestoneMove:         phaseDropResizeSound,              // drag-drop milestone to new day
-  milestoneResize:       clackSound,             // edge-resize completes
-  milestoneCreate:       messageSound,           // new milestone created
-  milestoneDelete:       deletingSound,          // milestone removed
-  milestoneRename:       penDownSound,           // rename confirmed
 
-  // ── Connection interactions ──
-  connectionCreate:      connectionSound,        // dependency line created
-  connectionDelete:      deletingSound,          // dependency line removed
-  connectionSelect:      selectSound,    // click on a connection
-  connectionDragStart:   connectionDragSound,    // start dragging connection handle
+  // ══════════════════════════════════════════
+  // AUTH
+  // ══════════════════════════════════════════
+  authLogin:             ideaNotifSound,         // successful login
+  authRegister:          ideaCoinSound,          // successful account creation
+  authError:             errorSound,             // wrong credentials / error
 
-  // ── Drag interactions ──
-  teamDragDrop:          teamReorderSound,       // team reorder completes
-  taskDragDrop:          taskReorderSound,       // task reorder completes
-  dragLoop:              connectionDragSound,    // continuous loop while dragging
+  // ══════════════════════════════════════════
+  // PROJECTS PAGE
+  // ══════════════════════════════════════════
+  projectCreate:         ideaCoinSound,          // new project created
+  projectOpen:           changeViewSound,        // project card clicked / opened
+  projectDelete:         deletingSound,          // project permanently deleted
+  projectMenuOpen:       selectSound,            // "···" context menu opened
 
-  // ── Phase interactions ──
-  phaseCreate:           phaseAddedSound,        // phase created
-  phaseUpdate:           phaseDropResizeSound,   // phase updated / resized
-  phaseDelete:           deletingSound,          // phase deleted
+  // ══════════════════════════════════════════
+  // PROJECT DASHBOARD
+  // ══════════════════════════════════════════
+  projectNameSave:       penDownSound,           // project name committed
+  projectDescriptionSave: subtleSound,           // description saved
+  projectEndDateChange:  settingToneSound,       // end date changed
+  projectSnapshotSave:   safe_snapshot,          // "Save snapshot" JSON export
 
-  // ── Warnings / blocked actions ──
+  // ══════════════════════════════════════════
+  // NOTES — canvas cards
+  // ══════════════════════════════════════════
+  noteCreate:            ideaSound,              // new note created (any method)
+  noteDelete:            deletingSound,          // note deleted
+  noteMove:              phaseDropResizeSound,   // card drag-dropped to new position
+  noteResize:            clackSound,             // resize handle released
+  noteEditStart:         penDownSound,           // inline edit mode entered
+  noteEditCommit:        snapSound,              // inline edit committed / saved
+  noteAutoSave:          subtleSound,            // description debounce-saved
+  noteSelect:            selectSound,            // card clicked / selected
+  noteDeselect:          subtleSound,            // card deselected / Escape
+  noteOpen:              idea2Sound,             // NotePopup opened
+  noteClose:             collapseIdeaSound,      // NotePopup closed
+  noteMerge:             ideaConvertSound,       // two notes merged
+  noteSplit:             whipSound,              // note split into two
+  noteMarqueeSelect:     subtleSound,            // marquee rect selection completes
+  notePanelToggle:       collapseTeamSound,      // add-note panel expanded/collapsed
+  noteGridArrange:       taskReorderSound,       // "Arrange in grid" applied
+  noteSearchOpen:        scifiSound,             // canvas search opened
+  noteSearchResult:      selectSound,            // search result placed on canvas
+  noteToastShow:         ideaNotifSound,         // "Note created" toast appears
+  noteQuickAddOpen:      idea2Sound,             // header quick-add panel opened
+  noteQuickAddSubmit:    ideaSound,              // quick-add submitted
+
+  // ══════════════════════════════════════════
+  // CATEGORIES
+  // ══════════════════════════════════════════
+  categoryAssign:        snapSound,              // category assigned to note
+  categoryUnassign:      subtleSound,            // category unassigned from note
+  categoryCreate:        ideaNotifSound,         // new category created
+  categoryDelete:        deletingSound,          // category deleted
+  categoryRename:        penDownSound,           // category name committed
+  categoryColorChange:   settingToneSound,       // category color changed
+  paintModeActivate:     refactorModeSound,      // paint mode switched on
+  paintModeDeactivate:   collapseTeamSound,      // paint mode switched off
+  paintApply:            snapSound,              // single paint applied to note
+  paintApplyAll:         ideaConvertSound,       // "Apply to all" bulk-paint
+
+  // ══════════════════════════════════════════
+  // DIMENSIONS
+  // ══════════════════════════════════════════
+  dimensionCreate:       phaseAddedSound,        // new dimension created
+  dimensionDelete:       deletingSound,          // dimension deleted
+  dimensionRename:       penDownSound,           // dimension name committed
+  dimensionChange:       mixkitClickSound,       // active dimension switched
+  dimensionReorder:      taskReorderSound,       // dimension drag-reordered
+
+  // ══════════════════════════════════════════
+  // PERSONAS / PEOPLE
+  // ══════════════════════════════════════════
+  personaCreate:         ideaNotifSound,         // new persona added
+  personaDelete:         deletingSound,          // persona deleted
+  personaSave:           penDownSound,           // persona name/model saved
+  personaAssign:         dropIdeaSound,          // persona dropped onto note/category
+  personaRemove:         collapseTeamSound,      // persona removed from note/category
+  personaLeaderAssign:   messageSound,           // persona set as category leader
+  personaPaintActivate:  filterTeamSound,        // persona paint mode toggled on
+  personaPaintDeactivate:collapseTeamSound,      // persona paint mode toggled off
+  personaSelect:         selectSound,            // persona selected in 3D scene
+  personaDragDrop:       teamReorderSound,       // persona drag completed
+
+  // ══════════════════════════════════════════
+  // CLASSIFICATION PAGE
+  // ══════════════════════════════════════════
+  noteClassified:        taskReorderSound,       // note moved to different category lane
+  noteReordered:         taskReorderSound,       // note reordered within same lane
+  categoryLaneCollapse:  collapseTeamSound,      // category container collapsed
+  categoryLaneAssignAll: ideaConvertSound,       // bulk-assign active paint to all notes
+
+  // ══════════════════════════════════════════
+  // SCHEDULE PAGE (Gantt)
+  // ══════════════════════════════════════════
+  timeSlotCreate:        phaseAddedSound,        // time slot created
+  timeSlotMove:          phaseDropResizeSound,   // time slot dragged to new position
+  timeSlotResize:        clackSound,             // time slot edge resized
+  timeSlotDelete:        deletingSound,          // time slot deleted
+  timeSlotSelect:        selectSound,            // time slot clicked / selected
+  timeSlotPin:           snapSound,              // time slot pinned/unpinned
+  dependencyCreate:      connectionSound,        // dependency arrow created
+  dependencyDelete:      deletingSound,          // dependency arrow removed
+  dependencySelect:      selectSound,            // dependency line clicked
+  deadlineSet:           snapSound,              // hard deadline set/removed
+  earliestStartSet:      subtleSound,            // earliest-start marker set/removed
+  timeUnitInsert:        phaseAddedSound,        // column inserted in timeline
+  timeUnitDelete:        deletingSound,          // column deleted from timeline
+  scheduleWarning:       errorSound,             // dependency / deadline warning shown
+  scheduleUndoRedo:      rewindSound,            // undo or redo action
+  inheritanceLink:       connectionSound,        // inheritance relation created
+  inheritanceUnlink:     whip2Sound,             // inheritance relation removed
+
+  // ══════════════════════════════════════════
+  // CALENDAR PAGE
+  // ══════════════════════════════════════════
+  calendarEventMove:     phaseDropResizeSound,   // event dragged to new time
+  calendarEventResize:   clackSound,             // event edge resized
+  calendarEventCreate:   phaseAddedSound,        // time slot created via empty-cell click
+  calendarViewChange:    changeViewSound,        // Today / 7 days / Month toggled
+  calendarNavigate:      mixkitClickSound,       // prev / next date navigation
+
+  // ══════════════════════════════════════════
+  // NAVIGATION & GLOBAL UI
+  // ══════════════════════════════════════════
+  viewChange:            changeViewSound,        // navigate between pages / views
+  searchOpen:            scifiSound,             // global search panel opened
+  searchClose:           subtleSound,            // global search panel closed
+  searchResultClick:     selectSound,            // search result clicked
+  confirmDialogOpen:     mixkitClickSound,       // ConfirmDialog appears
+  confirmDialogConfirm:  snapSound,              // Confirm button clicked
+  confirmDialogCancel:   subtleSound,            // Cancel button clicked
+  logout:                collapseTeamSound,      // user logged out
+
+  // ══════════════════════════════════════════
+  // PERSPECTIVES
+  // ══════════════════════════════════════════
+  perspectiveSave:       saveViewSound,          // perspective saved / created
+  perspectiveLoad:       changeViewSound,        // perspective applied
+  perspectiveUpdate:     saveViewSound,          // perspective snapshot updated
+  perspectiveDelete:     deletingSound,          // perspective deleted
+  perspectiveRename:     penDownSound,           // perspective renamed
+
+  // ══════════════════════════════════════════
+  // SETTINGS & VISUAL TOGGLES
+  // ══════════════════════════════════════════
+  settingToggle:         settingToneSound,       // any visual / display setting toggled
+  modeSwitch:            refactorModeSound,      // refractor / edit / dep mode switch
+  collapseToggle:        collapseIdeaSound,      // any collapsible panel toggled
+
+  // ══════════════════════════════════════════
+  // DOCUMENT CANVAS (rich-text notes view)
+  // ══════════════════════════════════════════
+  docNoteCreate:         ideaSound,              // new note block added at top
+  docNoteMerge:          ideaConvertSound,       // two note blocks merged
+  docNoteSplit:          whipSound,              // note block split via ruler click
+  docNoteDelete:         deletingSound,          // empty note auto-deleted
+  docNoteEditStart:      penDownSound,           // double-click enters title edit
+  docNoteEditCommit:     snapSound,              // title committed
+
+  // ══════════════════════════════════════════
+  // WARNINGS / ERRORS
+  // ══════════════════════════════════════════
   warning:               errorSound,             // dependency violation / overlap
-  blocked:               error2Sound,            // general blocked action
+  blocked:               error2Sound,            // action blocked / not allowed
 
-  // ── View mode changes ──
-  modeSwitch:            mixkitClickSound,       // E / D / V mode toggle
-  refactorToggle:        refactorModeSound,      // refactor mode on/off
-
-  // ── Settings ──
-  settingToggle:         settingToneSound,       // any setting toggled
-  teamFilter:            filterTeamSound,        // team filter toggled
-
-  // ── Views & Snapshots ──
-  viewLoad:              changeViewSound,        // saved view loaded
-  viewSave:              saveViewSound,          // view saved / created
-  snapshotSave:          safe_snapshot,           // snapshot created / quick-saved
-  snapshotRestore:       rewindSound,            // snapshot restored
-  undo:                  rewindSound,            // Ctrl+Z undo
-
-  // ── UI feedback ──
-  collapse:              collapseTeamSound,      // team collapse / expand
-  uiClick:               scifiSound,             // generic UI click
-
-  // ── Multi-select / marquee ──
-  marqueeSelect:         subtleSound,            // marquee selection completes
-
-  // ── Idea interactions ──
-  ideaCreate:            ideaSound,              // new idea created
-  ideaDelete:            deletingSound,          // idea deleted
-  ideaDragDrop:          dropIdeaSound,          // idea reorder / category drop
-  ideaTransform:         ideaConvertSound,       // idea transformed to task/milestone
-  ideaRefactor:          ideaConvertSound,       // dep item refactored back to idea
-  ideaCategoryCreate:    ideaNotifSound,         // category created
-  ideaCategoryArchive:   subtleSound,            // category archived/unarchived
-  ideaCategoryDelete:    deletingSound,          // category deleted
-  ideaExternalDrop:      ideaConvertSound,       // idea dropped onto Dependencies
-  ideaOpen:              subtleSound,            // IdeaBin window opened
-  ideaClose:             collapseIdeaSound,      // IdeaBin window minimized
+  // ══════════════════════════════════════════
+  // ORBIT / BREATHING MODE (People 3D page)
+  // ══════════════════════════════════════════
+  // (breathing and heartbeat managed via dedicated API below)
 };
 
 // ==========================================

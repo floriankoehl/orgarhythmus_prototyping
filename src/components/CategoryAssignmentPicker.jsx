@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom'
 import styles from './CategoryAssignmentPicker.module.css'
+import { playSound } from '../sounds/sound_registry'
 
 export default function CategoryAssignmentPicker({
   open,
@@ -12,9 +13,11 @@ export default function CategoryAssignmentPicker({
   if (!open) return null
 
   const toggle = (dimId, catId) => {
+    const removing = selections[dimId] === catId
+    playSound(removing ? 'categoryUnassign' : 'categoryAssign')
     onChange({
       ...selections,
-      [dimId]: selections[dimId] === catId ? null : catId,
+      [dimId]: removing ? null : catId,
     })
   }
 

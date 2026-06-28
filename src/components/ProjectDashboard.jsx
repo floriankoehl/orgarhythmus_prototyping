@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { projectsApi } from '../api'
 import { useConfirmDialog } from './ConfirmDialog'
 import styles from './ProjectDashboard.module.css'
+import { playSound } from '../sounds/sound_registry'
 
 const STAT_LABELS = {
   notes:        'Notes',
@@ -63,7 +64,7 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
     setEditingName(false)
     const trimmed = name.trim() || project.name
     setName(trimmed)
-    if (trimmed !== project.name) persist({ name: trimmed })
+    if (trimmed !== project.name) { playSound('projectNameSave'); persist({ name: trimmed }) }
   }
 
   const handleNameKey = e => {
@@ -73,6 +74,7 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
   const handleDescSave = () => {
     setDesc(draftDesc)
     setEditingDesc(false)
+    playSound('projectDescriptionSave')
     persist({ description: draftDesc })
   }
 
@@ -91,6 +93,7 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
       cancelLabel: 'Cancel',
     })
     if (!ok) { setEndDate(current); return }
+    playSound('projectEndDateChange')
     persist({ endDate })
   }
 
@@ -108,6 +111,7 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
+      playSound('projectSnapshotSave')
     } catch (e) {
       console.error('Export failed', e)
     } finally {

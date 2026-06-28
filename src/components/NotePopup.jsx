@@ -6,6 +6,7 @@ import CategoryAssignmentPicker from './CategoryAssignmentPicker'
 import CategoryHashtagSuggestions from './CategoryHashtagSuggestions'
 import PersonaAvatarStack from './PersonaAvatarStack'
 import { mergeSelectionsWithHashtags } from '../categoryHashtags'
+import { playSound } from '../sounds/sound_registry'
 
 // ── Headline-mode helpers ─────────────────────────────────────────────────────
 function computeWordRects(editorEl) {
@@ -127,6 +128,7 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsC
     const trimmed = val.trim() || 'Untitled'
     setTitleVal(trimmed)
     setEditingTitle(false)
+    playSound('noteEditCommit')
     try {
       await api.updateNote(note.id, { title: trimmed })
       onNoteUpdated?.(note.id, { title: trimmed })
@@ -137,6 +139,7 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsC
   const saveHtml = useCallback((html) => {
     clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(async () => {
+      playSound('noteAutoSave')
       try {
         await api.updateNote(note.id, { html })
         onNoteUpdated?.(note.id, { html })
@@ -166,6 +169,7 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsC
   const confirmAndDelete = async () => {
     try {
       await api.deleteNote(note.id)
+      playSound('noteDelete')
       onNoteDeleted?.(note.id)
       onClose()
     } catch (e) { console.error(e) }
@@ -190,6 +194,7 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsC
     .filter(Boolean)
 
   const removePersonaFromNote = async personaId => {
+    playSound('personaRemove')
     const previous = personaNoteAssignments
     setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.noteId === note.id)))
     try {
@@ -237,7 +242,7 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsC
   }
 
   return createPortal(
-    <div className={styles.backdrop} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+    <div className={styles.backdrop} onMouseDown={(e) => { if (e.target === e.currentTarget) { playSound('noteClose'); onClose() } }}>
       <div ref={popupRef} className={styles.popup}>
 
         {/* Header row */}
@@ -258,7 +263,7 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsC
             ) : (
               <h2
                 className={styles.title}
-                onDoubleClick={() => setEditingTitle(true)}
+                onDoubleClick={() => { playSound('noteEditStart'); setEditingTitle(true) }}
                 title="Double-click to edit"
               >
                 {titleVal}
@@ -268,18 +273,18 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsC
           <div className={styles.headerActions}>
             <button
               className={styles.expandBtn}
-              onClick={() => setExpanded(e => !e)}
+              onClick={() => { playSound('collapseToggle'); setExpanded(e => !e) }}
               title={expanded ? 'Collapse' : 'Show categories'}
             >
               <ChevronIcon down={expanded} />
               {expanded ? 'Less' : 'More'}
             </button>
-            <button className={styles.deleteBtn} onClick={() => setConfirmDelete(true)} title="Delete note">
+            <button className={styles.deleteBtn} onClick={() => { playSound('blocked'); setConfirmDelete(true) }} title="Delete note">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>
               </svg>
             </button>
-            <button className={styles.closeBtn} onClick={onClose} title="Close">
+            <button className={styles.closeBtn} onClick={() => { playSound('noteClose'); onClose() }} title="Close">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
               </svg>
@@ -343,7 +348,7 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsC
             <span className={styles.sectionLabel}>Description</span>
             <button
               className={`${styles.headlineBtn} ${headlineMode ? styles.headlineBtnActive : ''}`}
-              onClick={headlineMode ? () => setHeadlineMode(false) : enterHeadlineMode}
+              onClick={headlineMode ? () => { playSound('settingToggle'); setHeadlineMode(false) } : () => { playSound('settingToggle'); enterHeadlineMode() }}
               title={headlineMode ? 'Exit headline mode (Esc)' : 'Pick headline words from description'}
             >
               <TagIcon />

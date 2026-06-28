@@ -7,6 +7,7 @@ import PeopleWidget from './PeopleWidget'
 import PersonaAvatarStack from './PersonaAvatarStack'
 import { useConfirmDialog } from './ConfirmDialog'
 import { usePersonaCursor } from '../hooks/usePersonaCursor'
+import { playSound } from '../sounds/sound_registry'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const HEADER_H     = 64
@@ -3149,6 +3150,19 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       const result = await api.applyTransaction({ ...transaction, before, after })
       setTransactionHistory(result.history)
       await refreshGanttTransactions()
+      const txSoundMap = {
+        'timeSlot.create':    'timeSlotCreate',
+        'timeSlot.move':      'timeSlotMove',
+        'timeSlot.move-many': 'timeSlotMove',
+        'timeSlot.resize':    'timeSlotResize',
+        'timeSlot.delete':    'timeSlotDelete',
+        'dependency.create':  'dependencyCreate',
+        'dependency.delete':  'dependencyDelete',
+        'dependency.update':  'dependencySelect',
+        'delete-many':        'timeSlotDelete',
+      }
+      const txSound = txSoundMap[transaction.type]
+      if (txSound) playSound(txSound)
       return true
     } catch (err) {
       console.error(err)
@@ -3192,6 +3206,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const undoGanttTransaction = useCallback(async () => {
     try {
       await api.undoTransaction()
+      playSound('scheduleUndoRedo')
       await refreshGanttTransactions()
     } catch (err) {
       console.error(err)
@@ -3202,6 +3217,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const redoGanttTransaction = useCallback(async () => {
     try {
       await api.redoTransaction()
+      playSound('scheduleUndoRedo')
       await refreshGanttTransactions()
     } catch (err) {
       console.error(err)
@@ -3369,6 +3385,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       if (targetCatId) await api.assign(note.id, activeDimId, targetCatId)
       setClickedNoteId(note.id)
       if (!onNotesChanged) onNoteCreated?.(note)
+      playSound('noteCreate')
       await onNotesChanged?.()
       await refreshScheduleData()
       requestAnimationFrame(() => onNoteOpen?.(note.id))
@@ -3418,6 +3435,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       setClickedNoteId(childNoteId)
       setInheritancePick(null)
       clearWarningPrompt()
+      playSound('inheritanceLink')
       await refreshScheduleData()
       return true
     } catch (err) {
@@ -3436,6 +3454,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const removeInheritanceLink = useCallback(async (childNoteId, parentNoteId) => {
     try {
       await api.removeNoteInheritance(childNoteId, parentNoteId)
+      playSound('inheritanceUnlink')
       setNoteInheritance(prev => prev.filter(link => !(link.childNoteId === childNoteId && link.parentNoteId === parentNoteId)))
       await refreshScheduleData()
     } catch (err) {
@@ -5095,6 +5114,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       const scale = planningScaleForZoom(timeZoomRef.current)
       const alignedCol = zoomColToMinute(minuteToZoomCol(col, timeZoomRef.current), timeZoomRef.current)
       const dl = await api.setDeadline(noteId, alignedCol, scale)
+      playSound('deadlineSet')
       setDeadlines(prev => { const next = prev.filter(d => d.noteId !== noteId); return [...next, dl] })
     } catch (err) {
       console.error(err)
@@ -5105,6 +5125,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const handleRemoveDeadline = useCallback(async noteId => {
     try {
       await api.removeDeadline(noteId)
+      playSound('deadlineSet')
       setDeadlines(prev => prev.filter(d => d.noteId !== noteId))
     } catch (err) { console.error(err) }
   }, [])
@@ -5114,6 +5135,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       const scale = planningScaleForZoom(timeZoomRef.current)
       const alignedCol = zoomColToMinute(minuteToZoomCol(col, timeZoomRef.current), timeZoomRef.current)
       const es = await api.setEarliestStart(noteId, alignedCol, scale)
+      playSound('earliestStartSet')
       setEarliestStarts(prev => { const next = prev.filter(e => e.noteId !== noteId); return [...next, es] })
     } catch (err) {
       console.error(err)
@@ -5124,6 +5146,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const handleRemoveEarliestStart = useCallback(async noteId => {
     try {
       await api.removeEarliestStart(noteId)
+      playSound('earliestStartSet')
       setEarliestStarts(prev => prev.filter(e => e.noteId !== noteId))
     } catch (err) { console.error(err) }
   }, [])
@@ -5133,6 +5156,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }, [])
 
   const handleToggleTimeSlotPin = useCallback(timeSlotId => {
+    playSound('timeSlotPin')
     setPinnedTimeSlotId(prev => prev === timeSlotId ? null : timeSlotId)
   }, [])
 
@@ -5494,6 +5518,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const createPerspective = useCallback(async name => {
     try {
       const created = normalizePerspective(await api.createSchedulePerspective({ name, state: capturePerspectiveState() }))
+      playSound('perspectiveSave')
       setPerspectives(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
       setActivePerspectiveId(created.id)
     } catch (err) { console.error(err) }
@@ -5503,6 +5528,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
       const saved = normalizePerspective(await api.updateSchedulePerspective(perspectiveId, { state: capturePerspectiveState() }))
+      playSound('perspectiveUpdate')
       setPerspectives(prev => prev.map(p => p.id === saved.id ? saved : p))
       setActivePerspectiveId(saved.id)
     } catch (err) { console.error(err) }
@@ -5512,6 +5538,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
       const saved = normalizePerspective(await api.updateSchedulePerspective(perspectiveId, { name }))
+      playSound('perspectiveRename')
       setPerspectives(prev => prev.map(p => p.id === saved.id ? saved : p).sort((a, b) => a.name.localeCompare(b.name)))
     } catch (err) { console.error(err) }
   }, [])
@@ -5520,6 +5547,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
       await api.deleteSchedulePerspective(perspectiveId)
+      playSound('perspectiveDelete')
       setPerspectives(prev => prev.filter(p => p.id !== perspectiveId))
       if (activePerspectiveId === perspectiveId) applyPerspective(nonePerspective)
       setDefaultPerspectiveId(prev => {

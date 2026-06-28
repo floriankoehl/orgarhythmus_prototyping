@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import styles from './DocumentCanvas.module.css'
 import { api } from '../api'
+import { playSound } from '../sounds/sound_registry'
 
 const mkNote = (overrides = {}) => ({
   id: crypto.randomUUID(),
@@ -261,6 +262,7 @@ export default function DocumentCanvas({ onNotesChange, refreshKey }) {
     const note = mkNote()
     try {
       await api.createNote(note)
+      playSound('docNoteCreate')
       setNotes(prev => {
         const next = [note, ...prev]
         api.reorderNotes(next.map(g => g.id)).catch(console.error)
@@ -273,6 +275,7 @@ export default function DocumentCanvas({ onNotesChange, refreshKey }) {
     setNotes(prev => {
       if (prev.length <= 1) return prev
       const next = prev.filter(g => g.id !== id)
+      playSound('docNoteDelete')
       api.deleteNote(id).catch(console.error)
       return next
     })
@@ -286,6 +289,7 @@ export default function DocumentCanvas({ onNotesChange, refreshKey }) {
     try {
       await Promise.all([api.deleteNote(a.id), api.deleteNote(b.id)])
       await api.createNote(merged)
+      playSound('docNoteMerge')
       setNotes(prev => {
         const next = [...prev]; next.splice(i, 2, merged)
         api.reorderNotes(next.map(g => g.id)).catch(console.error)
@@ -328,6 +332,7 @@ export default function DocumentCanvas({ onNotesChange, refreshKey }) {
     try {
       await api.deleteNote(noteId)
       await Promise.all(halves.map(g => api.createNote(g)))
+      playSound('docNoteSplit')
       setNotes(prev => {
         const next = [...prev]; next.splice(idx, 1, ...halves)
         api.reorderNotes(next.map(g => g.id)).catch(console.error)

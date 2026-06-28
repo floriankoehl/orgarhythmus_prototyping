@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { authApi } from '../api'
 import styles from './AuthPage.module.css'
+import { playSound } from '../sounds/sound_registry'
 
 export default function AuthPage({ onAuthenticated }) {
   const [mode, setMode] = useState('login')
@@ -19,13 +20,16 @@ export default function AuthPage({ onAuthenticated }) {
     try {
       if (isRegister) {
         await authApi.register({ email, displayName, password })
+        playSound('authRegister')
       } else {
         await authApi.login({ email, password })
+        playSound('authLogin')
       }
       const user = await authApi.me()
       onAuthenticated(user)
     } catch (err) {
       setError(err.message || 'Authentication failed')
+      playSound('authError')
     } finally {
       setBusy(false)
     }

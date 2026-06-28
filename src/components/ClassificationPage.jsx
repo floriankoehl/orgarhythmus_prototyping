@@ -6,6 +6,7 @@ import PeopleWidget from './PeopleWidget'
 import PersonaAvatarStack from './PersonaAvatarStack'
 import { useConfirmDialog } from './ConfirmDialog'
 import { usePersonaCursor } from '../hooks/usePersonaCursor'
+import { playSound } from '../sounds/sound_registry'
 
 const PRESET_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#94a3b8']
 const FILTER_DIMENSION_ID = '__filters__'
@@ -1654,6 +1655,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   })
 
   const applyPerspective = perspective => {
+    playSound('perspectiveLoad')
     const state = perspective?.state ?? {}
     restoringPerspectiveRef.current = (state.containerDimId || '') !== containerDimId
     setMaxGridCols(Math.max(1, Math.min(12, Number(state.maxGridCols) || 6)))
@@ -1681,7 +1683,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   }, [defaultPerspectiveId, dimensions.length, isActive, perspectives])
 
   const createDimension = async name => {
-    try { const d = await api.createDimension({ name }); setDimensions(p => [...p, d]); onDimChanged?.() }
+    try { const d = await api.createDimension({ name }); playSound('dimensionCreate'); setDimensions(p => [...p, d]); onDimChanged?.() }
     catch (e) { console.error(e) }
   }
 
@@ -1697,6 +1699,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const renameDimension = async (id, name) => {
     try {
       const d = await api.updateDimension(id, { name })
+      playSound('dimensionRename')
       setDimensions(prev => prev.map(dim => dim.id === id ? d : dim))
       onDimChanged?.()
     } catch (e) { console.error(e) }
@@ -1705,6 +1708,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const createPerspective = async name => {
     try {
       const created = normalizePerspective(await api.createClassificationPerspective({ name, state: capturePerspectiveState() }))
+      playSound('perspectiveSave')
       setPerspectives(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
       setActivePerspectiveId(created.id)
     } catch (e) { console.error(e) }
@@ -1714,6 +1718,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
       const saved = normalizePerspective(await api.updateClassificationPerspective(perspectiveId, { state: capturePerspectiveState() }))
+      playSound('perspectiveUpdate')
       setPerspectives(prev => prev.map(p => p.id === saved.id ? saved : p))
       setActivePerspectiveId(saved.id)
     } catch (e) { console.error(e) }
@@ -1723,6 +1728,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
       const saved = normalizePerspective(await api.updateClassificationPerspective(perspectiveId, { name }))
+      playSound('perspectiveRename')
       setPerspectives(prev => prev.map(p => p.id === saved.id ? saved : p).sort((a, b) => a.name.localeCompare(b.name)))
     } catch (e) { console.error(e) }
   }
@@ -1731,6 +1737,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
       await api.deleteClassificationPerspective(perspectiveId)
+      playSound('perspectiveDelete')
       setPerspectives(prev => prev.filter(p => p.id !== perspectiveId))
       if (activePerspectiveId === perspectiveId) applyPerspective(nonePerspective)
       if (defaultPerspectiveId === perspectiveId) setClassificationDefaultPerspective(NONE_PERSPECTIVE_ID)
@@ -1746,6 +1753,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const deleteDimension = async id => {
     try {
       await api.deleteDimension(id)
+      playSound('dimensionDelete')
       setDimensions(p => p.filter(d => d.id !== id))
       setCategories(p => p.filter(c => c.dimensionId !== id))
       if (containerDimId === id) setContainerDimId('')
@@ -1760,13 +1768,14 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   }
 
   const createCategory = async (dimId, name, color) => {
-    try { const c = await api.createCategory(dimId, { name, color }); setCategories(p => [...p, c]); onDimChanged?.() }
+    try { const c = await api.createCategory(dimId, { name, color }); playSound('categoryCreate'); setCategories(p => [...p, c]); onDimChanged?.() }
     catch (e) { console.error(e) }
   }
 
   const updateCategory = async (id, patch) => {
     try {
       const updated = await api.updateCategory(id, patch)
+      playSound(patch.name ? 'categoryRename' : 'categoryColorChange')
       setCategories(p => p.map(c => c.id === id ? updated : c))
       onDimChanged?.()
     } catch (e) { console.error(e) }
@@ -1775,6 +1784,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const deleteCategory = async id => {
     try {
       await api.deleteCategory(id)
+      playSound('categoryDelete')
       setCategories(p => p.filter(c => c.id !== id))
       setAssignments(prev => {
         const next = {}
@@ -1795,6 +1805,8 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   }
 
   const activatePaint = (catId, color) => {
+    const deactivating = paintCat?.id === catId
+    playSound(deactivating ? 'paintModeDeactivate' : 'paintModeActivate')
     setPaintCat(prev => prev?.id === catId ? null : { id: catId, color })
   }
 
@@ -1826,6 +1838,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     }
     try {
       await Promise.all(noteIds.map(noteId => api.assign(noteId, legendDimId, paintCat.id)))
+      playSound('categoryLaneAssignAll')
       setAssignments(prev => {
         const next = { ...prev }
         noteIds.forEach(noteId => {
@@ -1903,6 +1916,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
       setStatusNotice('A note needs a time slot before it can be moved to Scheduled.')
       return
     }
+    playSound('noteClassified')
     try {
       if (catId) {
         await api.assign(noteId, containerDimId, catId)
@@ -1935,6 +1949,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
       setStatusNotice('A note needs a time slot before it can be moved to Scheduled.')
       return
     }
+    playSound('paintApply')
     try {
       await api.assign(noteId, legendDimId, paintCat.id)
       setAssignments(prev => ({ ...prev, [noteId]: { ...(prev[noteId] ?? {}), [legendDimId]: paintCat.id } }))
@@ -1946,6 +1961,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
 
   const assignPersonaToCategory = (personaId, dimId, catId) => {
     if (!personaId || !dimId || !catId || isDynamicDimensionId(dimId)) return
+    playSound('personaAssign')
     setPersonaCatAssignments(prev => [
       ...prev.filter(a => !(a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId)),
       { personaId, dimensionId: dimId, categoryId: catId },
@@ -2047,6 +2063,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     if (!catDragId || catInsertIdx === null) return
     const oldIdx = reorderableContainerCats.findIndex(c => c.id === catDragId)
     if (oldIdx === -1) return
+    playSound('noteReordered')
     const reordered = [...reorderableContainerCats]
     const [moved] = reordered.splice(oldIdx, 1)
     const target = catInsertIdx > oldIdx ? catInsertIdx - 1 : catInsertIdx
@@ -2145,9 +2162,11 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
 
   const toggleContainerCategoryVisibility = catId => {
     if (catId === UNASSIGNED_CATEGORY_ID) {
+      playSound('categoryLaneCollapse')
       setUnassignedCollapsed(value => !value)
       return
     }
+    playSound('categoryLaneCollapse')
     setCollapsedCatIds(prev => {
       const next = new Set(prev)
       if (next.has(catId)) next.delete(catId)
@@ -2170,6 +2189,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const reorderNoteInCategory = async (catId, dragNoteId, targetNoteId) => {
     if (!containerDimId || isDynamicDimensionId(containerDimId) || !catId || dragNoteId === targetNoteId) return
     if (assignments[dragNoteId]?.[containerDimId] !== catId || assignments[targetNoteId]?.[containerDimId] !== catId) return
+    playSound('noteReordered')
     const laneNotes = notesForCat(catId)
     const fromIdx = laneNotes.findIndex(g => g.id === dragNoteId)
     const toIdx = laneNotes.findIndex(g => g.id === targetNoteId)
@@ -2238,7 +2258,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
             <ContainerBox key={cat.id} cat={cat} notes={notesForCat(cat.id)}
               onDrop={cat.dynamic ? undefined : noteId => assignNote(noteId, cat.id)}
               onEdit={cat.dynamicType === 'filter' ? () => setEditingFilter(namedFilters.find(f => f.id === cat.filterId)) : cat.dynamic || cat.system ? undefined : () => setEditCat(cat)}
-              onCollapse={() => setCollapsedCatIds(prev => new Set([...prev, cat.id]))}
+              onCollapse={() => { playSound('categoryLaneCollapse'); setCollapsedCatIds(prev => new Set([...prev, cat.id])) }}
               paintCat={paintCat} onPaint={paintNote}
               paintPersona={paintPersonaId ? true : null}
               onPersonaCategoryPaint={catId => assignPersonaToCategory(paintPersonaId, containerDimId, catId)}

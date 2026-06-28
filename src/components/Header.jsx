@@ -5,6 +5,7 @@ import CategoryAssignmentPicker from './CategoryAssignmentPicker'
 import CategoryHashtagSuggestions from './CategoryHashtagSuggestions'
 import { mergeSelectionsWithHashtags } from '../categoryHashtags'
 import { useProgressiveNoteSearch } from '../useProgressiveNoteSearch'
+import { playSound } from '../sounds/sound_registry'
 
 const PAGES = [
   { name: 'Notes', view: 1 },
@@ -103,6 +104,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
   const submit = () => {
     const desc = editorRef.current?.innerText?.trim() || ''
     if (!desc && !titleVal.trim()) return
+    playSound('noteQuickAddSubmit')
     onQuickAdd?.(desc, titleVal.trim() || null, mergeSelectionsWithHashtags(categorySelections, desc, categories))
     closePopup()
   }
@@ -146,6 +148,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
   const descriptionSearchResults = searchResults.filter(result => result.matchType === 'weak')
 
   const openResult = (noteId) => {
+    playSound('searchResultClick')
     setSearchOpen(false)
     onNoteOpen?.(noteId)
   }
@@ -163,7 +166,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
       {projectName && (
         <button
           className={`${styles.projectNameBtn} ${view === 0 ? styles.projectNameBtnActive : ''}`}
-          onClick={() => onNavigate(0)}
+          onClick={() => { playSound('viewChange'); onNavigate(0) }}
           title="Open project overview">
           {projectName}
         </button>
@@ -173,7 +176,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
         {PAGES.map(note => (
           <button key={note.view}
             className={`${styles.navItem} ${view === note.view ? styles.active : ''}`}
-            onClick={() => onNavigate(note.view)}>
+            onClick={() => { playSound('viewChange'); onNavigate(note.view) }}>
             {note.name}
           </button>
         ))}
@@ -183,7 +186,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
       {view !== 1 && <div ref={searchWrapRef} className={styles.searchWrap}>
         <button
           className={`${styles.searchBtn} ${searchOpen ? styles.searchBtnActive : ''}`}
-          onClick={() => setSearchOpen(o => !o)}
+          onClick={() => { playSound(searchOpen ? 'searchClose' : 'searchOpen'); setSearchOpen(o => !o) }}
           title="Search notes">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <circle cx="6.5" cy="6.5" r="4" stroke="currentColor" strokeWidth="1.5"/>
@@ -198,7 +201,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
               className={styles.searchInput}
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Escape') setSearchOpen(false) }}
+              onKeyDown={e => { if (e.key === 'Escape') { playSound('searchClose'); setSearchOpen(false) } }}
               placeholder="Search notes… (regex ok)"
             />
             {searchQuery.trim() && (
@@ -251,7 +254,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
 
       {/* Quick-add button */}
       {view !== 1 && <div ref={wrapRef} className={styles.quickAddWrap}>
-        <button className={styles.quickAddBtn} onClick={() => setOpen(o => !o)} title="Quick add note">
+        <button className={styles.quickAddBtn} onClick={() => { playSound(!open ? 'noteQuickAddOpen' : 'collapseToggle'); setOpen(o => !o) }} title="Quick add note">
           <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
             <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.5"/>
             <path d="M5 8h6M5 5.5h4M5 10.5h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>

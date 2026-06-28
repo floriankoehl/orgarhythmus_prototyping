@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import styles from './InheritancePage.module.css'
+import { playSound } from '../sounds/sound_registry'
 
 const INHERITANCE_MODES = {
   'minute-minute': ['minute', 'minute', 'Minutes to Minutes'],
@@ -123,6 +124,7 @@ export default function InheritancePage({ notes = [], isActive = false, onNoteOp
     if (!parentId) return
     try {
       const saved = await api.setNoteInheritance(childId, parentId)
+      playSound('inheritanceLink')
       setInheritance(prev => [
         ...prev.filter(link => !(link.childNoteId === saved.childNoteId && link.parentNoteId === saved.parentNoteId)),
         saved,
@@ -136,6 +138,7 @@ export default function InheritancePage({ notes = [], isActive = false, onNoteOp
   const remove = async (childId, parentId) => {
     try {
       await api.removeNoteInheritance(childId, parentId)
+      playSound('inheritanceUnlink')
       setInheritance(prev => prev.filter(link => !(link.childNoteId === childId && link.parentNoteId === parentId)))
       setError('')
     } catch (err) {
@@ -148,7 +151,7 @@ export default function InheritancePage({ notes = [], isActive = false, onNoteOp
       <div className={styles.toolbar}>
         <div className={styles.segmented}>
           {Object.entries(INHERITANCE_MODES).map(([key, [, , label]]) => (
-            <button key={key} className={mode === key ? styles.active : ''} onClick={() => setMode(key)}>
+            <button key={key} className={mode === key ? styles.active : ''} onClick={() => { playSound('settingToggle'); setMode(key) }}>
               {label}
             </button>
           ))}

@@ -5,6 +5,7 @@ import { usePersonaCursor } from '../hooks/usePersonaCursor'
 import PeopleWidget from './PeopleWidget'
 import PersonaAvatarStack from './PersonaAvatarStack'
 import styles from './CalendarPage.module.css'
+import { playSound } from '../sounds/sound_registry'
 
 const DAY_MINUTES = 24 * 60
 const HOUR_HEIGHT = 54
@@ -1007,6 +1008,8 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   const activatePaint = (catId, color) => {
     if (!colorDimId || !catId) return
     setPaintPersonaId(null)
+    const deactivating = paintCat?.id === catId
+    playSound(deactivating ? 'paintModeDeactivate' : 'paintModeActivate')
     setPaintCat(prev => prev?.id === catId ? null : { id: catId, color: color || UNASSIGNED_COLOR })
   }
 
@@ -1041,6 +1044,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
 
   const paintNote = async noteId => {
     if (!paintCat || !colorDimId || !noteId) return
+    playSound('paintApply')
     setAssignments(prev => ({
       ...prev,
       [noteId]: { ...(prev[noteId] ?? {}), [colorDimId]: paintCat.id },
@@ -1089,6 +1093,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   })
 
   const applyPerspective = perspective => {
+    playSound('perspectiveLoad')
     const state = perspective?.state ?? {}
     const nextCanvasDimId = dimensions.some(dimension => dimension.id === state.canvasDimId)
       ? state.canvasDimId
@@ -1135,6 +1140,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   const createPerspective = async name => {
     try {
       const created = normalizePerspective(await api.createCalendarPerspective({ name, state: capturePerspectiveState() }))
+      playSound('perspectiveSave')
       setPerspectives(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
       setActivePerspectiveId(created.id)
     } catch (err) { console.error('Failed to create calendar perspective', err) }
@@ -1144,6 +1150,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
       const saved = normalizePerspective(await api.updateCalendarPerspective(perspectiveId, { state: capturePerspectiveState() }))
+      playSound('perspectiveUpdate')
       setPerspectives(prev => prev.map(perspective => perspective.id === saved.id ? saved : perspective))
       setActivePerspectiveId(saved.id)
     } catch (err) { console.error('Failed to update calendar perspective', err) }
@@ -1153,6 +1160,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
       const saved = normalizePerspective(await api.updateCalendarPerspective(perspectiveId, { name }))
+      playSound('perspectiveRename')
       setPerspectives(prev => prev
         .map(perspective => perspective.id === saved.id ? saved : perspective)
         .sort((a, b) => a.name.localeCompare(b.name)))
@@ -1169,6 +1177,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     if (perspectiveId === NONE_PERSPECTIVE_ID) return
     try {
       await api.deleteCalendarPerspective(perspectiveId)
+      playSound('perspectiveDelete')
       setPerspectives(prev => prev.filter(perspective => perspective.id !== perspectiveId))
       if (activePerspectiveId === perspectiveId) applyPerspective(nonePerspective)
       if (defaultPerspectiveId === perspectiveId) setCalendarDefaultPerspective(NONE_PERSPECTIVE_ID)
@@ -1258,6 +1267,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
         after: { timeSlots: [after], dependencies: [] },
       })
       setTimeSlots(prev => prev.map(item => item.id === slot.id ? after : item))
+      playSound(label === 'Resize time slot' ? 'calendarEventResize' : 'calendarEventMove')
       setCalendarWarning(null)
       return true
     } catch (err) {
@@ -1506,6 +1516,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
       : fmtMonth(focusDate)
 
   const navigateDate = direction => {
+    playSound('calendarNavigate')
     setFocusDate(current => {
       if (view === 'month') {
         const targetMonth = new Date(current.getFullYear(), current.getMonth() + direction, 1)
@@ -1586,7 +1597,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
                 key={option.id}
                 type="button"
                 className={`${styles.segment} ${view === option.id ? styles.segmentActive : ''}`}
-                onClick={() => setView(option.id)}
+                onClick={() => { playSound('calendarViewChange'); setView(option.id) }}
               >
                 {option.label}
               </button>
