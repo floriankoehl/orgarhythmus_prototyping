@@ -252,6 +252,7 @@ export default function App() {
             onRefresh={() => setRefreshKey(k => k + 1)}
             refreshKey={noteDataVersion}
             dimRefreshKey={dimVersion}
+            peopleRefreshKey={peopleVersion}
             onDimChanged={() => setDimVersion(v => v + 1)}
           />
         </div>

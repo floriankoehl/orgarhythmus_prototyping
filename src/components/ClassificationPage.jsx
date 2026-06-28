@@ -1483,6 +1483,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const [namedFilters, setNamedFilters] = useState([])
   const [activeFilterIds, setActiveFilterIds] = useState([])
   const [quickFilters, setQuickFilters] = useState([])
+  const [peopleVisibleNoteIds, setPeopleVisibleNoteIds] = useState(null)
   const [editingFilter, setEditingFilter] = useState(null)
   const [maxGridCols, setMaxGridCols] = useState(6)
   const [singleColumnWidth, setSingleColumnWidth] = useState(800)
@@ -1663,6 +1664,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     setUnassignedCollapsed(Boolean(state.unassignedCollapsed))
     setActiveFilterIds(Array.isArray(state.activeFilterIds) ? state.activeFilterIds : [])
     setQuickFilters(Array.isArray(state.quickFilters) ? state.quickFilters : [])
+    setPeopleVisibleNoteIds(null)
     setPaintCat(null)
     setActivePerspectiveId(perspective?.id ?? NONE_PERSPECTIVE_ID)
   }
@@ -1877,6 +1879,24 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     })
   }
 
+  const filterClassificationToPersona = personaId => {
+    if (!personaId) return
+    const noteIds = new Set(
+      personaNoteAssignments
+        .filter(assignment => assignment.personaId === personaId)
+        .map(assignment => assignment.noteId)
+    )
+    notes.forEach(note => {
+      const noteDimensions = assignments[note.id] || {}
+      const hasCategoryResponsibility = personaCatAssignments.some(assignment =>
+        assignment.personaId === personaId &&
+        noteDimensions[assignment.dimensionId] === assignment.categoryId
+      )
+      if (hasCategoryResponsibility) noteIds.add(note.id)
+    })
+    setPeopleVisibleNoteIds(noteIds)
+  }
+
   const assignNote = async (noteId, catId) => {
     if (!containerDimId || isDynamicDimensionId(containerDimId)) return
     if (catId && isKanbanContainerDimension && catId === scheduledCategory?.id && !timeSlotNoteIds.has(noteId)) {
@@ -2070,9 +2090,12 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const hasActiveFiltering = activeFilters.length > 0 || quickFilters.length > 0
   const matchesQuickFilter = note => quickFilters.some(f => assignments[note.id]?.[f.dimId] === f.catId)
 
-  const visibleNotes = hasActiveFiltering
+  const filterMatchedNotes = hasActiveFiltering
     ? notes.filter(g => activeFilters.some(filter => filterMatchesNote(filter, g.id, assignments)) || matchesQuickFilter(g))
     : notes
+  const visibleNotes = peopleVisibleNoteIds === null
+    ? filterMatchedNotes
+    : filterMatchedNotes.filter(note => peopleVisibleNoteIds.has(note.id))
 
   const notesForCat = catId => {
     const allNotesDimId = dimensionIdFromAllNotesCategoryId(catId)
@@ -2322,6 +2345,9 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
           <PeopleWidget
             paintPersonaId={paintPersonaId}
             onPaintPersonaChange={id => { setPaintCat(null); setPaintPersonaId(id) }}
+            onApplyQuickFilter={filterClassificationToPersona}
+            appliedFilterActive={peopleVisibleNoteIds !== null}
+            onClearAppliedFilter={() => setPeopleVisibleNoteIds(null)}
             expanded={floatingPanel === 'people'}
             onExpandedChange={open => setFloatingPanel(open ? 'people' : null)}
             refreshKey={peopleRefreshKey}

@@ -23,6 +23,8 @@ export default function PeopleWidget({
   onExpandedChange,
   refreshKey = 0,
   onApplyQuickFilter,
+  appliedFilterActive = false,
+  onClearAppliedFilter,
 }) {
   const [personas, setPersonas] = useState([])
 
@@ -102,6 +104,11 @@ export default function PeopleWidget({
           {paintPersonaId && (
             <button className={styles.cancelBtn} onClick={() => onPaintPersonaChange(null)}>
               Cancel
+            </button>
+          )}
+          {appliedFilterActive && onClearAppliedFilter && (
+            <button className={styles.cancelBtn} onClick={onClearAppliedFilter}>
+              Show all notes
             </button>
           )}
         </div>

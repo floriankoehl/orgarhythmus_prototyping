@@ -44,6 +44,11 @@ const SCALE_VISIBILITY_MODES = {
   HIERARCHY: 'hierarchy',
   ALL: 'all',
 }
+const TIME_SLOT_LABEL_MODES = [
+  { value: 'people', label: 'People' },
+  { value: 'date', label: 'Date' },
+  { value: 'headline', label: 'Headline' },
+]
 const SCHEDULE_PERSPECTIVE_VERSION = 2
 
 function normalizeTimeZoom(value) {
@@ -53,6 +58,10 @@ function normalizeTimeZoom(value) {
   if (value === 'day') return 'days'
   if (value === 'month') return 'months'
   return TIME_ZOOM_BY_VALUE[value] ? value : DEFAULT_TIME_ZOOM
+}
+
+function normalizeTimeSlotLabelMode(value) {
+  return TIME_SLOT_LABEL_MODES.some(mode => mode.value === value) ? value : 'date'
 }
 
 function getTimeSlotLevel(duration, startCol = null) {
@@ -125,6 +134,7 @@ function normalizeSchedulePerspectiveState(rawState = {}) {
     colorDependencyDirection: typeof state.colorDependencyDirection === 'boolean' ? state.colorDependencyDirection : false,
     showRowScheduleMarker: typeof state.showRowScheduleMarker === 'boolean' ? state.showRowScheduleMarker : true,
     showRowTimeSlotMeta: typeof state.showRowTimeSlotMeta === 'boolean' ? state.showRowTimeSlotMeta : true,
+    timeSlotLabelMode: normalizeTimeSlotLabelMode(state.timeSlotLabelMode),
     timeSlotScaleFilter: visibilityMode,
     scaleVisibilityMode: visibilityMode,
     spacing,
@@ -805,6 +815,7 @@ function SpacingPanel({
   colorDependencyDirection, onColorDependencyDirectionChange,
   showRowScheduleMarker, onShowRowScheduleMarkerChange,
   showRowTimeSlotMeta, onShowRowTimeSlotMetaChange,
+  timeSlotLabelMode, onTimeSlotLabelModeChange,
   timeSlotScaleFilter, onTimeSlotScaleFilterChange,
   canFilterToSelection, onFilterToSelectedNotes, onExpandEverything,
 }) {
@@ -922,6 +933,18 @@ function SpacingPanel({
             <input type="checkbox" checked={showRowTimeSlotMeta} onChange={e => onShowRowTimeSlotMetaChange(e.target.checked)} />
             <span>Duration scale</span>
           </label>
+        </div>
+      </div>
+      <div className={styles.axisModeRow}>
+        <span className={styles.spacingLabel}>Labels on time slots</span>
+        <div className={styles.axisModePills}>
+          {TIME_SLOT_LABEL_MODES.map(option => (
+            <button key={option.value}
+              className={`${styles.axisModePill} ${timeSlotLabelMode === option.value ? styles.axisModePillActive : ''}`}
+              onClick={() => onTimeSlotLabelModeChange(option.value)}>
+              {option.label}
+            </button>
+          ))}
         </div>
       </div>
       <div className={styles.axisModeRow}>
@@ -1720,6 +1743,7 @@ function GanttToolbar({
   colorDependencyDirection, onColorDependencyDirectionChange,
   showRowScheduleMarker, onShowRowScheduleMarkerChange,
   showRowTimeSlotMeta, onShowRowTimeSlotMetaChange,
+  timeSlotLabelMode, onTimeSlotLabelModeChange,
   timeSlotScaleFilter, onTimeSlotScaleFilterChange,
   warningSettings, onWarningSettingsChange,
   canDeleteSelection, onDeleteSelection,
@@ -1821,6 +1845,7 @@ function GanttToolbar({
             colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={onColorDependencyDirectionChange}
             showRowScheduleMarker={showRowScheduleMarker} onShowRowScheduleMarkerChange={onShowRowScheduleMarkerChange}
             showRowTimeSlotMeta={showRowTimeSlotMeta} onShowRowTimeSlotMetaChange={onShowRowTimeSlotMetaChange}
+            timeSlotLabelMode={timeSlotLabelMode} onTimeSlotLabelModeChange={onTimeSlotLabelModeChange}
             timeSlotScaleFilter={timeSlotScaleFilter} onTimeSlotScaleFilterChange={onTimeSlotScaleFilterChange}
             canFilterToSelection={canFilterToSelection}
             onFilterToSelectedNotes={onFilterToSelectedNotes}
@@ -2470,6 +2495,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [timeSlotScaleFilter, setTimeSlotScaleFilter] = useState(SCALE_VISIBILITY_MODES.ALL)
   const [showRowScheduleMarker, setShowRowScheduleMarker] = useState(true)
   const [showRowTimeSlotMeta, setShowRowTimeSlotMeta] = useState(true)
+  const [timeSlotLabelMode, setTimeSlotLabelMode] = useState('date')
+  const timeSlotLabelWheelAtRef = useRef(0)
   const [reasonModal, setReasonModal] = useState(null)   // null | { depId }
   const [reasonDraft, setReasonDraft] = useState('')
   const reasonInputRef = useRef()
@@ -2594,6 +2621,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         scaleVisibilityMode: SCALE_VISIBILITY_MODES.ALL,
         showRowScheduleMarker: true,
         showRowTimeSlotMeta: true,
+        timeSlotLabelMode: 'date',
         leftPanelWidth: 220,
         group: { activeDimId: '', activeLaneFilterId: '' },
         collapsedCategories: [],
@@ -3956,6 +3984,31 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setSpacing({ ...prev, colW: nextColW })
   }, [])
 
+  const cycleTimeSlotLabelMode = useCallback(deltaY => {
+    const now = Date.now()
+    if (now - timeSlotLabelWheelAtRef.current < 180) return
+    timeSlotLabelWheelAtRef.current = now
+    const direction = deltaY > 0 ? 1 : -1
+    setTimeSlotLabelMode(current => {
+      const index = TIME_SLOT_LABEL_MODES.findIndex(mode => mode.value === current)
+      const nextIndex = (Math.max(0, index) + direction + TIME_SLOT_LABEL_MODES.length) % TIME_SLOT_LABEL_MODES.length
+      return TIME_SLOT_LABEL_MODES[nextIndex].value
+    })
+  }, [])
+
+  useEffect(() => {
+    const grid = gridBodyRef.current
+    if (!grid) return
+    const handleTimeSlotWheel = event => {
+      if (!event.target.closest?.('[data-ms-id]')) return
+      event.preventDefault()
+      event.stopPropagation()
+      cycleTimeSlotLabelMode(event.deltaY)
+    }
+    grid.addEventListener('wheel', handleTimeSlotWheel, { passive: false, capture: true })
+    return () => grid.removeEventListener('wheel', handleTimeSlotWheel, { capture: true })
+  }, [cycleTimeSlotLabelMode])
+
   const handleTimeZoomChange = useCallback(nextZoom => {
     nextZoom = normalizeTimeZoom(nextZoom)
     const prevZoom = timeZoomRef.current
@@ -5157,6 +5210,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     scaleVisibilityMode: normalizeScaleVisibilityMode(timeSlotScaleFilter),
     showRowScheduleMarker,
     showRowTimeSlotMeta,
+    timeSlotLabelMode,
     leftPanelWidth: leftPanelWidthRef.current,
     group: {
       activeDimId,
@@ -5182,7 +5236,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     activeDimId, activeFilterIds, activeLaneFilterId, activePerspectiveId, axisMode, colorDimId,
     colorDependencyDirection, hiddenCatIds, hiddenNotesByLane, hideCrossCatDeps,
     mode, timeSlotScaleFilter, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps,
-    showRowScheduleMarker, showRowTimeSlotMeta, spacing, timeZoom, visibleNoteFilterIds,
+    showRowScheduleMarker, showRowTimeSlotMeta, spacing, timeSlotLabelMode, timeZoom, visibleNoteFilterIds,
   ])
   capturePerspectiveStateRef.current = capturePerspectiveState
 
@@ -5205,6 +5259,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setColorDependencyDirection(state.colorDependencyDirection)
     setShowRowScheduleMarker(state.showRowScheduleMarker)
     setShowRowTimeSlotMeta(state.showRowTimeSlotMeta)
+    setTimeSlotLabelMode(state.timeSlotLabelMode)
     leftPanelWidthRef.current = state.leftPanelWidth
     setLeftPanelWidth(state.leftPanelWidth)
     setTimeSlotScaleFilter(state.timeSlotScaleFilter)
@@ -5257,6 +5312,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setColorDependencyDirection(state.colorDependencyDirection)
     setShowRowScheduleMarker(state.showRowScheduleMarker)
     setShowRowTimeSlotMeta(state.showRowTimeSlotMeta)
+    setTimeSlotLabelMode(state.timeSlotLabelMode)
     leftPanelWidthRef.current = state.leftPanelWidth
     setLeftPanelWidth(state.leftPanelWidth)
     setTimeSlotScaleFilter(state.timeSlotScaleFilter)
@@ -5579,6 +5635,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         timeSlotScaleFilter={timeSlotScaleFilter} onTimeSlotScaleFilterChange={setTimeSlotScaleFilter}
         showRowScheduleMarker={showRowScheduleMarker} onShowRowScheduleMarkerChange={setShowRowScheduleMarker}
         showRowTimeSlotMeta={showRowTimeSlotMeta} onShowRowTimeSlotMetaChange={setShowRowTimeSlotMeta}
+        timeSlotLabelMode={timeSlotLabelMode} onTimeSlotLabelModeChange={setTimeSlotLabelMode}
         warningSettings={warningSettings}
         onWarningSettingsChange={updateWarningSettings}
       />
@@ -6127,7 +6184,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                     e.preventDefault()
                     e.stopPropagation()
                     if (paintCat || paintPersonaId) return
-                    focusTimeSlotByDoubleClick(m.id)
+                    onNoteOpen?.(m.noteId)
                   }}
                   onContextMenu={e => {
                     e.preventDefault()
@@ -6148,7 +6205,17 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                       if (isDepMode) startDependencyDrag(e, m.id)
                       else handleTimeSlotMouseDown(e, m.id, 'left')
 	                    }} />
-	                  <span className={styles.msLabel}>{m.title || minuteToLabel(m.startCol, timeZoom)}</span>
+	                  {timeSlotLabelMode === 'people' ? (
+                      <div className={styles.msPeopleLabel}>
+                        <PersonaAvatarStack personas={notePersonasMap[m.noteId] || []} />
+                      </div>
+                    ) : (
+                      <span className={styles.msLabel}>
+                        {timeSlotLabelMode === 'headline'
+                          ? (row.note?.title || 'Untitled')
+                          : (m.title || minuteToLabel(m.startCol, timeZoom))}
+                      </span>
+                    )}
                     {isMinimumDuration && !isTinyProportional && <span className={styles.msMinBadge}>10m</span>}
 	                  <div
                     className={[styles.msHandle, styles.msHandleRight, isDepMode && styles.depHandle, isDepMode && isSource && styles.depHandleSource].filter(Boolean).join(' ')}

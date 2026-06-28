@@ -2284,7 +2284,8 @@
 }
 
 .timeSlotTiny .msHandle,
-.timeSlotTiny .msLabel {
+.timeSlotTiny .msLabel,
+.timeSlotTiny .msPeopleLabel {
   display: none;
 }
 
@@ -2339,6 +2340,20 @@
   font-weight: 600;
   pointer-events: none;
   letter-spacing: 0.1px;
+}
+
+.msPeopleLabel {
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 0 9px;
+  overflow: hidden;
+}
+
+.msPeopleLabel > * {
+  margin-right: 0;
 }
 
 .msMinBadge {

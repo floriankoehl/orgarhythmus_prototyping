@@ -487,6 +487,16 @@ function NotesColorLegendWidget({
 function ModeControls({ mode, onModeChange }) {
   const modes = [
     {
+      id: 'refractor',
+      label: 'Refractor',
+      title: 'Refractor mode: drag notes together to merge, or click the left edge of a note at a line break to split it',
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9l-3.8 3.8z" />
+        </svg>
+      ),
+    },
+    {
       id: 'edit',
       label: 'Edit',
       title: 'Edit mode: drag notes or double-click a note to edit inline',
@@ -494,16 +504,6 @@ function ModeControls({ mode, onModeChange }) {
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 20h9" />
           <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
-        </svg>
-      ),
-    },
-    {
-      id: 'refractor',
-      label: 'Refractor',
-      title: 'Refractor mode: drag notes together to merge, or click the left edge of a note at a line break to split it',
-      icon: (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9l-3.8 3.8z" />
         </svg>
       ),
     },
@@ -528,7 +528,7 @@ function ModeControls({ mode, onModeChange }) {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
-export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpdated, onRefresh, refreshKey = 0, dimRefreshKey = 0, onDimChanged }) {
+export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpdated, onRefresh, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged }) {
   // Canvas state
   const [openNoteIds, setOpenNoteIds]       = useState(new Set())
   const [notePositions, setNotePositions]   = useState({})
@@ -563,13 +563,14 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   const [allAssignments, setAllAssignments] = useState([])
   const [personas, setPersonas] = useState([])
   const [personaNoteAssignments, setPersonaNoteAssignments] = useState([])
+  const [personaCatAssignments, setPersonaCatAssignments] = useState([])
   const [colorDimId, setColorDimId] = useState('')
   const [paintCat, setPaintCat] = useState(null)
   const [paintPersonaId, setPaintPersonaId] = useState(null)
   const activePersona = useMemo(() => personas.find(p => p.id === paintPersonaId) ?? null, [personas, paintPersonaId])
   const personaCursor = usePersonaCursor(activePersona)
   const [floatingPanel, setFloatingPanel] = useState(null)
-  const [interactionMode, setInteractionMode] = useState('edit')
+  const [interactionMode, setInteractionMode] = useState('refractor')
   const [selectedIds, setSelectedIds] = useState(new Set())
   const [gridCols, setGridCols] = useState(6)
   const [gridHeight, setGridHeight] = useState(180)
@@ -604,16 +605,28 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   }, [personas, personaNoteAssignments])
 
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getPersonas(), api.getDirectPersonaNoteAssignments()])
-      .then(([dims, cats, asns, ps, pnas]) => {
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getPersonas(), api.getDirectPersonaNoteAssignments(), api.getDirectPersonaAssignments()])
+      .then(([dims, cats, asns, ps, pnas, pcas]) => {
         setDimensions(dims)
         setCategories(cats)
         setAllAssignments(asns)
         setPersonas(ps)
         setPersonaNoteAssignments(pnas)
+        setPersonaCatAssignments(pcas)
       })
       .catch(console.error)
   }, [refreshKey])
+
+  useEffect(() => {
+    if (!peopleRefreshKey) return
+    Promise.all([api.getPersonas(), api.getDirectPersonaNoteAssignments(), api.getDirectPersonaAssignments()])
+      .then(([ps, pnas, pcas]) => {
+        setPersonas(ps)
+        setPersonaNoteAssignments(pnas)
+        setPersonaCatAssignments(pcas)
+      })
+      .catch(console.error)
+  }, [peopleRefreshKey])
 
   // Re-fetch only dims+cats when another page changes dimension data
   const dimRefreshKeyRef = useRef(dimRefreshKey)
@@ -788,6 +801,24 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
       ))
       .map(note => note.id)
     layoutNotesOnCanvas(noteIds)
+  }
+
+  const filterNotesCanvasToPersona = personaId => {
+    if (!personaId) return
+    const isResponsibleForNote = noteId =>
+      personaNoteAssignments.some(assignment => assignment.personaId === personaId && assignment.noteId === noteId) ||
+      personaCatAssignments.some(personaAssignment =>
+        personaAssignment.personaId === personaId &&
+        allAssignments.some(noteAssignment =>
+          noteAssignment.noteId === noteId &&
+          noteAssignment.dimensionId === personaAssignment.dimensionId &&
+          noteAssignment.categoryId === personaAssignment.categoryId
+        )
+      )
+    setOpenNoteIds(prev => new Set([...prev].filter(isResponsibleForNote)))
+    setSelectedIds(new Set())
+    setMergeCandidate(null)
+    setMergeProposal(null)
   }
 
   const expandSearchResultsOnCanvas = (onlyStrong = false) => {
@@ -1336,8 +1367,10 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
         <PeopleWidget
           paintPersonaId={paintPersonaId}
           onPaintPersonaChange={id => { setPaintCat(null); setPaintPersonaId(id) }}
+          onApplyQuickFilter={filterNotesCanvasToPersona}
           expanded={floatingPanel === 'people'}
           onExpandedChange={open => setFloatingPanel(open ? 'people' : null)}
+          refreshKey={peopleRefreshKey}
         />
       </div>
 
