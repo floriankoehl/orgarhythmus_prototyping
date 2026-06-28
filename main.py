@@ -243,6 +243,14 @@ def _init_db():
             )
         """)
         con.execute("""
+            CREATE TABLE IF NOT EXISTS project_contexts (
+                id         TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL DEFAULT 'default',
+                name       TEXT NOT NULL,
+                state_json TEXT NOT NULL DEFAULT '{}'
+            )
+        """)
+        con.execute("""
             CREATE TABLE IF NOT EXISTS transaction_history (
                 id               TEXT PRIMARY KEY,
                 project_id       TEXT NOT NULL DEFAULT 'default',
@@ -836,6 +844,15 @@ class CalendarPerspectivePatch(BaseModel):
     name: Optional[str] = None
     state: Optional[dict] = None
 
+class ProjectContextIn(BaseModel):
+    id: Optional[str] = None
+    name: str
+    state: dict = {}
+
+class ProjectContextPatch(BaseModel):
+    name: Optional[str] = None
+    state: Optional[dict] = None
+
 class TransactionPayload(BaseModel):
     id: Optional[str] = None
     type: str
@@ -980,6 +997,14 @@ def _calendar_perspective(row) -> dict:
         state = {}
     return {"id": d["id"], "name": d["name"], "state": state}
 
+def _project_context(row) -> dict:
+    d = dict(row)
+    try:
+        state = json.loads(d["state_json"] or "{}")
+    except json.JSONDecodeError:
+        state = {}
+    return {"id": d["id"], "name": d["name"], "state": state}
+
 def _normalize_filter_payload(data) -> tuple[str, str, str | None]:
     gate = data.gate if data.gate in ("AND", "OR") else "AND"
     selections = {}
@@ -1110,6 +1135,12 @@ def _project_id_for_calendar_perspective(con, perspective_id: str) -> str:
     row = con.execute("SELECT project_id FROM calendar_perspectives WHERE id = ?", (perspective_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Perspective not found")
+    return row["project_id"]
+
+def _project_id_for_context(con, context_id: str) -> str:
+    row = con.execute("SELECT project_id FROM project_contexts WHERE id = ?", (context_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Context not found")
     return row["project_id"]
 
 HISTORY_LIMIT = 20
@@ -2123,6 +2154,7 @@ def delete_project(project_id: str, user: dict = Depends(current_user)):
         con.execute("DELETE FROM schedule_perspectives WHERE project_id = ?", (project_id,))
         con.execute("DELETE FROM classification_perspectives WHERE project_id = ?", (project_id,))
         con.execute("DELETE FROM calendar_perspectives WHERE project_id = ?", (project_id,))
+        con.execute("DELETE FROM project_contexts WHERE project_id = ?", (project_id,))
         con.execute("DELETE FROM transaction_history WHERE project_id = ?", (project_id,))
         con.execute("DELETE FROM projects WHERE id = ?", (project_id,))
 
@@ -3152,6 +3184,54 @@ def delete_calendar_perspective(perspective_id: str, user: dict = Depends(curren
     with _db() as con:
         assert_project_access(_project_id_for_calendar_perspective(con, perspective_id), user)
         con.execute("DELETE FROM calendar_perspectives WHERE id = ?", (perspective_id,))
+
+
+# ── Project contexts ──────────────────────────────────────────────────────────
+@app.get("/project-contexts")
+def list_project_contexts(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    with _db() as con:
+        rows = con.execute(
+            "SELECT * FROM project_contexts WHERE project_id = ? ORDER BY name COLLATE NOCASE", (project_id,)
+        ).fetchall()
+    return [_project_context(row) for row in rows]
+
+@app.post("/project-contexts", status_code=201)
+def create_project_context(data: ProjectContextIn, project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    context_id = data.id or str(uuid.uuid4())
+    name = data.name.strip() or "Untitled context"
+    with _db() as con:
+        if con.execute("SELECT id FROM project_contexts WHERE id = ?", (context_id,)).fetchone():
+            raise HTTPException(409, "Context already exists")
+        con.execute(
+            "INSERT INTO project_contexts (id, project_id, name, state_json) VALUES (?, ?, ?, ?)",
+            (context_id, project_id, name, json.dumps(data.state or {})),
+        )
+        row = con.execute("SELECT * FROM project_contexts WHERE id = ?", (context_id,)).fetchone()
+    return _project_context(row)
+
+@app.patch("/project-contexts/{context_id}")
+def update_project_context(context_id: str, data: ProjectContextPatch, user: dict = Depends(current_user)):
+    with _db() as con:
+        assert_project_access(_project_id_for_context(con, context_id), user)
+        fields, values = [], []
+        if data.name is not None:
+            fields.append("name = ?")
+            values.append(data.name.strip() or "Untitled context")
+        if data.state is not None:
+            fields.append("state_json = ?")
+            values.append(json.dumps(data.state or {}))
+        if fields:
+            con.execute(f"UPDATE project_contexts SET {', '.join(fields)} WHERE id = ?", (*values, context_id))
+        row = con.execute("SELECT * FROM project_contexts WHERE id = ?", (context_id,)).fetchone()
+    return _project_context(row)
+
+@app.delete("/project-contexts/{context_id}", status_code=204)
+def delete_project_context(context_id: str, user: dict = Depends(current_user)):
+    with _db() as con:
+        assert_project_access(_project_id_for_context(con, context_id), user)
+        con.execute("DELETE FROM project_contexts WHERE id = ?", (context_id,))
 
 
 # ── Transactions ──────────────────────────────────────────────────────────────

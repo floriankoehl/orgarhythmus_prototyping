@@ -816,7 +816,7 @@ function SpanningEvent({ event, start, end, lane = null, onNoteOpen, paintCat, o
   )
 }
 
-export default function CalendarPage({ notes = [], project = null, isActive = false, onNoteOpen, onNoteCreated, onNoteUpdated, refreshKey = 0, peopleRefreshKey = 0, onPeopleChanged, restoreRequest = null, onRestoreConsumed, onRequestScheduleResolve }) {
+export default function CalendarPage({ notes = [], project = null, isActive = false, onNoteOpen, onNoteCreated, onNoteUpdated, refreshKey = 0, peopleRefreshKey = 0, onPeopleChanged, restoreRequest = null, onRestoreConsumed, onRequestScheduleResolve, contextDefaultPerspectiveId, contextApplyToken }) {
   const dateWheelAtRef = useRef(0)
   const [view, setView] = useState('today')
   const [focusDate, setFocusDate] = useState(() => localMidnight())
@@ -1228,6 +1228,14 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     setDefaultPerspectiveId(nextId)
     try { window.localStorage.setItem(CALENDAR_DEFAULT_PERSPECTIVE_KEY, nextId) } catch {}
   }
+
+  useEffect(() => {
+    if (contextDefaultPerspectiveId === undefined) return
+    const nextId = contextDefaultPerspectiveId || NONE_PERSPECTIVE_ID
+    setDefaultPerspectiveId(nextId)
+    appliedDefaultRef.current = false
+    try { window.localStorage.setItem(CALENDAR_DEFAULT_PERSPECTIVE_KEY, nextId) } catch {}
+  }, [contextDefaultPerspectiveId, contextApplyToken])
 
   const deletePerspective = async perspectiveId => {
     if (perspectiveId === NONE_PERSPECTIVE_ID) return

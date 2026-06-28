@@ -192,6 +192,12 @@ export const api = {
   updateCalendarPerspective:  (id, patch)     => req('PATCH',  `/calendar-perspectives/${id}`, patch),
   deleteCalendarPerspective:  (id)            => req('DELETE', `/calendar-perspectives/${id}`),
 
+  // Project contexts
+  getProjectContexts:    ()          => req('GET',    '/project-contexts'),
+  createProjectContext:  (context)   => req('POST',   '/project-contexts', context),
+  updateProjectContext:  (id, patch) => req('PATCH',  `/project-contexts/${id}`, patch),
+  deleteProjectContext:  (id)        => req('DELETE', `/project-contexts/${id}`),
+
   // Time slots
   getTimeSlots:         ()        => req('GET',    '/time-slots'),
   createTimeSlot:       (data)    => req('POST',   '/time-slots', data),

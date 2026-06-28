@@ -1465,7 +1465,7 @@ function LegendWidget({
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ClassificationPage({ notes = [], isActive = false, onNoteOpen, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged }) {
+export default function ClassificationPage({ notes = [], isActive = false, onNoteOpen, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, contextDefaultPerspectiveId, contextApplyToken }) {
   const [dimensions, setDimensions]         = useState([])
   const [categories, setCategories]         = useState([])
   const [timeSlots, setTimeSlots]           = useState([])
@@ -1505,6 +1505,14 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const [floatingPanel, setFloatingPanel] = useState(null)
   const [statusNotice, setStatusNotice] = useState('')
   const { confirm: confirmDialog, dialog: confirmDialogNode } = useConfirmDialog()
+
+  useEffect(() => {
+    if (contextDefaultPerspectiveId === undefined) return
+    const nextId = contextDefaultPerspectiveId || NONE_PERSPECTIVE_ID
+    setDefaultPerspectiveId(nextId)
+    appliedDefaultRef.current = false
+    try { window.localStorage.setItem(CLASSIFICATION_DEFAULT_PERSPECTIVE_KEY, nextId) } catch {}
+  }, [contextDefaultPerspectiveId, contextApplyToken])
 
   const applyAssignments = assigns => {
     const map = {}

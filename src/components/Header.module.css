@@ -59,10 +59,18 @@
 }
 .backBtn:hover { color: #1a73e8; background: #e8f0fe; }
 
-.projectNameBtn {
+.projectCenter {
   position: absolute;
   left: 50%;
   top: 50%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transform: translate(-50%, -50%);
+  z-index: 4500;
+}
+
+.projectNameBtn {
   max-width: min(360px, calc(100vw - 160px));
   padding: 6px 14px;
   color: #222;
@@ -75,11 +83,177 @@
   cursor: pointer;
   font: 700 13px Arial, sans-serif;
   text-align: center;
-  transform: translate(-50%, -50%);
 }
 .projectNameBtn:hover {
   color: #1a73e8;
   background: #e8f0fe;
+}
+
+.contextBtn {
+  height: 30px;
+  padding: 0 10px;
+  color: #555;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  cursor: pointer;
+  font: 800 12px Arial, sans-serif;
+}
+.contextBtn:hover,
+.contextBtnActive {
+  color: #1a73e8;
+  background: #e8f0fe;
+  border-color: #c5d8f8;
+}
+
+.contextPanel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  padding: 10px;
+  background: #fff;
+  border: 1px solid #dfe3e8;
+  border-radius: 9px;
+  box-shadow: 0 14px 34px rgba(15,23,42,0.18);
+  transform: translateX(-50%);
+  z-index: 4501;
+}
+
+.contextCreate {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #eef1f5;
+}
+
+.contextCreate input,
+.contextCreate select {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  color: #222;
+  background: #f8fafc;
+  border: 1px solid #d9e1ea;
+  border-radius: 5px;
+  font: 700 12px Arial, sans-serif;
+  box-sizing: border-box;
+}
+
+.contextCreate input:focus,
+.contextCreate select:focus {
+  outline: none;
+  border-color: #1a73e8;
+  background: #fff;
+}
+
+.contextCreate label {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: #64748b;
+  font: 800 11px Arial, sans-serif;
+}
+
+.contextFormActions {
+  display: flex;
+  gap: 6px;
+}
+
+.contextFormActions button {
+  flex: 1;
+  height: 31px;
+  color: #fff;
+  background: #1a73e8;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font: 800 12px Arial, sans-serif;
+}
+
+.contextFormActions button:hover { background: #1765cc; }
+
+.contextFormActions .contextSecondaryBtn {
+  color: #555;
+  background: #f8fafc;
+  border: 1px solid #d9e1ea;
+}
+
+.contextFormActions .contextSecondaryBtn:hover {
+  color: #1a73e8;
+  background: #eef5ff;
+}
+
+.contextList {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+}
+
+.contextItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 4px;
+  border-radius: 5px;
+}
+
+.contextItemEditing {
+  background: #f0f7ff;
+}
+
+.contextApplyBtn {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 7px 8px;
+  text-align: left;
+  color: #334155;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.contextApplyBtn:hover { background: #eef5ff; color: #1a73e8; }
+
+.contextEditBtn {
+  width: 48px;
+  margin: 0;
+  padding: 0;
+  color: #64748b;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font: 800 11px Arial, sans-serif;
+}
+
+.contextEditBtn:hover {
+  color: #1a73e8;
+  background: #eef5ff;
+}
+
+.contextList strong { font: 900 12px Arial, sans-serif; }
+.contextList span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #64748b;
+  font: 700 10px Arial, sans-serif;
+}
+.contextEmpty {
+  padding: 10px;
+  color: #9ca3af;
+  text-align: center;
+  font: 700 12px Arial, sans-serif;
 }
 .projectNameBtnActive {
   color: #1a73e8;

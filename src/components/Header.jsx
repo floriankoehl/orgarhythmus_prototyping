@@ -15,6 +15,13 @@ const PAGES = [
   { name: 'People', view: 5 },
 ]
 
+const NONE_PERSPECTIVE_ID = '__none__'
+const CONTEXT_PAGES = [
+  { id: 'classification', label: 'Classification' },
+  { id: 'schedule', label: 'Schedule' },
+  { id: 'calendar', label: 'Calendar' },
+]
+
 function computeWordRects(el) {
   const base = el.getBoundingClientRect()
   const result = []
@@ -33,7 +40,7 @@ function computeWordRects(el) {
   return result
 }
 
-export default function Header({ view, onNavigate, onQuickAdd, projectName, onBack, notes = [], onNoteOpen }) {
+export default function Header({ view, onNavigate, onQuickAdd, projectName, onBack, notes = [], onNoteOpen, onApplyContext }) {
   // quick-add state
   const [open, setOpen]               = useState(false)
   const [titleVal, setTitleVal]       = useState('')
@@ -49,11 +56,29 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
   const [searchOpen, setSearchOpen]   = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
 
+  // context state
+  const [contextOpen, setContextOpen] = useState(false)
+  const [contexts, setContexts] = useState([])
+  const [editingContextId, setEditingContextId] = useState('')
+  const [contextName, setContextName] = useState('')
+  const [contextChoices, setContextChoices] = useState({
+    classification: NONE_PERSPECTIVE_ID,
+    schedule: NONE_PERSPECTIVE_ID,
+    calendar: NONE_PERSPECTIVE_ID,
+  })
+  const [contextPerspectives, setContextPerspectives] = useState({
+    classification: [],
+    schedule: [],
+    calendar: [],
+  })
+
   const editorRef      = useRef(null)
   const titleInputRef  = useRef(null)
   const wrapRef        = useRef(null)
   const searchInputRef = useRef(null)
   const searchWrapRef  = useRef(null)
+  const contextWrapRef = useRef(null)
+  const contextWheelAtRef = useRef(0)
 
   useEffect(() => {
     if (open) setTimeout(() => editorRef.current?.focus(), 20)
@@ -63,6 +88,10 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
     if (searchOpen) setTimeout(() => searchInputRef.current?.focus(), 20)
     else setSearchQuery('')
   }, [searchOpen])
+
+  useEffect(() => {
+    if (projectName) ensureContextData()
+  }, [projectName]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const closePopup = () => {
     setOpen(false); setTitleVal(''); setTitleManual(false)
@@ -131,6 +160,134 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
     return () => document.removeEventListener('mousedown', handler)
   }, [searchOpen])
 
+  useEffect(() => {
+    if (!contextOpen) return
+    const handler = e => {
+      if (contextWrapRef.current?.contains(e.target)) return
+      setContextOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [contextOpen])
+
+  const ensureContextData = () => {
+    Promise.all([
+      api.getProjectContexts(),
+      api.getClassificationPerspectives(),
+      api.getSchedulePerspectives(),
+      api.getCalendarPerspectives(),
+    ])
+      .then(([loadedContexts, classification, schedule, calendar]) => {
+        setContexts(loadedContexts || [])
+        setContextPerspectives({
+          classification: classification || [],
+          schedule: schedule || [],
+          calendar: calendar || [],
+        })
+      })
+      .catch(console.error)
+  }
+
+  const openContextMenu = () => {
+    const next = !contextOpen
+    setContextOpen(next)
+    playSound(next ? 'perspectiveLoad' : 'collapseToggle')
+    if (next) {
+      setContextChoices({
+        classification: window.localStorage.getItem('classification.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
+        schedule: window.localStorage.getItem('schedule.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
+        calendar: window.localStorage.getItem('calendar.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
+      })
+      setEditingContextId('')
+      setContextName('')
+      ensureContextData()
+    }
+  }
+
+  const contextStateFromChoices = () => ({
+    classificationPerspectiveId: contextChoices.classification,
+    schedulePerspectiveId: contextChoices.schedule,
+    calendarPerspectiveId: contextChoices.calendar,
+  })
+
+  const applyContext = context => {
+    playSound('perspectiveLoad')
+    onApplyContext?.(context.state || {})
+    setContextOpen(false)
+  }
+
+  const cycleContext = event => {
+    if (!contexts.length) return
+    event.preventDefault()
+    const now = Date.now()
+    if (now - contextWheelAtRef.current < 180) return
+    contextWheelAtRef.current = now
+    const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
+    if (delta === 0) return
+    const currentClassification = window.localStorage.getItem('classification.defaultPerspectiveId') || NONE_PERSPECTIVE_ID
+    const currentSchedule = window.localStorage.getItem('schedule.defaultPerspectiveId') || NONE_PERSPECTIVE_ID
+    const currentCalendar = window.localStorage.getItem('calendar.defaultPerspectiveId') || NONE_PERSPECTIVE_ID
+    const currentIndex = Math.max(0, contexts.findIndex(context => (
+      (context.state?.classificationPerspectiveId || NONE_PERSPECTIVE_ID) === currentClassification
+      && (context.state?.schedulePerspectiveId || NONE_PERSPECTIVE_ID) === currentSchedule
+      && (context.state?.calendarPerspectiveId || NONE_PERSPECTIVE_ID) === currentCalendar
+    )))
+    const direction = delta > 0 ? 1 : -1
+    const nextContext = contexts[(currentIndex + direction + contexts.length) % contexts.length]
+    if (nextContext) applyContext(nextContext)
+  }
+
+  const createContext = async () => {
+    const name = contextName.trim()
+    if (!name) return
+    try {
+      const created = await api.createProjectContext({ name, state: contextStateFromChoices() })
+      playSound('perspectiveSave')
+      setContexts(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
+      setContextName('')
+    } catch (err) {
+      console.error('Failed to create context', err)
+    }
+  }
+
+  const editContext = context => {
+    playSound('select')
+    setEditingContextId(context.id)
+    setContextName(context.name)
+    setContextChoices({
+      classification: context.state?.classificationPerspectiveId || NONE_PERSPECTIVE_ID,
+      schedule: context.state?.schedulePerspectiveId || NONE_PERSPECTIVE_ID,
+      calendar: context.state?.calendarPerspectiveId || NONE_PERSPECTIVE_ID,
+    })
+  }
+
+  const cancelContextEdit = () => {
+    setEditingContextId('')
+    setContextName('')
+    setContextChoices({
+      classification: window.localStorage.getItem('classification.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
+      schedule: window.localStorage.getItem('schedule.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
+      calendar: window.localStorage.getItem('calendar.defaultPerspectiveId') || NONE_PERSPECTIVE_ID,
+    })
+  }
+
+  const saveContextEdit = async () => {
+    if (!editingContextId) return createContext()
+    const name = contextName.trim()
+    if (!name) return
+    try {
+      const saved = await api.updateProjectContext(editingContextId, { name, state: contextStateFromChoices() })
+      playSound('perspectiveUpdate')
+      setContexts(prev => prev
+        .map(context => context.id === saved.id ? saved : context)
+        .sort((a, b) => a.name.localeCompare(b.name)))
+      setEditingContextId('')
+      setContextName('')
+    } catch (err) {
+      console.error('Failed to update context', err)
+    }
+  }
+
   const handleKey = e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
     if (e.key === 'Escape') closePopup()
@@ -164,12 +321,76 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
         </button>
       )}
       {projectName && (
-        <button
-          className={`${styles.projectNameBtn} ${view === 0 ? styles.projectNameBtnActive : ''}`}
-          onClick={() => { playSound('viewChange'); onNavigate(0) }}
-          title="Open project overview">
-          {projectName}
-        </button>
+        <div ref={contextWrapRef} className={styles.projectCenter} onWheel={cycleContext}>
+          <button
+            className={`${styles.projectNameBtn} ${view === 0 ? styles.projectNameBtnActive : ''}`}
+            onClick={() => { playSound('viewChange'); onNavigate(0) }}
+            title="Open project overview">
+            {projectName}
+          </button>
+          <button
+            type="button"
+            className={`${styles.contextBtn} ${contextOpen ? styles.contextBtnActive : ''}`}
+            onClick={openContextMenu}
+            title="Project contexts">
+            Context
+          </button>
+          {contextOpen && (
+            <div className={styles.contextPanel}>
+              <div className={styles.contextCreate}>
+                <input
+                  value={contextName}
+                  onChange={event => setContextName(event.target.value)}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter') saveContextEdit()
+                    if (event.key === 'Escape') cancelContextEdit()
+                  }}
+                  placeholder="Context name"
+                />
+                {CONTEXT_PAGES.map(page => (
+                  <label key={page.id}>
+                    <span>{page.label}</span>
+                    <select
+                      value={contextChoices[page.id]}
+                      onChange={event => setContextChoices(prev => ({ ...prev, [page.id]: event.target.value }))}>
+                      <option value={NONE_PERSPECTIVE_ID}>None</option>
+                      {contextPerspectives[page.id].map(perspective => (
+                        <option key={perspective.id} value={perspective.id}>{perspective.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+                <div className={styles.contextFormActions}>
+                  <button type="button" onClick={saveContextEdit}>
+                    {editingContextId ? 'Save context' : 'Create context'}
+                  </button>
+                  {editingContextId && (
+                    <button type="button" className={styles.contextSecondaryBtn} onClick={cancelContextEdit}>Cancel</button>
+                  )}
+                </div>
+              </div>
+              <div className={styles.contextList}>
+                {contexts.length ? contexts.map(context => (
+                  <div key={context.id} className={`${styles.contextItem} ${editingContextId === context.id ? styles.contextItemEditing : ''}`}>
+                    <button type="button" className={styles.contextApplyBtn} onClick={() => applyContext(context)}>
+                      <strong>{context.name}</strong>
+                      <span>
+                        {CONTEXT_PAGES.map(page => {
+                          const id = context.state?.[`${page.id}PerspectiveId`]
+                          const name = contextPerspectives[page.id].find(p => p.id === id)?.name || 'None'
+                          return `${page.label}: ${name}`
+                        }).join(' · ')}
+                      </span>
+                    </button>
+                    <button type="button" className={styles.contextEditBtn} onClick={() => editContext(context)}>Edit</button>
+                  </div>
+                )) : (
+                  <div className={styles.contextEmpty}>No contexts yet</div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       <nav className={styles.nav}>

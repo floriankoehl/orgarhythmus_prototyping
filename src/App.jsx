@@ -15,6 +15,13 @@ import { api, authApi, hasAuthSession, setProjectId } from './api'
 import { mergeSelectionsWithHashtags } from './categoryHashtags'
 import styles from './App.module.css'
 
+const NONE_PERSPECTIVE_ID = '__none__'
+const PERSPECTIVE_DEFAULT_KEYS = {
+  classification: 'classification.defaultPerspectiveId',
+  schedule: 'schedule.defaultPerspectiveId',
+  calendar: 'calendar.defaultPerspectiveId',
+}
+
 // ── Success toast ─────────────────────────────────────────────────────────────
 function Toast({ toast, onOpen, onDismiss }) {
   const [leaving, setLeaving] = useState(false)
@@ -60,6 +67,7 @@ export default function App() {
   const [peopleVersion, setPeopleVersion] = useState(0)
   const [calendarResolveRequest, setCalendarResolveRequest] = useState(null)
   const [calendarRestoreRequest, setCalendarRestoreRequest] = useState(null)
+  const [contextDefaults, setContextDefaults] = useState({})
   const [popupNoteId, setPopupNoteId] = useState(null)
   const [toast, setToast]             = useState(null)
 
@@ -77,6 +85,18 @@ export default function App() {
     }
     setCalendarResolveRequest(null)
     setView(6)
+  }
+
+  const applyProjectContext = state => {
+    const defaults = {
+      classification: state?.classificationPerspectiveId || NONE_PERSPECTIVE_ID,
+      schedule: state?.schedulePerspectiveId || NONE_PERSPECTIVE_ID,
+      calendar: state?.calendarPerspectiveId || NONE_PERSPECTIVE_ID,
+    }
+    Object.entries(defaults).forEach(([page, perspectiveId]) => {
+      try { window.localStorage.setItem(PERSPECTIVE_DEFAULT_KEYS[page], perspectiveId) } catch {}
+    })
+    setContextDefaults({ ...defaults, token: crypto.randomUUID() })
   }
 
   useEffect(() => {
@@ -111,6 +131,7 @@ export default function App() {
     setNoteDataVersion(0)
     setCalendarResolveRequest(null)
     setCalendarRestoreRequest(null)
+    setContextDefaults({})
     setAppScreen('home')
     setAuthState('authenticated')
   }
@@ -142,6 +163,7 @@ export default function App() {
     setNoteDataVersion(0)
     setCalendarResolveRequest(null)
     setCalendarRestoreRequest(null)
+    setContextDefaults({})
     setAppScreen('workspace')
   }
 
@@ -155,6 +177,7 @@ export default function App() {
     setNoteDataVersion(0)
     setCalendarResolveRequest(null)
     setCalendarRestoreRequest(null)
+    setContextDefaults({})
     setAppScreen('home')
   }
 
@@ -264,6 +287,7 @@ export default function App() {
         view={view} onNavigate={setView} onQuickAdd={handleQuickAdd}
         projectName={activeProject.name} onBack={backToHome}
         notes={notes} onNoteOpen={openNotePopup}
+        onApplyContext={applyProjectContext}
       />
 
       <div className={styles.views}>
@@ -293,6 +317,8 @@ export default function App() {
             peopleRefreshKey={peopleVersion}
             onDimChanged={() => setDimVersion(v => v + 1)}
             onPeopleChanged={() => setPeopleVersion(v => v + 1)}
+            contextDefaultPerspectiveId={contextDefaults.classification}
+            contextApplyToken={contextDefaults.token}
           />
         </div>
         <div className={styles.view} style={{ display: view === 3 ? 'flex' : 'none' }}>
@@ -311,6 +337,8 @@ export default function App() {
             onPeopleChanged={() => setPeopleVersion(v => v + 1)}
             externalResolveRequest={calendarResolveRequest}
             onExternalResolveReturn={returnToCalendarFromResolver}
+            contextDefaultPerspectiveId={contextDefaults.schedule}
+            contextApplyToken={contextDefaults.token}
           />
         </div>
         <div className={styles.view} style={{ display: view === 4 ? 'flex' : 'none' }}>
@@ -337,6 +365,8 @@ export default function App() {
             restoreRequest={calendarRestoreRequest}
             onRestoreConsumed={() => setCalendarRestoreRequest(null)}
             onRequestScheduleResolve={openScheduleResolverFromCalendar}
+            contextDefaultPerspectiveId={contextDefaults.calendar}
+            contextApplyToken={contextDefaults.token}
           />
         </div>
       </div>

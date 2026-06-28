@@ -240,6 +240,7 @@ function noteTimeSlotScaleConflict(timeSlots, noteId, duration, startCol = null)
 }
 
 const MIN_TIME_SLOT_DURATION = 10
+const DEFAULT_MINUTE_TIME_SLOT_DURATION = 60
 const DEFAULT_WARNING_SETTINGS = {
   resizeWarnOrderThreshold: 2,
   resizeBlockOrderThreshold: 2,
@@ -343,7 +344,7 @@ function calendarMonthDurationFromStart(startCol, span = 1) {
 
 function defaultDurationForZoom(timeZoom, startCol = 0) {
   const zoom = normalizeTimeZoom(timeZoom)
-  if (zoom === 'minutes') return MIN_TIME_SLOT_DURATION
+  if (zoom === 'minutes') return DEFAULT_MINUTE_TIME_SLOT_DURATION
   if (zoom === 'months') return calendarMonthDurationFromStart(startCol, 1)
   return Math.max(MIN_TIME_SLOT_DURATION, getZoomUnit(zoom))
 }
@@ -2209,7 +2210,7 @@ function ScheduleColorLegendWidget({
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, externalResolveRequest = null, onExternalResolveReturn }) {
+export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, externalResolveRequest = null, onExternalResolveReturn, contextDefaultPerspectiveId, contextApplyToken }) {
   // ── Timeline anchor ────────────────────────────────────────────────────────
   // Keep the module-level anchor in sync with the project's creation date so that
   // col 0 = project creation date (fixed, immutable left boundary of the timeline).
@@ -5563,6 +5564,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     setDefaultPerspectiveId(nextId)
     try { window.localStorage.setItem(SCHEDULE_DEFAULT_PERSPECTIVE_KEY, nextId) } catch {}
   }, [])
+
+  useEffect(() => {
+    if (contextDefaultPerspectiveId === undefined) return
+    const nextId = contextDefaultPerspectiveId || NONE_PERSPECTIVE_ID
+    setDefaultPerspectiveId(nextId)
+    appliedDefaultRef.current = false
+    try { window.localStorage.setItem(SCHEDULE_DEFAULT_PERSPECTIVE_KEY, nextId) } catch {}
+  }, [contextDefaultPerspectiveId, contextApplyToken])
 
   useEffect(() => {
     if (!isActive) {
