@@ -7,22 +7,20 @@ import PersonaAvatarStack from './PersonaAvatarStack'
 import { useConfirmDialog } from './ConfirmDialog'
 import { usePersonaCursor } from '../hooks/usePersonaCursor'
 import { playSound } from '../sounds/sound_registry'
+import ColorPickerIcon from './ColorPickerIcon'
+import ColorPickerCategoryBadge from './ColorPickerCategoryBadge'
+import { COLOR_UNASSIGNED_CATEGORY_ID, colorPickerCategories } from './colorPickerCategories'
+import FilterDimensionSelector from './FilterDimensionSelector'
+import StandardColorPicker from './StandardColorPicker'
+import { filterMatchesNote as matchesSavedFilter, quickFilterMatchesNote } from './savedFilterUtils'
+import { TIME_DIMENSION_ID, TIME_DYNAMIC_CATEGORIES, noteCreatedAtMs, timeCategoryIdForNote } from './timeCategories'
 
 const PRESET_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#94a3b8']
 const FILTER_DIMENSION_ID = '__filters__'
 const FILTER_CATEGORY_PREFIX = 'filter:'
 const ALL_NOTES_CATEGORY_PREFIX = '__all_notes__:'
-const TIME_DIMENSION_ID = '__time__'
 const UNASSIGNED_CATEGORY_ID = '__unassigned__'
-const TIME_CATEGORY_PREFIX = 'time:'
-const TIME_DYNAMIC_CATEGORIES = [
-  { id: `${TIME_CATEGORY_PREFIX}hour`, name: 'Last hour', color: '#22c55e', maxAgeMs: 60 * 60 * 1000 },
-  { id: `${TIME_CATEGORY_PREFIX}day`, name: 'Last day', color: '#3b82f6', maxAgeMs: 24 * 60 * 60 * 1000 },
-  { id: `${TIME_CATEGORY_PREFIX}week`, name: 'Last week', color: '#8b5cf6', maxAgeMs: 7 * 24 * 60 * 60 * 1000 },
-  { id: `${TIME_CATEGORY_PREFIX}older`, name: 'Older than a week', color: '#94a3b8', maxAgeMs: Infinity },
-]
 const NONE_PERSPECTIVE_ID = '__none__'
-const CLASSIFICATION_DEFAULT_PERSPECTIVE_KEY = 'classification.defaultPerspectiveId'
 
 function makeColorCursor(color) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="10" fill="${color}" stroke="white" stroke-width="2"/></svg>`
@@ -49,12 +47,8 @@ function normalizeFilter(filter) {
   }
 }
 
-function filterMatchesNote(filter, noteId, assignments) {
-  if (!filter) return false
-  const entries = Object.entries(filter.selections).filter(([, catIds]) => catIds.length > 0)
-  if (entries.length === 0) return false
-  const matchesDim = ([dimId, catIds]) => catIds.includes(assignments[noteId]?.[dimId])
-  return filter.gate === 'OR' ? entries.some(matchesDim) : entries.every(matchesDim)
+function filterMatchesNote(filter, noteId, assignments, note = null) {
+  return matchesSavedFilter(filter, note, (id, dimensionId) => assignments[id]?.[dimensionId])
 }
 
 function filterCategoryId(filterId) {
@@ -71,22 +65,6 @@ function allNotesCategoryId(dimId) {
 
 function dimensionIdFromAllNotesCategoryId(catId) {
   return catId?.startsWith(ALL_NOTES_CATEGORY_PREFIX) ? catId.slice(ALL_NOTES_CATEGORY_PREFIX.length) : null
-}
-
-function noteCreatedAtMs(note) {
-  const raw = note?.createdAt ?? note?.created_at
-  if (!raw) return Date.now()
-  // SQLite CURRENT_TIMESTAMP is 'YYYY-MM-DD HH:MM:SS' (UTC, space-separated).
-  // Normalize to ISO 8601 so Date.parse works reliably across all browsers.
-  const iso = raw.includes('T') ? raw : raw.replace(' ', 'T') + 'Z'
-  const value = Date.parse(iso)
-  return Number.isFinite(value) ? value : Date.now()
-}
-
-function timeCategoryIdForNote(note, nowMs = Date.now()) {
-  const createdAt = noteCreatedAtMs(note)
-  const age = createdAt > 0 ? Math.max(0, nowMs - createdAt) : Infinity
-  return TIME_DYNAMIC_CATEGORIES.find(cat => age <= cat.maxAgeMs)?.id ?? `${TIME_CATEGORY_PREFIX}older`
 }
 
 function isDynamicDimensionId(dimId) {
@@ -243,7 +221,7 @@ function PerspectiveMenu({ perspectives, activePerspectiveId, defaultPerspective
                   </button>
                 )}
                 <button className={`${styles.perspectiveIconBtn} ${defaultPerspectiveId === p.id ? styles.perspectiveIconBtnActive : ''}`}
-                  title="Use as classification default"
+                  title="Use as the Classification default for this context"
                   onClick={() => onSetDefault(p.id)}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27z"/>
@@ -1288,31 +1266,13 @@ function FilterEditorModal({ filter, dimensions, categories, onSave, onDelete, o
           </div>
         </div>
 
-        <div className={styles.filterDimList}>
-          {dimensions.map(dim => {
-            const dimCats = categories.filter(c => c.dimensionId === dim.id)
-            return (
-              <section key={dim.id} className={styles.filterDimSection}>
-                <div className={styles.filterDimTitle}>{dim.name}</div>
-                <div className={styles.filterCatGrid}>
-                  {dimCats.length === 0 ? (
-                    <span className={styles.filterEmpty}>No categories</span>
-                  ) : dimCats.map(cat => (
-                    <label key={cat.id} className={styles.filterCatOption}>
-                      <input
-                        type="checkbox"
-                        checked={(selections[dim.id] ?? []).includes(cat.id)}
-                        onChange={() => toggleCat(dim.id, cat.id)}
-                      />
-                      <span className={styles.legendDot} style={{ background: cat.color }} />
-                      <span>{cat.name}</span>
-                    </label>
-                  ))}
-                </div>
-              </section>
-            )
-          })}
-        </div>
+        <FilterDimensionSelector
+          dimensions={dimensions}
+          categories={categories}
+          selections={selections}
+          onToggle={toggleCat}
+          styles={styles}
+        />
 
         <div className={styles.modalActions}>
           {isEdit && (
@@ -1341,7 +1301,7 @@ function LegendWidget({
   const [catName, setCatName] = useState('')
   const [catColor, setCatColor] = useState(PRESET_COLORS[0])
 
-  const legendCats = categories.filter(c => c.dimensionId === legendDimId)
+  const legendCats = colorPickerCategories(categories, dimensions, legendDimId)
   const legendDim = dimensions.find(d => d.id === legendDimId)
   const isDynamicLegend = isDynamicDimensionId(legendDimId)
   const isSystemLegend = isSystemDimension(legendDim)
@@ -1397,19 +1357,29 @@ function LegendWidget({
               className={[
                 styles.legendItem,
                 (cat.dynamic || cat.system) && styles.dynamicLegendItem,
-                (cat.dynamicType === 'filter' ? activeFilterIds.includes(cat.filterId) : paintCat?.id === cat.id) && styles.legendItemActive,
+                (cat.colorPickerSpecial
+                  ? paintCat?.id === cat.id
+                  : cat.dynamicType === 'filter'
+                  ? activeFilterIds.includes(cat.filterId)
+                  : cat.dynamic
+                    ? quickFilters.some(filter => filter.dimId === legendDimId && filter.catId === cat.id)
+                    : paintCat?.id === cat.id) && styles.legendItemActive,
               ].filter(Boolean).join(' ')}
               onClick={e => {
                 e.stopPropagation()
-                if (cat.dynamicType === 'filter') onToggleFilter(cat.filterId)
+                if (cat.readOnly) return
+                if (cat.unassign) onPaintActivate(cat.id, cat.color)
+                else if (cat.dynamicType === 'filter') onToggleFilter(cat.filterId)
                 else if (cat.dynamic) return
                 else onPaintActivate(cat.id, cat.color)
               }}
-              onDoubleClick={() => cat.dynamicType === 'filter' ? onEditFilter(namedFilters.find(f => f.id === cat.filterId)) : cat.dynamic || cat.system ? undefined : onEditCat(cat)}>
+              onDoubleClick={() => cat.colorPickerSpecial ? undefined : cat.dynamicType === 'filter' ? onEditFilter(namedFilters.find(f => f.id === cat.filterId)) : cat.dynamic || cat.system ? undefined : onEditCat(cat)}>
               <span className={styles.legendDot} style={{ background: cat.color }} />
               <span className={styles.legendName}>{cat.name}</span>
               {(cat.dynamic || cat.system) && <span className={styles.dynamicBadge}>{dynamicDimensionLabel(cat)}</span>}
-              {cat.dynamicType === 'filter' ? (
+              {cat.colorPickerSpecial ? (
+                <ColorPickerCategoryBadge>{cat.specialLabel}</ColorPickerCategoryBadge>
+              ) : cat.dynamicType === 'filter' ? (
                 <button
                   className={`${styles.legendPaintBtn} ${activeFilterIds.includes(cat.filterId) ? styles.legendPaintBtnActive : ''}`}
                   title="Edit filter"
@@ -1422,7 +1392,7 @@ function LegendWidget({
                     <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
                   </svg>
                 </button>
-              ) : !cat.dynamic ? (
+              ) : (
                 <button
                   className={`${styles.legendPaintBtn} ${quickFilters.some(f => f.dimId === legendDimId && f.catId === cat.id) ? styles.legendPaintBtnActive : ''}`}
                   title="Quick filter notes by this category"
@@ -1435,8 +1405,6 @@ function LegendWidget({
                     <path d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/>
                   </svg>
                 </button>
-              ) : (
-                <span className={styles.legendPaintBtn} title="Computed category" />
               )}
             </div>
           ))}
@@ -1450,9 +1418,7 @@ function LegendWidget({
         className={`${styles.legendToggleBtn} ${expanded ? styles.legendToggleActive : ''}`}
         onClick={() => onExpandedChange(!expanded)}
         title={expanded ? 'Collapse legend' : 'Color legend'}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/>
-        </svg>
+        <ColorPickerIcon />
       </button>
       {!expanded && (
         <span className={styles.floatingHint}>
@@ -1465,7 +1431,7 @@ function LegendWidget({
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ClassificationPage({ notes = [], isActive = false, onNoteOpen, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [] }) {
+export default function ClassificationPage({ notes = [], isActive = false, onNoteOpen, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [], onSetContextDefaultPerspective }) {
   const [dimensions, setDimensions]         = useState([])
   const [categories, setCategories]         = useState([])
   const [timeSlots, setTimeSlots]           = useState([])
@@ -1473,10 +1439,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const [assignmentOrders, setAssignmentOrders] = useState({})
   const [perspectives, setPerspectives] = useState([])
   const [activePerspectiveId, setActivePerspectiveId] = useState(NONE_PERSPECTIVE_ID)
-  const [defaultPerspectiveId, setDefaultPerspectiveId] = useState(() => {
-    try { return window.localStorage.getItem(CLASSIFICATION_DEFAULT_PERSPECTIVE_KEY) || NONE_PERSPECTIVE_ID }
-    catch { return NONE_PERSPECTIVE_ID }
-  })
+  const [defaultPerspectiveId, setDefaultPerspectiveId] = useState(NONE_PERSPECTIVE_ID)
   const appliedDefaultRef = useRef(false)
   const restoringPerspectiveRef = useRef(false)
   const [containerDimId, setContainerDimId] = useState('')
@@ -1511,7 +1474,6 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     const nextId = contextDefaultPerspectiveId || NONE_PERSPECTIVE_ID
     setDefaultPerspectiveId(nextId)
     appliedDefaultRef.current = false
-    try { window.localStorage.setItem(CLASSIFICATION_DEFAULT_PERSPECTIVE_KEY, nextId) } catch {}
   }, [contextDefaultPerspectiveId, contextApplyToken])
 
   const applyAssignments = assigns => {
@@ -1752,10 +1714,16 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     } catch (e) { console.error(e) }
   }
 
-  const setClassificationDefaultPerspective = perspectiveId => {
+  const setClassificationDefaultPerspective = async perspectiveId => {
     const nextId = perspectiveId || NONE_PERSPECTIVE_ID
+    const previousId = defaultPerspectiveId
     setDefaultPerspectiveId(nextId)
-    try { window.localStorage.setItem(CLASSIFICATION_DEFAULT_PERSPECTIVE_KEY, nextId) } catch {}
+    try {
+      await onSetContextDefaultPerspective?.('classification', nextId)
+    } catch (error) {
+      setDefaultPerspectiveId(previousId)
+      console.error('Failed to update context default perspective', error)
+    }
   }
 
   const deleteDimension = async id => {
@@ -1845,12 +1813,18 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
       }
     }
     try {
-      await Promise.all(noteIds.map(noteId => api.assign(noteId, legendDimId, paintCat.id)))
+      const unassigning = paintCat.id === COLOR_UNASSIGNED_CATEGORY_ID
+      await Promise.all(noteIds.map(noteId => unassigning
+        ? api.unassign(noteId, legendDimId)
+        : api.assign(noteId, legendDimId, paintCat.id)))
       playSound('categoryLaneAssignAll')
       setAssignments(prev => {
         const next = { ...prev }
         noteIds.forEach(noteId => {
-          next[noteId] = { ...(next[noteId] ?? {}), [legendDimId]: paintCat.id }
+          const dimensions = { ...(next[noteId] ?? {}) }
+          if (unassigning) delete dimensions[legendDimId]
+          else dimensions[legendDimId] = paintCat.id
+          next[noteId] = dimensions
         })
         return next
       })
@@ -1891,7 +1865,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   }
 
   const toggleQuickFilter = (dimId, catId) => {
-    if (!dimId || !catId || isDynamicDimensionId(dimId)) return
+    if (!dimId || !catId || dimId === FILTER_DIMENSION_ID) return
     setQuickFilters(prev => {
       const exists = prev.some(f => f.dimId === dimId && f.catId === catId)
       return exists
@@ -1959,6 +1933,15 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     }
     playSound('paintApply')
     try {
+      if (paintCat.id === COLOR_UNASSIGNED_CATEGORY_ID) {
+        await api.unassign(noteId, legendDimId)
+        setAssignments(prev => {
+          const dimensions = { ...(prev[noteId] ?? {}) }
+          delete dimensions[legendDimId]
+          return { ...prev, [noteId]: dimensions }
+        })
+        return
+      }
       await api.assign(noteId, legendDimId, paintCat.id)
       setAssignments(prev => ({ ...prev, [noteId]: { ...(prev[noteId] ?? {}), [legendDimId]: paintCat.id } }))
     } catch (e) {
@@ -2104,7 +2087,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const getNoteLegendColor = noteId => {
     if (!legendDimId) return null
     if (legendDimId === FILTER_DIMENSION_ID) {
-      const match = filterCategories.find(cat => filterMatchesNote(namedFilters.find(f => f.id === cat.filterId), noteId, assignments))
+      const match = filterCategories.find(cat => filterMatchesNote(namedFilters.find(f => f.id === cat.filterId), noteId, assignments, notes.find(note => note.id === noteId)))
       return match?.color ?? null
     }
     if (legendDimId === TIME_DIMENSION_ID) {
@@ -2122,10 +2105,10 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     .filter(Boolean)
 
   const hasActiveFiltering = activeFilters.length > 0 || quickFilters.length > 0
-  const matchesQuickFilter = note => quickFilters.some(f => assignments[note.id]?.[f.dimId] === f.catId)
+  const matchesQuickFilter = note => quickFilterMatchesNote(quickFilters, note, (id, dimensionId) => assignments[id]?.[dimensionId])
 
   const filterMatchedNotes = hasActiveFiltering
-    ? notes.filter(g => activeFilters.some(filter => filterMatchesNote(filter, g.id, assignments)) || matchesQuickFilter(g))
+    ? notes.filter(g => activeFilters.some(filter => filterMatchesNote(filter, g.id, assignments, g)) || matchesQuickFilter(g))
     : notes
   const visibleNotes = peopleVisibleNoteIds === null
     ? filterMatchedNotes
@@ -2135,7 +2118,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     const allNotesDimId = dimensionIdFromAllNotesCategoryId(catId)
     if (allNotesDimId) {
       if (allNotesDimId === FILTER_DIMENSION_ID) {
-        return visibleNotes.filter(g => namedFilters.some(filter => filterMatchesNote(filter, g.id, assignments)))
+        return visibleNotes.filter(g => namedFilters.some(filter => filterMatchesNote(filter, g.id, assignments, g)))
       }
       if (allNotesDimId === TIME_DIMENSION_ID) {
         return [...visibleNotes].sort((a, b) => noteCreatedAtMs(b) - noteCreatedAtMs(a))
@@ -2152,7 +2135,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     if (containerDimId === FILTER_DIMENSION_ID) {
       const filterId = filterIdFromCategoryId(catId)
       const filter = namedFilters.find(f => f.id === filterId)
-      return filter ? visibleNotes.filter(g => filterMatchesNote(filter, g.id, assignments)) : []
+      return filter ? visibleNotes.filter(g => filterMatchesNote(filter, g.id, assignments, g)) : []
     }
     if (containerDimId === TIME_DIMENSION_ID) {
       return visibleNotes
@@ -2164,7 +2147,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   }
   const unassignedNotes = containerDimId
     ? (containerDimId === FILTER_DIMENSION_ID
-      ? visibleNotes.filter(g => !namedFilters.some(filter => filterMatchesNote(filter, g.id, assignments)))
+      ? visibleNotes.filter(g => !namedFilters.some(filter => filterMatchesNote(filter, g.id, assignments, g)))
       : containerDimId === TIME_DIMENSION_ID
       ? []
       : visibleNotes.filter(g => !assignments[g.id]?.[containerDimId]))
@@ -2360,24 +2343,22 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
             onDelete={deletePerspective}
             onSetDefault={setClassificationDefaultPerspective}
           />
-          <LegendWidget
+          <StandardColorPicker
             dimensions={dynamicDimensions}
             categories={dynamicCategories}
-            legendDimId={legendDimId}
-            onLegend={setLegendDimId}
-            namedFilters={namedFilters}
-            activeFilterIds={activeFilterIds}
-            onToggleFilter={toggleNamedFilter}
-            onCreateFilter={() => setEditingFilter({})}
-            onEditFilter={setEditingFilter}
+            colorDimensionId={legendDimId}
+            onColorDimensionChange={setLegendDimId}
+            activeSavedFilterIds={activeFilterIds}
+            onToggleSavedFilter={toggleNamedFilter}
+            onCreateSavedFilter={() => setEditingFilter({})}
+            onEditSavedFilter={filterId => setEditingFilter(namedFilters.find(filter => filter.id === filterId))}
             quickFilters={quickFilters}
             onToggleQuickFilter={toggleQuickFilter}
-            paintCat={paintCat}
-            onPaintActivate={(catId, color) => { setPaintPersonaId(null); activatePaint(catId, color) }}
-            onEditCat={setEditCat}
-            onCreateCat={createCategory}
+            paintCategoryId={paintCat?.id}
+            onPaintCategory={(catId, color) => { setPaintPersonaId(null); activatePaint(catId, color) }}
             expanded={floatingPanel === 'color'}
             onExpandedChange={open => setFloatingPanel(open ? 'color' : null)}
+            onSwapWithCanvasDim={() => { const prev = legendDimId; setLegendDimId(containerDimId); setContainerDimId(prev) }}
           />
           <PeopleWidget
             paintPersonaId={paintPersonaId}
@@ -2428,8 +2409,8 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
       {editingFilter && (
         <FilterEditorModal
           filter={editingFilter.id ? editingFilter : null}
-          dimensions={visibleDimensions}
-          categories={categories}
+          dimensions={dynamicDimensions.filter(dimension => dimension.id !== FILTER_DIMENSION_ID)}
+          categories={dynamicCategories.filter(category => category.dimensionId !== FILTER_DIMENSION_ID)}
           onSave={saveNamedFilter}
           onDelete={deleteNamedFilter}
           onClose={() => setEditingFilter(null)}

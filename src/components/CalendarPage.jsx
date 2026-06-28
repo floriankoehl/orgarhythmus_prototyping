@@ -6,6 +6,13 @@ import PeopleWidget from './PeopleWidget'
 import PersonaAvatarStack from './PersonaAvatarStack'
 import styles from './CalendarPage.module.css'
 import { playSound } from '../sounds/sound_registry'
+import ColorPickerIcon from './ColorPickerIcon'
+import ColorPickerCategoryBadge from './ColorPickerCategoryBadge'
+import { COLOR_UNASSIGNED_CATEGORY_ID, colorPickerCategories } from './colorPickerCategories'
+import StandardColorPicker from './StandardColorPicker'
+import SavedFilterEditorModal from './SavedFilterEditorModal'
+import { FILTER_DIMENSION_ID, filterCategoryId, filterMatchesNote, normalizeSavedFilter, quickFilterMatchesNote } from './savedFilterUtils'
+import { TIME_DIMENSION_ID, TIME_DYNAMIC_CATEGORIES, timeCategoryIdForNote } from './timeCategories'
 
 const DAY_MINUTES = 24 * 60
 const DEFAULT_HOUR_HEIGHT = 54
@@ -26,7 +33,6 @@ const SCALE_OPTIONS = [
   { id: 'month', label: 'Month scale' },
 ]
 const NONE_PERSPECTIVE_ID = '__none__'
-const CALENDAR_DEFAULT_PERSPECTIVE_KEY = 'calendar.defaultPerspectiveId'
 
 function newClientId(prefix) {
   const random = window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -168,7 +174,7 @@ function PerspectiveMenu({ perspectives, activePerspectiveId, defaultPerspective
                 )}
                 <button
                   className={`${styles.perspectiveIconBtn} ${defaultPerspectiveId === perspective.id ? styles.perspectiveIconBtnActive : ''}`}
-                  title="Use as calendar default"
+                  title="Use as the Calendar default for this context"
                   onClick={() => onSetDefault(perspective.id)}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27z"/></svg>
                 </button>
@@ -674,7 +680,7 @@ function LegendDropUp({ dimensions, colorDimId, onColorDimension }) {
 }
 
 function ColorLegendWidget({ dimensions, categories, colorDimId, onColorDimension, expanded, onExpandedChange, paintCat, onPaintActivate }) {
-  const legendCats = categories.filter(cat => cat.dimensionId === colorDimId)
+  const legendCats = colorPickerCategories(categories, dimensions, colorDimId)
 
   return (
     <div className={styles.legendWidget}>
@@ -682,22 +688,17 @@ function ColorLegendWidget({ dimensions, categories, colorDimId, onColorDimensio
         <div className={styles.legendPanel} onClick={e => e.stopPropagation()}>
           <div className={styles.legendPanelHeader}>Color dimension</div>
           {!colorDimId && <div className={styles.legendEmpty}>Using schedule slot colors</div>}
-          {colorDimId && legendCats.length === 0 && <div className={styles.legendEmpty}>No categories</div>}
-          {colorDimId && (
-            <div className={styles.legendItem}>
-              <span className={styles.legendDot} style={{ background: UNASSIGNED_COLOR }} />
-              <span className={styles.legendName}>Unassigned</span>
-            </div>
-          )}
           {legendCats.map(cat => (
             <button
               key={cat.id}
               type="button"
               className={`${styles.legendItem} ${paintCat?.id === cat.id ? styles.legendItemActive : ''}`}
-              onClick={() => onPaintActivate?.(cat.id, cat.color || UNASSIGNED_COLOR)}
-              title="Paint this category onto calendar notes">
+              onClick={() => !cat.readOnly && onPaintActivate?.(cat.id, cat.color || UNASSIGNED_COLOR)}
+              disabled={cat.readOnly}
+              title={cat.readOnly ? 'Shows every note; not a paint action' : cat.unassign ? 'Remove this dimension assignment from calendar notes' : 'Paint this category onto calendar notes'}>
               <span className={styles.legendDot} style={{ background: cat.color || '#aaa' }} />
               <span className={styles.legendName}>{cat.name}</span>
+              {cat.specialLabel && <ColorPickerCategoryBadge>{cat.specialLabel}</ColorPickerCategoryBadge>}
             </button>
           ))}
           <LegendDropUp dimensions={dimensions} colorDimId={colorDimId} onColorDimension={onColorDimension} />
@@ -708,9 +709,7 @@ function ColorLegendWidget({ dimensions, categories, colorDimId, onColorDimensio
         className={`${styles.legendToggleBtn} ${expanded ? styles.legendToggleActive : ''}`}
         onClick={() => onExpandedChange(!expanded)}
         title={expanded ? 'Collapse color legend' : 'Color dimension'}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/>
-        </svg>
+        <ColorPickerIcon />
       </button>
       {!expanded && (
         <span className={styles.floatingHint}>
@@ -816,7 +815,7 @@ function SpanningEvent({ event, start, end, lane = null, onNoteOpen, paintCat, o
   )
 }
 
-export default function CalendarPage({ notes = [], project = null, isActive = false, onNoteOpen, onNoteCreated, onNoteUpdated, refreshKey = 0, peopleRefreshKey = 0, onPeopleChanged, restoreRequest = null, onRestoreConsumed, onRequestScheduleResolve, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [] }) {
+export default function CalendarPage({ notes = [], project = null, isActive = false, onNoteOpen, onNoteCreated, onNoteUpdated, refreshKey = 0, peopleRefreshKey = 0, onPeopleChanged, restoreRequest = null, onRestoreConsumed, onRequestScheduleResolve, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [], onSetContextDefaultPerspective }) {
   const dateWheelAtRef = useRef(0)
   const [view, setView] = useState('today')
   const [focusDate, setFocusDate] = useState(() => localMidnight())
@@ -826,10 +825,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   const [assignments, setAssignments] = useState({})
   const [perspectives, setPerspectives] = useState([])
   const [activePerspectiveId, setActivePerspectiveId] = useState(NONE_PERSPECTIVE_ID)
-  const [defaultPerspectiveId, setDefaultPerspectiveId] = useState(() => {
-    try { return window.localStorage.getItem(CALENDAR_DEFAULT_PERSPECTIVE_KEY) || NONE_PERSPECTIVE_ID }
-    catch { return NONE_PERSPECTIVE_ID }
-  })
+  const [defaultPerspectiveId, setDefaultPerspectiveId] = useState(NONE_PERSPECTIVE_ID)
   const appliedDefaultRef = useRef(false)
   const restoringPerspectiveRef = useRef(false)
   const [personas, setPersonas] = useState([])
@@ -841,11 +837,25 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   const [canvasDimId, setCanvasDimId] = useState('')
   const [focusedCatId, setFocusedCatId] = useState('')
   const [colorDimId, setColorDimId] = useState('')
+  const [savedFilters, setSavedFilters] = useState([])
+  const [activeFilterIds, setActiveFilterIds] = useState([])
+  const [quickFilters, setQuickFilters] = useState([])
+  const [editingFilter, setEditingFilter] = useState(null)
   const archivedDimensionSet = useMemo(() => new Set(archivedDimensionIds || []), [archivedDimensionIds])
   const visibleDimensions = useMemo(
     () => dimensions.filter(dim => !archivedDimensionSet.has(dim.id)),
     [dimensions, archivedDimensionSet]
   )
+  const filterCategories = useMemo(() => savedFilters.map((filter, index) => ({
+    id: filterCategoryId(filter.id), dimensionId: FILTER_DIMENSION_ID, name: filter.name,
+    color: filter.color || '#64748b', dynamic: true, dynamicType: 'filter', dynamicLabel: 'Filter', filterId: filter.id,
+  })), [savedFilters])
+  const timeCategories = useMemo(() => TIME_DYNAMIC_CATEGORIES.map(category => ({ ...category, dimensionId: TIME_DIMENSION_ID, dynamic: true, dynamicType: 'time', dynamicLabel: 'Time' })), [])
+  const colorDimensions = useMemo(() => [...visibleDimensions,
+    { id: FILTER_DIMENSION_ID, name: 'Filters', dynamic: true, dynamicType: 'filter', dynamicLabel: 'Filter' },
+    { id: TIME_DIMENSION_ID, name: 'Time', dynamic: true, dynamicType: 'time', dynamicLabel: 'Time' },
+  ], [visibleDimensions])
+  const colorCategories = useMemo(() => [...categories, ...filterCategories, ...timeCategories], [categories, filterCategories, timeCategories])
   const [legendOpen, setLegendOpen] = useState(false)
   const [hiddenCatIds, setHiddenCatIds] = useState(() => new Set())
   const [visibleScales, setVisibleScales] = useState(() => new Set(SCALE_OPTIONS.map(option => option.id)))
@@ -882,8 +892,9 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
       api.getDirectPersonaNoteAssignments(),
       api.getCalendarPerspectives(activeContextId),
       api.getNoteInheritance(),
+      api.getFilters(),
     ])
-      .then(([slots, dims, cats, rows, loadedPersonas, loadedPersonaAssignments, loadedPerspectives, loadedInheritance]) => {
+      .then(([slots, dims, cats, rows, loadedPersonas, loadedPersonaAssignments, loadedPerspectives, loadedInheritance, loadedFilters]) => {
         if (!alive) return
         setTimeSlots(slots || [])
         setDimensions(dims || [])
@@ -893,6 +904,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
         setPersonaNoteAssignments(loadedPersonaAssignments || [])
         setPerspectives((loadedPerspectives || []).map(normalizePerspective))
         setNoteInheritance(loadedInheritance || [])
+        setSavedFilters((loadedFilters || []).map(normalizeSavedFilter))
       })
       .catch(err => {
         console.error('Failed to load calendar data', err)
@@ -1007,8 +1019,16 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     const locationCategory = locationCatId === UNASSIGNED_CATEGORY_ID
       ? { id: UNASSIGNED_CATEGORY_ID, name: 'Unassigned', color: '#9ca3af' }
       : categoriesById.get(locationCatId)
-    const colorCatId = colorDimId ? assignments[slot.noteId]?.[colorDimId] : ''
-    const colorCategory = colorCatId ? categoriesById.get(colorCatId) : null
+    let colorCategory = null
+    if (colorDimId === FILTER_DIMENSION_ID) {
+      colorCategory = filterCategories.find(category => filterMatchesNote(savedFilters.find(filter => filter.id === category.filterId), note, (noteId, dimensionId) => assignments[noteId]?.[dimensionId])) || null
+    } else if (colorDimId === TIME_DIMENSION_ID) {
+      const categoryId = timeCategoryIdForNote(note)
+      colorCategory = timeCategories.find(category => category.id === categoryId) || null
+    } else {
+      const colorCatId = colorDimId ? assignments[slot.noteId]?.[colorDimId] : ''
+      colorCategory = colorCatId ? categoriesById.get(colorCatId) : null
+    }
     const eventColor = colorDimId
       ? (colorCategory?.color || UNASSIGNED_COLOR)
       : (slot.color || '#1a73e8')
@@ -1027,7 +1047,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
       start,
       end,
     }
-  }).sort((a, b) => a.start - b.start), [timeSlots, notesById, anchor, assignments, canvasDimId, colorDimId, categoriesById, notePersonasMap, editPreview])
+  }).sort((a, b) => a.start - b.start), [timeSlots, notesById, anchor, assignments, canvasDimId, colorDimId, categoriesById, notePersonasMap, editPreview, filterCategories, savedFilters, timeCategories])
 
   const events = useMemo(() => {
     const visibleEvents = canvasDimId
@@ -1036,8 +1056,15 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     const focusedEvents = focusedCatId
       ? visibleEvents.filter(event => event.locationCatId === focusedCatId)
       : visibleEvents
-    return focusedEvents.filter(event => visibleScales.has(event.scale))
-  }, [allEvents, focusedCatId, hiddenCatIds, canvasDimId, visibleScales])
+    const scaledEvents = focusedEvents.filter(event => visibleScales.has(event.scale))
+    const activeSavedFilters = activeFilterIds.map(id => savedFilters.find(filter => filter.id === id)).filter(Boolean)
+    if (!activeSavedFilters.length && !quickFilters.length) return scaledEvents
+    return scaledEvents.filter(event => {
+      const note = notesById.get(event.noteId)
+      const assignmentForDimension = (noteId, dimensionId) => assignments[noteId]?.[dimensionId]
+      return activeSavedFilters.some(filter => filterMatchesNote(filter, note, assignmentForDimension)) || quickFilterMatchesNote(quickFilters, note, assignmentForDimension)
+    })
+  }, [allEvents, focusedCatId, hiddenCatIds, canvasDimId, visibleScales, activeFilterIds, savedFilters, quickFilters, notesById, assignments])
 
   const toggleScale = scale => {
     setVisibleScales(prev => {
@@ -1066,6 +1093,27 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     const deactivating = paintCat?.id === catId
     playSound(deactivating ? 'paintModeDeactivate' : 'paintModeActivate')
     setPaintCat(prev => prev?.id === catId ? null : { id: catId, color: color || UNASSIGNED_COLOR })
+  }
+
+  const toggleQuickFilter = (dimensionId, categoryId) => setQuickFilters(previous => {
+    const exists = previous.some(filter => filter.dimId === dimensionId && filter.catId === categoryId)
+    return exists ? previous.filter(filter => !(filter.dimId === dimensionId && filter.catId === categoryId)) : [...previous, { dimId: dimensionId, catId: categoryId }]
+  })
+  const toggleSavedFilter = filterId => setActiveFilterIds(previous => previous.includes(filterId) ? previous.filter(id => id !== filterId) : [...previous, filterId])
+  const saveFilter = async filter => {
+    try {
+      const saved = normalizeSavedFilter(filter.id ? await api.updateFilter(filter.id, filter) : await api.createFilter(filter))
+      setSavedFilters(previous => [...previous.filter(item => item.id !== saved.id), saved].sort((a, b) => a.name.localeCompare(b.name)))
+      setEditingFilter(null)
+    } catch (error) { console.error(error) }
+  }
+  const deleteFilter = async filterId => {
+    try {
+      await api.deleteFilter(filterId)
+      setSavedFilters(previous => previous.filter(filter => filter.id !== filterId))
+      setActiveFilterIds(previous => previous.filter(id => id !== filterId))
+      setEditingFilter(null)
+    } catch (error) { console.error(error) }
   }
 
   const paintPersonaOnNote = async noteId => {
@@ -1100,6 +1148,20 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   const paintNote = async noteId => {
     if (!paintCat || !colorDimId || !noteId) return
     playSound('paintApply')
+    if (paintCat.id === COLOR_UNASSIGNED_CATEGORY_ID) {
+      setAssignments(prev => {
+        const dimensions = { ...(prev[noteId] ?? {}) }
+        delete dimensions[colorDimId]
+        return { ...prev, [noteId]: dimensions }
+      })
+      try {
+        await api.unassign(noteId, colorDimId)
+      } catch (err) {
+        console.error('Failed to unassign calendar note', err)
+        api.getAssignments().then(rows => setAssignments(assignmentMapFromRows(rows))).catch(console.error)
+      }
+      return
+    }
     setAssignments(prev => ({
       ...prev,
       [noteId]: { ...(prev[noteId] ?? {}), [colorDimId]: paintCat.id },
@@ -1137,6 +1199,8 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     focusedCatId,
     hiddenCatIds: [...hiddenCatIds],
     colorDimId,
+    activeFilterIds,
+    quickFilters,
     view,
     visibleScales: [...visibleScales],
     focusDate: dayKey(focusDate),
@@ -1155,7 +1219,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     const nextCanvasDimId = visibleDimensions.some(dimension => dimension.id === state.canvasDimId)
       ? state.canvasDimId
       : visibleDimensions[0]?.id || ''
-    const nextColorDimId = visibleDimensions.some(dimension => dimension.id === state.colorDimId)
+    const nextColorDimId = colorDimensions.some(dimension => dimension.id === state.colorDimId)
       ? state.colorDimId
       : visibleDimensions[0]?.id || ''
     const dimensionCategoryIds = new Set([
@@ -1184,6 +1248,8 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     setFocusedCatId(nextFocusedCatId)
     setHiddenCatIds(new Set(nextHiddenCatIds))
     setColorDimId(nextColorDimId)
+    setActiveFilterIds(Array.isArray(state.activeFilterIds) ? state.activeFilterIds : [])
+    setQuickFilters(Array.isArray(state.quickFilters) ? state.quickFilters : [])
     setView(VIEW_OPTIONS.some(option => option.id === state.view) ? state.view : 'today')
     setVisibleScales(new Set(nextVisibleScales))
     setFocusDate(dateFromDayKey(state.focusDate, actualToday))
@@ -1233,10 +1299,16 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     } catch (err) { console.error('Failed to rename calendar perspective', err) }
   }
 
-  const setCalendarDefaultPerspective = perspectiveId => {
+  const setCalendarDefaultPerspective = async perspectiveId => {
     const nextId = perspectiveId || NONE_PERSPECTIVE_ID
+    const previousId = defaultPerspectiveId
     setDefaultPerspectiveId(nextId)
-    try { window.localStorage.setItem(CALENDAR_DEFAULT_PERSPECTIVE_KEY, nextId) } catch {}
+    try {
+      await onSetContextDefaultPerspective?.('calendar', nextId)
+    } catch (error) {
+      setDefaultPerspectiveId(previousId)
+      console.error('Failed to update context default perspective', error)
+    }
   }
 
   useEffect(() => {
@@ -1244,7 +1316,6 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     const nextId = contextDefaultPerspectiveId || NONE_PERSPECTIVE_ID
     setDefaultPerspectiveId(nextId)
     appliedDefaultRef.current = false
-    try { window.localStorage.setItem(CALENDAR_DEFAULT_PERSPECTIVE_KEY, nextId) } catch {}
   }, [contextDefaultPerspectiveId, contextApplyToken])
 
   const deletePerspective = async perspectiveId => {
@@ -2281,15 +2352,21 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
           onDelete={deletePerspective}
           onSetDefault={setCalendarDefaultPerspective}
         />
-        <ColorLegendWidget
-          dimensions={visibleDimensions}
-          categories={categories}
-          colorDimId={colorDimId}
-          onColorDimension={setColorDimId}
+        <StandardColorPicker
+          dimensions={colorDimensions}
+          categories={colorCategories}
+          colorDimensionId={colorDimId}
+          onColorDimensionChange={setColorDimId}
           expanded={legendOpen}
           onExpandedChange={open => { setLegendOpen(open); if (open) { setPeopleOpen(false); setPerspectiveOpen(false) } }}
-          paintCat={paintCat}
-          onPaintActivate={activatePaint}
+          paintCategoryId={paintCat?.id}
+          onPaintCategory={activatePaint}
+          quickFilters={quickFilters}
+          onToggleQuickFilter={toggleQuickFilter}
+          activeSavedFilterIds={activeFilterIds}
+          onToggleSavedFilter={toggleSavedFilter}
+          onCreateSavedFilter={() => setEditingFilter({})}
+          onEditSavedFilter={filterId => setEditingFilter(savedFilters.find(filter => filter.id === filterId))}
         />
         <PeopleWidget
           paintPersonaId={paintPersonaId}
@@ -2299,6 +2376,14 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
           refreshKey={peopleRefreshKey}
         />
       </div>
+      {editingFilter && <SavedFilterEditorModal
+        filter={editingFilter}
+        dimensions={colorDimensions.filter(dimension => dimension.id !== FILTER_DIMENSION_ID)}
+        categories={colorCategories.filter(category => category.dimensionId !== FILTER_DIMENSION_ID)}
+        onSave={saveFilter}
+        onDelete={deleteFilter}
+        onClose={() => setEditingFilter(null)}
+      />}
 
       {timeSlotContextMenu && createPortal(
         <>

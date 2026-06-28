@@ -16,12 +16,6 @@ import { mergeSelectionsWithHashtags } from './categoryHashtags'
 import styles from './App.module.css'
 
 const NONE_PERSPECTIVE_ID = '__none__'
-const PERSPECTIVE_DEFAULT_KEYS = {
-  classification: 'classification.defaultPerspectiveId',
-  schedule: 'schedule.defaultPerspectiveId',
-  calendar: 'calendar.defaultPerspectiveId',
-}
-
 // ── Success toast ─────────────────────────────────────────────────────────────
 function Toast({ toast, onOpen, onDismiss }) {
   const [leaving, setLeaving] = useState(false)
@@ -98,10 +92,17 @@ export default function App() {
       schedule: state?.schedulePerspectiveId || NONE_PERSPECTIVE_ID,
       calendar: state?.calendarPerspectiveId || NONE_PERSPECTIVE_ID,
     }
-    Object.entries(defaults).forEach(([page, perspectiveId]) => {
-      try { window.localStorage.setItem(PERSPECTIVE_DEFAULT_KEYS[page], perspectiveId) } catch {}
-    })
     setContextDefaults({ ...defaults, token: crypto.randomUUID() })
+  }
+
+  const setContextDefaultPerspective = async (page, perspectiveId) => {
+    if (!activeContextId) throw new Error('No active context')
+    const stateKey = `${page}PerspectiveId`
+    const nextState = { ...activeContextState, [stateKey]: perspectiveId || NONE_PERSPECTIVE_ID }
+    const saved = await api.updateProjectContext(activeContextId, { state: nextState })
+    setActiveContextState(saved.state || nextState)
+    setContextDefaults(previous => ({ ...previous, [page]: nextState[stateKey] }))
+    return saved
   }
 
   useEffect(() => {
@@ -302,6 +303,7 @@ export default function App() {
         projectName={activeProject.name} onBack={backToHome}
         notes={notes} onNoteOpen={openNotePopup}
         activeContextId={activeContextId}
+        activeContextState={activeContextState}
         onApplyContext={applyProjectContext}
       />
 
@@ -336,6 +338,7 @@ export default function App() {
             contextApplyToken={contextDefaults.token}
             activeContextId={activeContextId}
             archivedDimensionIds={activeContextState.archivedDimensionIds || []}
+            onSetContextDefaultPerspective={setContextDefaultPerspective}
           />
         </div>
         <div className={styles.view} style={{ display: view === 3 ? 'flex' : 'none' }}>
@@ -358,6 +361,7 @@ export default function App() {
             contextApplyToken={contextDefaults.token}
             activeContextId={activeContextId}
             archivedDimensionIds={activeContextState.archivedDimensionIds || []}
+            onSetContextDefaultPerspective={setContextDefaultPerspective}
           />
         </div>
         <div className={styles.view} style={{ display: view === 4 ? 'flex' : 'none' }}>
@@ -388,6 +392,7 @@ export default function App() {
             contextApplyToken={contextDefaults.token}
             activeContextId={activeContextId}
             archivedDimensionIds={activeContextState.archivedDimensionIds || []}
+            onSetContextDefaultPerspective={setContextDefaultPerspective}
           />
         </div>
       </div>

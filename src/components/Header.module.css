@@ -602,6 +602,93 @@
   color: #1a73e8;
 }
 
+.quickAddCloseBtn {
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  color: #94a3b8;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font: 700 19px/1 Arial, sans-serif;
+}
+
+.quickAddCloseBtn:hover {
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+.quickAddDefaults {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 8px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 7px;
+}
+
+.quickAddDefaultsActive {
+  background: #f5f8ff;
+  border-color: #cdddf7;
+}
+
+.quickAddDefaultsLabel {
+  color: #64748b;
+  font: 900 9px Arial, sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.quickAddDefaultChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.quickAddDefaultChip {
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 5px 4px 6px;
+  color: #475569;
+  background: #fff;
+  border: 1px solid #dbe4ef;
+  border-radius: 999px;
+  font: 700 10px Arial, sans-serif;
+}
+
+.quickAddDefaultChip i {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+
+.quickAddDefaultChip strong { color: #1e293b; }
+.quickAddDefaultChip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.quickAddDefaultChip button {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  color: #94a3b8;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  font: 700 13px/1 Arial, sans-serif;
+}
+
+.quickAddDefaultChip button:hover { color: #dc2626; background: #fef2f2; }
+
+.quickAddDefaultsEmpty {
+  color: #94a3b8;
+  font: 11px Arial, sans-serif;
+}
+
 .quickAddTitleInput {
   width: 100%;
   box-sizing: border-box;

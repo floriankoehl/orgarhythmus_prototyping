@@ -40,7 +40,7 @@ function computeWordRects(el) {
   return result
 }
 
-export default function Header({ view, onNavigate, onQuickAdd, projectName, onBack, notes = [], onNoteOpen, activeContextId = '', onApplyContext }) {
+export default function Header({ view, onNavigate, onQuickAdd, projectName, onBack, notes = [], onNoteOpen, activeContextId = '', activeContextState = {}, onApplyContext }) {
   // quick-add state
   const [open, setOpen]               = useState(false)
   const [titleVal, setTitleVal]       = useState('')
@@ -96,12 +96,28 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
     if (projectName) ensureContextData()
   }, [projectName]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!activeContextId) return
+    setContexts(previous => previous.map(context => context.id === activeContextId
+      ? { ...context, state: activeContextState }
+      : context))
+  }, [activeContextId, activeContextState])
+
   const closePopup = () => {
     setOpen(false); setTitleVal(''); setTitleManual(false)
     setHeadlineMode(false); setWordRects([])
     setCategorySelections({})
     setCategoryPickerOpen(false)
     if (editorRef.current) editorRef.current.innerHTML = ''
+  }
+
+  const resetQuickAddDraft = () => {
+    setTitleVal('')
+    setTitleManual(false)
+    setHeadlineMode(false)
+    setWordRects([])
+    if (editorRef.current) editorRef.current.innerHTML = ''
+    window.setTimeout(() => editorRef.current?.focus(), 0)
   }
 
   const ensureCategoryData = () => {
@@ -128,30 +144,13 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
     titleInputRef.current?.focus()
   }
 
-  const hasDraft = () => {
-    const desc = editorRef.current?.innerText?.trim() || ''
-    return Boolean(desc || titleVal.trim())
-  }
-
   const submit = () => {
     const desc = editorRef.current?.innerText?.trim() || ''
     if (!desc && !titleVal.trim()) return
     playSound('noteQuickAddSubmit')
     onQuickAdd?.(desc, titleVal.trim() || null, mergeSelectionsWithHashtags(categorySelections, desc, categories))
-    closePopup()
+    resetQuickAddDraft()
   }
-
-  useEffect(() => {
-    if (!open) return
-    const handler = e => {
-      if (wrapRef.current?.contains(e.target)) return
-      if (categoryPickerOpen) return
-      if (hasDraft()) submit()
-      else closePopup()
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open, categoryPickerOpen, titleVal, categorySelections]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!searchOpen) return
@@ -235,26 +234,40 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
     archivedDimensionIds: contextChoices.archivedDimensionIds || [],
   })
 
-  const applyContext = context => {
+  const applyContext = async (context, { refreshList = true } = {}) => {
+    if (!context) return
     playSound('perspectiveLoad')
-    onApplyContext?.(context)
+    let nextContext = context
+    if (refreshList) {
+      try {
+        const loadedContexts = await api.getProjectContexts()
+        if (Array.isArray(loadedContexts) && loadedContexts.length) {
+          setContexts(loadedContexts)
+          nextContext = loadedContexts.find(item => item.id === context.id) || context
+        }
+      } catch (err) {
+        console.error('Failed to refresh contexts before apply', err)
+      }
+    }
+    onApplyContext?.(nextContext)
     setContextOpen(false)
   }
 
-  const selectAdjacentContext = direction => {
-    if (!contexts.length) return
-    const currentClassification = window.localStorage.getItem('classification.defaultPerspectiveId') || NONE_PERSPECTIVE_ID
-    const currentSchedule = window.localStorage.getItem('schedule.defaultPerspectiveId') || NONE_PERSPECTIVE_ID
-    const currentCalendar = window.localStorage.getItem('calendar.defaultPerspectiveId') || NONE_PERSPECTIVE_ID
-    const currentIndex = Math.max(0, contexts.findIndex(context => (
-      activeContextId
-        ? context.id === activeContextId
-        : (context.state?.classificationPerspectiveId || NONE_PERSPECTIVE_ID) === currentClassification
-          && (context.state?.schedulePerspectiveId || NONE_PERSPECTIVE_ID) === currentSchedule
-          && (context.state?.calendarPerspectiveId || NONE_PERSPECTIVE_ID) === currentCalendar
-    )))
-    const nextContext = contexts[(currentIndex + direction + contexts.length) % contexts.length]
-    if (nextContext) applyContext(nextContext)
+  const selectAdjacentContext = async direction => {
+    let sourceContexts = contexts
+    try {
+      const loadedContexts = await api.getProjectContexts()
+      if (Array.isArray(loadedContexts) && loadedContexts.length) {
+        sourceContexts = loadedContexts
+        setContexts(loadedContexts)
+      }
+    } catch (err) {
+      console.error('Failed to refresh contexts for cycling', err)
+    }
+    if (!sourceContexts.length) return
+    const currentIndex = Math.max(0, sourceContexts.findIndex(context => context.id === activeContextId))
+    const nextContext = sourceContexts[(currentIndex + direction + sourceContexts.length) % sourceContexts.length]
+    if (nextContext) applyContext(nextContext, { refreshList: false })
   }
 
   const cycleContext = event => {
@@ -394,6 +407,11 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
   }
 
   const activeContextName = contexts.find(context => context.id === activeContextId)?.name || 'Context'
+  const quickAddCategoryDefaults = dimensions.flatMap(dimension => {
+    const categoryId = categorySelections[dimension.id]
+    const category = categories.find(item => item.id === categoryId)
+    return category ? [{ dimension, category }] : []
+  })
 
   return (
     <header className={styles.header}>
@@ -606,7 +624,11 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
 
       {/* Quick-add button */}
       {view !== 1 && <div ref={wrapRef} className={styles.quickAddWrap}>
-        <button className={styles.quickAddBtn} onClick={() => { playSound(!open ? 'noteQuickAddOpen' : 'collapseToggle'); setOpen(o => !o) }} title="Quick add note">
+        <button className={styles.quickAddBtn} onClick={() => {
+          playSound(!open ? 'noteQuickAddOpen' : 'collapseToggle')
+          if (open) closePopup()
+          else setOpen(true)
+        }} title={open ? 'Close quick add session' : 'Quick add note'}>
           <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
             <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.5"/>
             <path d="M5 8h6M5 5.5h4M5 10.5h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
@@ -626,8 +648,42 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
               <button
                 className={styles.quickAddHdrBtn}
                 onClick={() => { ensureCategoryData(); setCategoryPickerOpen(true) }}>
-                Categories
+                Categories{quickAddCategoryDefaults.length ? ` (${quickAddCategoryDefaults.length})` : ''}
               </button>
+              <button
+                type="button"
+                className={styles.quickAddCloseBtn}
+                onClick={closePopup}
+                title="Close quick add session"
+                aria-label="Close quick add session">
+                ×
+              </button>
+            </div>
+
+            <div className={`${styles.quickAddDefaults} ${quickAddCategoryDefaults.length ? styles.quickAddDefaultsActive : ''}`}>
+              <span className={styles.quickAddDefaultsLabel}>Applied to every new note</span>
+              <div className={styles.quickAddDefaultChips}>
+                {quickAddCategoryDefaults.length ? quickAddCategoryDefaults.map(({ dimension, category }) => (
+                  <span key={dimension.id} className={styles.quickAddDefaultChip}>
+                    <i style={{ background: category.color || '#94a3b8' }} />
+                    <strong>{dimension.name}</strong>
+                    <span>{category.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => setCategorySelections(previous => {
+                        const next = { ...previous }
+                        delete next[dimension.id]
+                        return next
+                      })}
+                      title={`Remove ${category.name}`}
+                      aria-label={`Remove ${category.name} from quick-add defaults`}>
+                      ×
+                    </button>
+                  </span>
+                )) : (
+                  <span className={styles.quickAddDefaultsEmpty}>No default categories selected</span>
+                )}
+              </div>
             </div>
 
             <input
@@ -672,7 +728,7 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
             </div>
 
             <div className={styles.quickAddBottomRow}>
-              <p className={styles.quickAddHint}>Enter to add · click away saves · Esc to close</p>
+              <p className={styles.quickAddHint}>Enter to add another · categories stay selected · Esc closes</p>
               <button className={styles.quickAddSubmit} onClick={submit}>Add</button>
             </div>
             <CategoryAssignmentPicker

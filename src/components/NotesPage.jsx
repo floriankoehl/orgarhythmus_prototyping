@@ -10,6 +10,9 @@ import { usePersonaCursor } from '../hooks/usePersonaCursor'
 import { categoryMatchesForHashtags, mergeSelectionsWithHashtags } from '../categoryHashtags'
 import { useProgressiveNoteSearch } from '../useProgressiveNoteSearch'
 import { playSound } from '../sounds/sound_registry'
+import ColorPickerIcon from './ColorPickerIcon'
+import ColorPickerCategoryBadge from './ColorPickerCategoryBadge'
+import { COLOR_UNASSIGNED_CATEGORY_ID, colorPickerCategories } from './colorPickerCategories'
 
 const DRIFT_VARIANTS = 6
 
@@ -34,18 +37,6 @@ function stripHtml(html) {
     .replace(/&amp;/g, '&')
     .replace(/\n{4,}/g, '\n\n\n')
     .trim()
-}
-
-function PaletteIcon({ size = 11 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" stroke="none"/>
-      <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" stroke="none"/>
-      <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" stroke="none"/>
-      <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" stroke="none"/>
-      <path d="M12 22a10 10 0 1 1 10-10c0 2.2-1.8 4-4 4h-1.5a2 2 0 0 0-1.7 3l.2.4A1.8 1.8 0 0 1 13.4 22H12z"/>
-    </svg>
-  )
 }
 
 function computeWordRects(el) {
@@ -410,7 +401,7 @@ function NotesColorLegendWidget({
   expanded,
   onExpandedChange,
 }) {
-  const legendCats = categories.filter(c => c.dimensionId === colorDimId)
+  const legendCats = colorPickerCategories(categories, dimensions, colorDimId)
   return (
     <div className={styles.legendWidget} onClick={e => e.stopPropagation()}>
       {expanded && (
@@ -422,13 +413,15 @@ function NotesColorLegendWidget({
             >
               <button
                 className={styles.legendPaintArea}
-                onClick={() => onPaintActivate(cat.id, cat.color)}
-                title="Click notes to assign this category"
+                onClick={() => !cat.readOnly && onPaintActivate(cat.id, cat.color)}
+                disabled={cat.readOnly}
+                title={cat.readOnly ? 'Shows every note; not a paint action' : cat.unassign ? 'Click notes to remove this dimension assignment' : 'Click notes to assign this category'}
               >
                 <span className={styles.legendDot} style={{ background: cat.color }} />
                 <span className={styles.legendName}>{cat.name}</span>
+                {cat.specialLabel && <ColorPickerCategoryBadge>{cat.specialLabel}</ColorPickerCategoryBadge>}
               </button>
-              <button
+              {!cat.colorPickerSpecial && <button
                 className={styles.legendApplyAllBtn}
                 onClick={() => onApplyToAll(cat.id)}
                 title="Apply to all canvas notes"
@@ -437,8 +430,8 @@ function NotesColorLegendWidget({
                   <polyline points="9 11 12 14 22 4"/>
                   <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
                 </svg>
-              </button>
-              <button
+              </button>}
+              {!cat.colorPickerSpecial && <button
                 className={styles.legendExpandBtn}
                 onClick={() => onExpandCategory(cat.id)}
                 disabled={(categoryNoteCounts[cat.id] ?? 0) === 0}
@@ -454,7 +447,7 @@ function NotesColorLegendWidget({
                   <path d="M3 21l7-7" />
                   <path d="M21 21l-7-7" />
                 </svg>
-              </button>
+              </button>}
             </div>
           ))}
           {colorDimId && legendCats.length === 0 && (
@@ -476,7 +469,7 @@ function NotesColorLegendWidget({
         onClick={() => onExpandedChange(!expanded)}
         title={expanded ? 'Collapse legend' : 'Color legend'}
       >
-        <PaletteIcon size={16} />
+        <ColorPickerIcon />
       </button>
       {!expanded && (
         <span className={styles.floatingHint}>
@@ -723,6 +716,11 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     if (!paintCat || !colorDimId) return
     playSound('paintApply')
     try {
+      if (paintCat.id === COLOR_UNASSIGNED_CATEGORY_ID) {
+        await api.unassign(noteId, colorDimId)
+        setAllAssignments(prev => prev.filter(a => !(a.noteId === noteId && a.dimensionId === colorDimId)))
+        return
+      }
       await api.assign(noteId, colorDimId, paintCat.id)
       setAllAssignments(prev => [
         ...prev.filter(a => !(a.noteId === noteId && a.dimensionId === colorDimId)),

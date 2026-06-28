@@ -8,6 +8,13 @@ import PersonaAvatarStack from './PersonaAvatarStack'
 import { useConfirmDialog } from './ConfirmDialog'
 import { usePersonaCursor } from '../hooks/usePersonaCursor'
 import { playSound } from '../sounds/sound_registry'
+import ColorPickerIcon from './ColorPickerIcon'
+import ColorPickerCategoryBadge from './ColorPickerCategoryBadge'
+import { COLOR_UNASSIGNED_CATEGORY_ID, colorPickerCategories } from './colorPickerCategories'
+import FilterDimensionSelector from './FilterDimensionSelector'
+import StandardColorPicker from './StandardColorPicker'
+import { filterMatchesNote as matchesSavedFilter, quickFilterMatchesNote } from './savedFilterUtils'
+import { TIME_DIMENSION_ID, TIME_DYNAMIC_CATEGORIES, timeCategoryIdForNote } from './timeCategories'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const HEADER_H     = 64
@@ -24,6 +31,7 @@ const DEFAULT_SPACING = { colW: 110, rowH: 36, rowGap: 0, laneGap: 28 }
 const COL_WIDTH_MIN = 20
 const MINUTE_COL_WIDTH_MIN = 8
 const COL_WIDTH_MAX = 250
+const DEFAULT_COL_WIDTH_BY_ZOOM = { minutes: 40, days: 110, months: 110 }
 const INIT_TOTAL_COLS = 60    // initial column count; grows to cover viewport + buffer on mount
 const EDGE_COLS       = 5     // columns from right edge before extending
 
@@ -31,7 +39,6 @@ const MONTH_ABR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','
 const FILTER_DIMENSION_ID = '__filters__'
 const FILTER_CATEGORY_PREFIX = 'filter:'
 const NONE_PERSPECTIVE_ID = '__none__'
-const SCHEDULE_DEFAULT_PERSPECTIVE_KEY = 'schedule.defaultPerspectiveId'
 
 const TIME_ZOOM_LEVELS = [
   { value: 'minutes', label: '10 min', short: '10m', unit: 10 },
@@ -110,6 +117,14 @@ function normalizeAxisMode(value) {
   return value === 'numbers' || value === 'none' ? value : 'full'
 }
 
+function normalizeColWidthByZoom(raw = {}) {
+  return {
+    minutes: Math.max(MINUTE_COL_WIDTH_MIN, Math.min(COL_WIDTH_MAX, Number(raw?.minutes) || DEFAULT_COL_WIDTH_BY_ZOOM.minutes)),
+    days:    Math.max(COL_WIDTH_MIN,        Math.min(COL_WIDTH_MAX, Number(raw?.days)    || DEFAULT_COL_WIDTH_BY_ZOOM.days)),
+    months:  Math.max(COL_WIDTH_MIN,        Math.min(COL_WIDTH_MAX, Number(raw?.months)  || DEFAULT_COL_WIDTH_BY_ZOOM.months)),
+  }
+}
+
 function normalizeSchedulePerspectiveState(rawState = {}) {
   const state = rawState && typeof rawState === 'object' ? rawState : {}
   const timeZoom = normalizePerspectiveTimeZoom(state)
@@ -143,6 +158,7 @@ function normalizeSchedulePerspectiveState(rawState = {}) {
     timeSlotScaleFilter: visibilityMode,
     scaleVisibilityMode: visibilityMode,
     spacing,
+    colWidthByZoom: normalizeColWidthByZoom(state.colWidthByZoom ?? {}),
     leftPanelWidth: typeof state.leftPanelWidth === 'number'
       ? Math.max(120, Math.min(600, state.leftPanelWidth))
       : 220,
@@ -252,12 +268,8 @@ function makeColorCursor(color) {
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, crosshair`
 }
 
-function filterMatchesNote(filter, noteId, assignments) {
-  if (!filter) return false
-  const entries = Object.entries(filter.selections ?? {}).filter(([, catIds]) => catIds.length > 0)
-  if (entries.length === 0) return false
-  const matchesDim = ([dimId, catIds]) => catIds.includes(assignments[noteId]?.[dimId])
-  return filter.gate === 'OR' ? entries.some(matchesDim) : entries.every(matchesDim)
+function filterMatchesNote(filter, noteId, assignments, note = null) {
+  return matchesSavedFilter(filter, note, (id, dimensionId) => assignments[id]?.[dimensionId])
 }
 
 function filterCategoryId(filterId) {
@@ -750,8 +762,8 @@ function buildRowItems(notes, categories, assignments, assignmentOrders, activeD
   // Filter-as-lane: two lanes — notes matching the filter, and the rest
   if (filterAsLane) {
     const matchCat   = { id: filterAsLane.id, name: filterAsLane.name, color: filterAsLane.color }
-    const matchNotes = notes.filter(g => filterMatchesNote(filterAsLane, g.id, assignments))
-    const otherNotes = notes.filter(g => !filterMatchesNote(filterAsLane, g.id, assignments))
+    const matchNotes = notes.filter(g => filterMatchesNote(filterAsLane, g.id, assignments, g))
+    const otherNotes = notes.filter(g => !filterMatchesNote(filterAsLane, g.id, assignments, g))
     const items = []; let top = 0
     const addFilterLane = (cat, laneNotes, key, first) => {
       const hiddenNoteIds = hiddenNotesByLane[key] ?? new Set()
@@ -815,6 +827,7 @@ function buildRowItems(notes, categories, assignments, assignmentOrders, activeD
 function SpacingPanel({
   spacing, onChange, onClose, anchorRef, axisMode, onAxisModeChange,
   timeZoom, onTimeZoomChange,
+  colWidthByZoom, onColWidthByZoomChange,
   showDepLabels, onShowDepLabelsChange,
   showDeps, onShowDepsChange,
   hideCrossCatDeps, onHideCrossCatDepsChange,
@@ -841,7 +854,6 @@ function SpacingPanel({
 
   const set = (key, val) => onChange({ ...spacing, [key]: +val })
   const rows = [
-    ['colW',    'Column width', minColWidthForZoom(timeZoom), 250, 'px'],
     ['rowH',    'Row height',   20,  80, 'px'],
     ['laneGap', 'Lane gap',      8,  80, 'px'],
   ]
@@ -850,6 +862,19 @@ function SpacingPanel({
       <div className={styles.spacingPanelHdr}>
         <span>Visual settings</span>
         <button className={styles.spacingClose} onClick={onClose}>✕</button>
+      </div>
+      <div className={styles.colWidthGroup}>
+        <span className={styles.spacingGroupLabel}>Column width</span>
+        {TIME_ZOOM_LEVELS.map(level => (
+          <label key={level.value} className={`${styles.spacingRow} ${timeZoom === level.value ? styles.spacingRowActive : ''}`}>
+            <span className={styles.spacingZoomTag}>{level.label}</span>
+            <input type="range" className={styles.spacingSlider}
+              min={minColWidthForZoom(level.value)} max={COL_WIDTH_MAX}
+              value={colWidthByZoom?.[level.value] ?? DEFAULT_COL_WIDTH_BY_ZOOM[level.value]}
+              onChange={e => onColWidthByZoomChange(level.value, +e.target.value)} />
+            <span className={styles.spacingVal}>{colWidthByZoom?.[level.value] ?? DEFAULT_COL_WIDTH_BY_ZOOM[level.value]}px</span>
+          </label>
+        ))}
       </div>
       {rows.map(([key, label, min, max, unit]) => (
         <label key={key} className={styles.spacingRow}>
@@ -1657,6 +1682,7 @@ function GanttToolbar({
   categories, onToggleCategory, onShowAllCategories, onShowOnlyCategory,
   savedFilters, activeLaneFilterId, onLaneGroupChange,
   spacing, onSpacingChange,
+  colWidthByZoom, onColWidthByZoomChange,
   axisMode, onAxisModeChange,
   timeZoom, onTimeZoomChange,
   showDepLabels, onShowDepLabelsChange,
@@ -1760,6 +1786,7 @@ function GanttToolbar({
             onClose={closeSettings} anchorRef={settingsBtnRef}
             axisMode={axisMode} onAxisModeChange={onAxisModeChange}
             timeZoom={timeZoom} onTimeZoomChange={onTimeZoomChange}
+            colWidthByZoom={colWidthByZoom} onColWidthByZoomChange={onColWidthByZoomChange}
             showDepLabels={showDepLabels} onShowDepLabelsChange={onShowDepLabelsChange}
             showDeps={showDeps} onShowDepsChange={onShowDepsChange}
             hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={onHideCrossCatDepsChange}
@@ -1911,31 +1938,13 @@ function ScheduleFilterEditorModal({ filter, dimensions, categories, onSave, onD
           </div>
         </div>
 
-        <div className={styles.filterDimList}>
-          {dimensions.map(dim => {
-            const dimCats = categories.filter(c => c.dimensionId === dim.id)
-            return (
-              <section key={dim.id} className={styles.filterDimSection}>
-                <div className={styles.filterDimTitle}>{dim.name}</div>
-                <div className={styles.filterCatGrid}>
-                  {dimCats.length === 0 ? (
-                    <span className={styles.filterEmpty}>No categories</span>
-                  ) : dimCats.map(cat => (
-                    <label key={cat.id} className={styles.filterCatOption}>
-                      <input
-                        type="checkbox"
-                        checked={(selections[dim.id] ?? []).includes(cat.id)}
-                        onChange={() => toggleCat(dim.id, cat.id)}
-                      />
-                      <span className={styles.legendDot} style={{ background: cat.color }} />
-                      <span>{cat.name}</span>
-                    </label>
-                  ))}
-                </div>
-              </section>
-            )
-          })}
-        </div>
+        <FilterDimensionSelector
+          dimensions={dimensions}
+          categories={categories}
+          selections={selections}
+          onToggle={toggleCat}
+          styles={styles}
+        />
 
         <div className={styles.modalActions}>
           {isEdit && <button className={styles.dangerBtn} onClick={() => onDelete(filter.id)}>Delete</button>}
@@ -2105,7 +2114,7 @@ function PerspectiveMenu({ perspectives, activePerspectiveId, defaultPerspective
                 )}
                 <button
                   className={`${styles.perspectiveIconBtn} ${defaultPerspectiveId === p.id ? styles.perspectiveIconBtnActive : ''}`}
-                  title="Use as schedule default"
+                  title="Use as the Schedule default for this context"
                   onClick={() => onSetDefault(p.id)}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27z"/>
@@ -2133,28 +2142,34 @@ function ScheduleColorLegendWidget({
   activeFilterIds, onToggleSavedFilter, quickFilters, onToggleQuickFilter, onEditFilter, paintCat, onPaintActivate,
   expanded, onExpandedChange,
 }) {
-  const legendCats = categories.filter(c => c.dimensionId === colorDimId)
+  const legendCats = colorPickerCategories(categories, dimensions, colorDimId)
 
   return (
     <div className={styles.legendWidget}>
       {expanded && (
         <div className={styles.legendPanel}>
-          {legendCats.map(cat => (
-            <div key={cat.id}
+          {legendCats.map(cat => {
+            const isSavedFilter = cat.dynamicType === 'filter'
+            const quickFilterActive = quickFilters.some(filter => filter.dimId === colorDimId && filter.catId === cat.id)
+            return <div key={cat.id}
               className={[
                 styles.legendItem,
                 cat.dynamic && styles.dynamicLegendItem,
-                (cat.dynamic ? activeFilterIds.includes(cat.filterId) : paintCat?.id === cat.id) && styles.legendItemActive,
+                (cat.colorPickerSpecial ? paintCat?.id === cat.id : isSavedFilter ? activeFilterIds.includes(cat.filterId) : cat.dynamic ? quickFilterActive : paintCat?.id === cat.id) && styles.legendItemActive,
               ].filter(Boolean).join(' ')}
               onClick={e => {
                 e.stopPropagation()
-                if (cat.dynamic) onToggleSavedFilter(cat.filterId)
-                else onPaintActivate(cat.id, cat.color)
+                if (cat.readOnly) return
+                if (cat.unassign) onPaintActivate(cat.id, cat.color)
+                else if (isSavedFilter) onToggleSavedFilter(cat.filterId)
+                else if (!cat.dynamic) onPaintActivate(cat.id, cat.color)
               }}>
               <span className={styles.legendDot} style={{ background: cat.color }} />
               <span className={styles.legendName}>{cat.name}</span>
-              {cat.dynamic && <span className={styles.dynamicBadge}>Filter</span>}
-              {cat.dynamic ? (
+              {cat.dynamic && <span className={styles.dynamicBadge}>{cat.dynamicType === 'time' ? 'Time' : 'Filter'}</span>}
+              {cat.colorPickerSpecial ? (
+                <ColorPickerCategoryBadge>{cat.specialLabel}</ColorPickerCategoryBadge>
+              ) : isSavedFilter ? (
                 <button
                   className={`${styles.legendPaintBtn} ${activeFilterIds.includes(cat.filterId) ? styles.legendPaintBtnActive : ''}`}
                   title="Edit filter"
@@ -2166,7 +2181,7 @@ function ScheduleColorLegendWidget({
                 </button>
               ) : (
                 <button
-                  className={`${styles.legendPaintBtn} ${quickFilters.some(f => f.dimId === colorDimId && f.catId === cat.id) ? styles.legendPaintBtnActive : ''}`}
+                  className={`${styles.legendPaintBtn} ${quickFilterActive ? styles.legendPaintBtnActive : ''}`}
                   title="Quick filter notes by this category"
                   onClick={e => { e.stopPropagation(); onToggleQuickFilter(colorDimId, cat.id) }}
                   onDoubleClick={e => e.stopPropagation()}>
@@ -2176,7 +2191,7 @@ function ScheduleColorLegendWidget({
                 </button>
               )}
             </div>
-          ))}
+          })}
           {colorDimId && legendCats.length === 0 && (
             <div className={styles.legendEmpty}>No categories</div>
           )}
@@ -2195,9 +2210,7 @@ function ScheduleColorLegendWidget({
         className={`${styles.legendToggleBtn} ${expanded ? styles.legendToggleActive : ''}`}
         onClick={() => onExpandedChange(!expanded)}
         title={expanded ? 'Collapse legend' : 'Color legend'}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/>
-        </svg>
+        <ColorPickerIcon />
       </button>
       {!expanded && (
         <span className={styles.floatingHint}>
@@ -2210,7 +2223,7 @@ function ScheduleColorLegendWidget({
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, externalResolveRequest = null, onExternalResolveReturn, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [] }) {
+export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, externalResolveRequest = null, onExternalResolveReturn, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [], onSetContextDefaultPerspective }) {
   // ── Timeline anchor ────────────────────────────────────────────────────────
   // Keep the module-level anchor in sync with the project's creation date so that
   // col 0 = project creation date (fixed, immutable left boundary of the timeline).
@@ -2260,10 +2273,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [savedFilters, setSavedFilters] = useState([])
   const [perspectives, setPerspectives] = useState([])
   const [activePerspectiveId, setActivePerspectiveId] = useState(NONE_PERSPECTIVE_ID)
-  const [defaultPerspectiveId, setDefaultPerspectiveId] = useState(() => {
-    try { return window.localStorage.getItem(SCHEDULE_DEFAULT_PERSPECTIVE_KEY) || NONE_PERSPECTIVE_ID }
-    catch { return NONE_PERSPECTIVE_ID }
-  })
+  const [defaultPerspectiveId, setDefaultPerspectiveId] = useState(NONE_PERSPECTIVE_ID)
   const appliedDefaultRef = useRef(false)
   const [editingFilter, setEditingFilter] = useState(null)
   const [drawingState, setDrawingState] = useState(null)  // { fromId } while drawing
@@ -2478,6 +2488,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const personaCursor = usePersonaCursor(activePersona)
   const [floatingPanel, setFloatingPanel] = useState(null)
   const [spacing,     setSpacing]     = useState(DEFAULT_SPACING)
+  const [colWidthByZoom, setColWidthByZoom] = useState(DEFAULT_COL_WIDTH_BY_ZOOM)
   const [hiddenCatIds, setHiddenCatIds] = useState(new Set())
   const [hiddenNotesByLane, setHiddenNotesByLane] = useState({})
   const [revealedConflictNoteIds, setRevealedConflictNoteIds] = useState(new Set())
@@ -2734,7 +2745,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       const next = new Set(prev)
       noteIds.forEach(noteId => {
         if (activeLaneFilter) {
-          if (filterMatchesNote(activeLaneFilter, noteId, assignments)) next.delete(activeLaneFilter.id)
+          if (filterMatchesNote(activeLaneFilter, noteId, assignments, notes.find(note => note.id === noteId))) next.delete(activeLaneFilter.id)
         } else if (activeDimId) {
           const catId = assignments[noteId]?.[activeDimId]
           if (catId) next.delete(catId)
@@ -2744,7 +2755,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     })
     if (colorDimId && colorDimId !== FILTER_DIMENSION_ID) {
       const colorFilterAdds = noteIds
-        .map(noteId => assignments[noteId]?.[colorDimId])
+        .map(noteId => colorDimId === TIME_DIMENSION_ID
+          ? timeCategoryIdForNote(notes.find(note => note.id === noteId))
+          : assignments[noteId]?.[colorDimId])
         .filter(Boolean)
       if (colorFilterAdds.length > 0) {
         setQuickFilters(prev => {
@@ -2775,7 +2788,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     window.setTimeout(() => setBlinkingTimeSlotIds(new Set()), 3000)
     setSelectedDepIds(new Set())
     setSelectedIds(idSet)
-  }, [activeDimId, activeLaneFilter, assignments, colorDimId])
+  }, [activeDimId, activeLaneFilter, assignments, colorDimId, notes])
 
   const toggleSavedFilter = useCallback(filterId => {
     setActiveFilterIds(prev => prev.includes(filterId) ? prev.filter(id => id !== filterId) : [...prev, filterId])
@@ -2836,8 +2849,17 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         .catch(console.error)
       return
     }
-    if (!paintCat || !colorDimId || colorDimId === FILTER_DIMENSION_ID) return
+    if (!paintCat || !colorDimId || colorDimId === FILTER_DIMENSION_ID || colorDimId === TIME_DIMENSION_ID) return
     try {
+      if (paintCat.id === COLOR_UNASSIGNED_CATEGORY_ID) {
+        await api.unassign(noteId, colorDimId)
+        setAssignments(prev => {
+          const dimensions = { ...(prev[noteId] ?? {}) }
+          delete dimensions[colorDimId]
+          return { ...prev, [noteId]: dimensions }
+        })
+        return
+      }
       await api.assign(noteId, colorDimId, paintCat.id)
       setAssignments(prev => ({ ...prev, [noteId]: { ...(prev[noteId] ?? {}), [colorDimId]: paintCat.id } }))
     } catch (err) { console.error(err) }
@@ -2947,6 +2969,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const vpRef           = useRef({ w: 0, h: 0 })
   const spacingRef      = useRef(spacing)
   const timeZoomRef     = useRef(timeZoom)
+  const colWidthByZoomRef = useRef(colWidthByZoom)
   const totalColsRef    = useRef(INIT_TOTAL_COLS)
   const rafIdRef          = useRef(null)         // requestAnimationFrame id
   const gridInnerRef      = useRef(null)         // for synchronous width update during extension
@@ -2970,6 +2993,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   // Keep imperative refs in sync with state (assigned synchronously in render)
   spacingRef.current       = spacing
   timeZoomRef.current      = timeZoom
+  colWidthByZoomRef.current = colWidthByZoom
   totalColsRef.current     = totalCols
   dependenciesRef.current  = dependencies
   deadlinesRef.current       = effectiveDeadlines
@@ -3249,17 +3273,31 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       name: filter.name,
       color: filter.color || '#64748b',
       dynamic: true,
+      dynamicType: 'filter',
       filterId: filter.id,
     })),
     [savedFilters]
   )
+  const timeCategories = useMemo(
+    () => TIME_DYNAMIC_CATEGORIES.map(category => ({
+      ...category,
+      dimensionId: TIME_DIMENSION_ID,
+      dynamic: true,
+      dynamicType: 'time',
+    })),
+    []
+  )
   const colorDimensions = useMemo(
-    () => [...visibleDimensions, { id: FILTER_DIMENSION_ID, name: 'Filters', dynamic: true }],
+    () => [
+      ...visibleDimensions,
+      { id: FILTER_DIMENSION_ID, name: 'Filters', dynamic: true, dynamicType: 'filter' },
+      { id: TIME_DIMENSION_ID, name: 'Time', dynamic: true, dynamicType: 'time' },
+    ],
     [visibleDimensions]
   )
   const colorCategories = useMemo(
-    () => [...categories, ...filterCategories],
-    [categories, filterCategories]
+    () => [...categories, ...filterCategories, ...timeCategories],
+    [categories, filterCategories, timeCategories]
   )
 
   const visibleNotes = useMemo(
@@ -3274,8 +3312,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       if (!hasActiveFiltering) return notes
       return notes.filter(note =>
         revealedConflictNoteIds.has(note.id) ||
-        activeSavedFilters.some(filter => filterMatchesNote(filter, note.id, assignments)) ||
-        quickFilters.some(filter => assignments[note.id]?.[filter.dimId] === filter.catId)
+        activeSavedFilters.some(filter => filterMatchesNote(filter, note.id, assignments, note)) ||
+        quickFilterMatchesNote(quickFilters, note, (id, dimensionId) => assignments[id]?.[dimensionId])
       )
     },
     [activeFilterIds, assignments, notes, quickFilters, revealedConflictNoteIds, savedFilters, visibleNoteFilterIds]
@@ -3487,7 +3525,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       let hasMatch = false
       let hasOther = false
       noteIds.forEach(noteId => {
-        if (filterMatchesNote(activeLaneFilter, noteId, assignments)) hasMatch = true
+        if (filterMatchesNote(activeLaneFilter, noteId, assignments, notes.find(note => note.id === noteId))) hasMatch = true
         else hasOther = true
       })
       const nextHidden = new Set()
@@ -3693,8 +3731,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     if (activeLaneFilter) {
       const key = laneKeyForCat(cat)
       return key === UNASSIGNED_LANE
-        ? visibleNotes.filter(g => !filterMatchesNote(activeLaneFilter, g.id, assignments))
-        : visibleNotes.filter(g => filterMatchesNote(activeLaneFilter, g.id, assignments))
+        ? visibleNotes.filter(g => !filterMatchesNote(activeLaneFilter, g.id, assignments, g))
+        : visibleNotes.filter(g => filterMatchesNote(activeLaneFilter, g.id, assignments, g))
     }
     if (!activeDimId) return visibleNotes
     const key = laneKeyForCat(cat)
@@ -3788,25 +3826,35 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const getTimeSlotColor = useCallback(timeSlot => {
     if (!colorDimId) return timeSlot.color
     if (colorDimId === FILTER_DIMENSION_ID) {
-      const match = filterCategories.find(cat => filterMatchesNote(savedFilters.find(f => f.id === cat.filterId), timeSlot.noteId, assignments))
+      const match = filterCategories.find(cat => filterMatchesNote(savedFilters.find(f => f.id === cat.filterId), timeSlot.noteId, assignments, notes.find(note => note.id === timeSlot.noteId)))
       return match?.color ?? null
+    }
+    if (colorDimId === TIME_DIMENSION_ID) {
+      const note = notes.find(item => item.id === timeSlot.noteId)
+      const catId = timeCategoryIdForNote(note)
+      return timeCategories.find(category => category.id === catId)?.color ?? null
     }
     const catId = assignments[timeSlot.noteId]?.[colorDimId]
     if (!catId) return null
     return categories.find(c => c.id === catId)?.color ?? null
-  }, [assignments, categories, colorDimId, filterCategories, savedFilters])
+  }, [assignments, categories, colorDimId, filterCategories, notes, savedFilters, timeCategories])
 
   // Color for the note row indicator dot — same logic as timeSlots but returns null when unassigned
   const getNoteColor = useCallback(noteId => {
     if (!colorDimId) return null
     if (colorDimId === FILTER_DIMENSION_ID) {
-      const match = filterCategories.find(cat => filterMatchesNote(savedFilters.find(f => f.id === cat.filterId), noteId, assignments))
+      const match = filterCategories.find(cat => filterMatchesNote(savedFilters.find(f => f.id === cat.filterId), noteId, assignments, notes.find(note => note.id === noteId)))
       return match?.color ?? null
+    }
+    if (colorDimId === TIME_DIMENSION_ID) {
+      const note = notes.find(item => item.id === noteId)
+      const catId = timeCategoryIdForNote(note)
+      return timeCategories.find(category => category.id === catId)?.color ?? null
     }
     const catId = assignments[noteId]?.[colorDimId]
     if (!catId) return null
     return categories.find(c => c.id === catId)?.color ?? null
-  }, [assignments, categories, colorDimId, filterCategories, savedFilters])
+  }, [assignments, categories, colorDimId, filterCategories, notes, savedFilters, timeCategories])
 
   const getDependencyPathD = useCallback((dep, overrides = {}) => {
     const from = overrides[dep.fromId] ?? timeSlotsRef.current.find(m => m.id === dep.fromId)
@@ -4073,6 +4121,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         setTotalCols(needed)
       }
     }
+    if (next.colW !== prev.colW)
+      setColWidthByZoom(prev => ({ ...prev, [timeZoomRef.current]: next.colW }))
     setSpacing(next)
   }, [])
 
@@ -4104,7 +4154,16 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     scrollLeftRef.current = el.scrollLeft
     setScrollLeft(scrollLeftRef.current)
     setSpacing({ ...prev, colW: nextColW })
+    setColWidthByZoom(prev => ({ ...prev, [currentZoom]: nextColW }))
   }, [])
+
+  const handleColWidthByZoomChange = useCallback((zoom, width) => {
+    const validated = Math.max(minColWidthForZoom(zoom), Math.min(COL_WIDTH_MAX, width))
+    setColWidthByZoom(prev => ({ ...prev, [zoom]: validated }))
+    if (normalizeTimeZoom(zoom) === normalizeTimeZoom(timeZoomRef.current)) {
+      handleSpacingChange({ ...spacingRef.current, colW: validated })
+    }
+  }, [handleSpacingChange])
 
   const cycleTimeSlotLabelMode = useCallback(deltaY => {
     const now = Date.now()
@@ -4136,7 +4195,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     const prevZoom = timeZoomRef.current
     if (nextZoom === prevZoom) return
     const sp = spacingRef.current
-    const nextColW = Math.max(minColWidthForZoom(nextZoom), sp.colW)
+    const storedColW = colWidthByZoomRef.current[nextZoom]
+    const nextColW = storedColW
+      ? Math.max(minColWidthForZoom(nextZoom), Math.min(COL_WIDTH_MAX, storedColW))
+      : Math.max(minColWidthForZoom(nextZoom), sp.colW)
     const pinned = pinnedTimeSlotIdRef.current
       ? timeSlotsRef.current.find(m => m.id === pinnedTimeSlotIdRef.current)
       : null
@@ -5357,6 +5419,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     version: SCHEDULE_PERSPECTIVE_VERSION,
     activePerspectiveId,
     spacing,
+    colWidthByZoom,
     timeZoom,
     planningScale: persistedPlanningScaleForZoom(timeZoom),
     mode,
@@ -5417,6 +5480,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     restoringColorRef.current = nextColorDimId !== colorDimId
 
     setSpacing(state.spacing)
+    setColWidthByZoom(normalizeColWidthByZoom(state.colWidthByZoom ?? {}))
     setTimeZoom(state.timeZoom)
     setMode(state.mode)
     setAxisMode(state.axisMode)
@@ -5477,6 +5541,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     restoringColorRef.current = nextColorDimId !== colorDimId
 
     setSpacing(state.spacing)
+    setColWidthByZoom(normalizeColWidthByZoom(state.colWidthByZoom ?? {}))
     setTimeZoom(state.timeZoom)
     setMode(state.mode)
     setAxisMode(state.axisMode)
@@ -5562,26 +5627,30 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       playSound('perspectiveDelete')
       setPerspectives(prev => prev.filter(p => p.id !== perspectiveId))
       if (activePerspectiveId === perspectiveId) applyPerspective(nonePerspective)
-      setDefaultPerspectiveId(prev => {
-        if (prev !== perspectiveId) return prev
-        try { window.localStorage.setItem(SCHEDULE_DEFAULT_PERSPECTIVE_KEY, NONE_PERSPECTIVE_ID) } catch {}
-        return NONE_PERSPECTIVE_ID
-      })
+      if (defaultPerspectiveId === perspectiveId) {
+        setDefaultPerspectiveId(NONE_PERSPECTIVE_ID)
+        await onSetContextDefaultPerspective?.('schedule', NONE_PERSPECTIVE_ID)
+      }
     } catch (err) { console.error(err) }
-  }, [activePerspectiveId, applyPerspective, nonePerspective])
+  }, [activePerspectiveId, applyPerspective, defaultPerspectiveId, nonePerspective, onSetContextDefaultPerspective])
 
-  const setScheduleDefaultPerspective = useCallback(perspectiveId => {
+  const setScheduleDefaultPerspective = useCallback(async perspectiveId => {
     const nextId = perspectiveId || NONE_PERSPECTIVE_ID
+    const previousId = defaultPerspectiveId
     setDefaultPerspectiveId(nextId)
-    try { window.localStorage.setItem(SCHEDULE_DEFAULT_PERSPECTIVE_KEY, nextId) } catch {}
-  }, [])
+    try {
+      await onSetContextDefaultPerspective?.('schedule', nextId)
+    } catch (error) {
+      setDefaultPerspectiveId(previousId)
+      console.error('Failed to update context default perspective', error)
+    }
+  }, [defaultPerspectiveId, onSetContextDefaultPerspective])
 
   useEffect(() => {
     if (contextDefaultPerspectiveId === undefined) return
     const nextId = contextDefaultPerspectiveId || NONE_PERSPECTIVE_ID
     setDefaultPerspectiveId(nextId)
     appliedDefaultRef.current = false
-    try { window.localStorage.setItem(SCHEDULE_DEFAULT_PERSPECTIVE_KEY, nextId) } catch {}
   }, [contextDefaultPerspectiveId, contextApplyToken])
 
   useEffect(() => {
@@ -5826,6 +5895,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         onUndo={undoGanttTransaction}
         onRedo={redoGanttTransaction}
         spacing={spacing} onSpacingChange={handleSpacingChange}
+        colWidthByZoom={colWidthByZoom} onColWidthByZoomChange={handleColWidthByZoomChange}
         mode={mode} onModeChange={setMode}
         axisMode={axisMode} onAxisModeChange={setAxisMode}
         timeZoom={timeZoom} onTimeZoomChange={handleTimeZoomChange}
@@ -6601,21 +6671,23 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           onDelete={deletePerspective}
           onSetDefault={setScheduleDefaultPerspective}
         />
-        <ScheduleColorLegendWidget
+        <StandardColorPicker
           dimensions={colorDimensions}
           categories={colorCategories}
-          colorDimId={colorDimId}
-          onColorDimChange={setColorDimId}
-          onDimDataChanged={handleDimDataChanged}
-          activeFilterIds={activeFilterIds}
+          colorDimensionId={colorDimId}
+          onColorDimensionChange={setColorDimId}
+          onDimensionDataChanged={handleDimDataChanged}
+          activeSavedFilterIds={activeFilterIds}
           onToggleSavedFilter={toggleSavedFilter}
+          onCreateSavedFilter={() => setEditingFilter({ name: 'New filter', selections: {} })}
           quickFilters={quickFilters}
           onToggleQuickFilter={toggleQuickFilter}
-          onEditFilter={filterId => setEditingFilter(savedFilters.find(filter => filter.id === filterId))}
-          paintCat={paintCat}
-          onPaintActivate={(catId, color) => { setPaintPersonaId(null); activatePaint(catId, color) }}
+          onEditSavedFilter={filterId => setEditingFilter(savedFilters.find(filter => filter.id === filterId))}
+          paintCategoryId={paintCat?.id}
+          onPaintCategory={(catId, color) => { setPaintPersonaId(null); activatePaint(catId, color) }}
           expanded={floatingPanel === 'color'}
           onExpandedChange={open => setFloatingPanel(open ? 'color' : null)}
+          onSwapWithCanvasDim={() => { const prev = colorDimId; setColorDimId(activeDimId); setActiveDimId(prev) }}
         />
         <PeopleWidget
           paintPersonaId={paintPersonaId}
@@ -6797,8 +6869,8 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       {editingFilter && (
         <ScheduleFilterEditorModal
           filter={editingFilter}
-          dimensions={visibleDimensions}
-          categories={categories}
+          dimensions={colorDimensions.filter(dimension => dimension.id !== FILTER_DIMENSION_ID)}
+          categories={colorCategories.filter(category => category.dimensionId !== FILTER_DIMENSION_ID)}
           onSave={saveFilter}
           onDelete={deleteFilter}
           onClose={() => setEditingFilter(null)}

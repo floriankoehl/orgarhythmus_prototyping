@@ -1094,6 +1094,33 @@
 
 .spacingRow:last-child { margin-bottom: 0; }
 
+.colWidthGroup {
+  padding-bottom: 4px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.spacingGroupLabel {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: #444;
+  margin-bottom: 6px;
+}
+
+.spacingRowActive .spacingZoomTag {
+  color: #1a73e8;
+  font-weight: 800;
+}
+
+.spacingZoomTag {
+  font-size: 11px;
+  color: #666;
+  width: 48px;
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
 .spacingLabel {
   font-size: 11px;
   color: #555;
@@ -3013,19 +3040,52 @@
   padding-right: 4px;
 }
 
+.filterDimGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.filterDimGroupTitle {
+  color: #64748b;
+  font: 900 10px Arial, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.filterDimGroupTitleSpecial { color: #7c3aed; }
+
 .filterDimSection {
   overflow: hidden;
   border: 1px solid #eee;
   border-radius: 8px;
 }
 
+.filterDimSectionSpecial {
+  border-color: #ddd6fe;
+  background: #fcfaff;
+}
+
 .filterDimTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 8px 10px;
   color: #555;
   background: #fafafa;
   border-bottom: 1px solid #eee;
   font-size: 12px;
   font-weight: 700;
+}
+
+.filterSpecialBadge {
+  margin-left: auto;
+  padding: 2px 5px;
+  color: #7c3aed;
+  background: #ede9fe;
+  border-radius: 999px;
+  font: normal 900 9px Arial, sans-serif;
+  text-transform: capitalize;
 }
 
 .filterCatGrid {
@@ -3049,6 +3109,9 @@
 
 .filterCatOption:hover { background: #f5f5f5; }
 
+.filterCatOptionSpecial { background: rgba(124, 58, 237, 0.035); }
+.filterCatOptionSpecial:hover { background: #f3efff; }
+
 .filterCatOption input {
   width: 13px;
   height: 13px;
@@ -3057,8 +3120,9 @@
   accent-color: #1a73e8;
 }
 
-.filterCatOption span:last-child {
+.filterCatName {
   min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

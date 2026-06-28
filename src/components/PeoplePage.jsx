@@ -8,6 +8,13 @@ import { useConfirmDialog } from './ConfirmDialog'
 import DimensionDropUp from './DimensionDropUp'
 import styles from './PeoplePage.module.css'
 import { playSound } from '../sounds/sound_registry'
+import ColorPickerIcon from './ColorPickerIcon'
+import ColorPickerCategoryBadge from './ColorPickerCategoryBadge'
+import { COLOR_UNASSIGNED_CATEGORY_ID, colorPickerCategories } from './colorPickerCategories'
+import StandardColorPicker from './StandardColorPicker'
+import SavedFilterEditorModal from './SavedFilterEditorModal'
+import { FILTER_DIMENSION_ID, filterCategoryId, filterMatchesNote, normalizeSavedFilter, quickFilterMatchesNote } from './savedFilterUtils'
+import { TIME_DIMENSION_ID, TIME_DYNAMIC_CATEGORIES, timeCategoryIdForNote } from './timeCategories'
 
 const CHAR_KEYS = 'abcdefghijklmnopqr'.split('')
 const RETRO_KEY_FALLBACKS = {
@@ -1565,14 +1572,6 @@ function categoriesForDimension(cats, dimensionId) {
   return cats.filter(cat => cat.dimensionId === dimensionId)
 }
 
-function PaletteIcon({ size = 16 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M12 3a9 9 0 0 0 0 18h1.6a2.2 2.2 0 0 0 1.55-3.76 1.05 1.05 0 0 1 .74-1.79H17a4 4 0 0 0 4-4C21 6.78 16.97 3 12 3Zm-4 9.3a1.35 1.35 0 1 1 0-2.7 1.35 1.35 0 0 1 0 2.7Zm2.35-4.2a1.35 1.35 0 1 1 0-2.7 1.35 1.35 0 0 1 0 2.7Zm4.4 0a1.35 1.35 0 1 1 0-2.7 1.35 1.35 0 0 1 0 2.7Zm2.9 4.2a1.35 1.35 0 1 1 0-2.7 1.35 1.35 0 0 1 0 2.7Z" />
-    </svg>
-  )
-}
-
 function PeopleColorLegendWidget({
   dimensions,
   categories,
@@ -1586,7 +1585,7 @@ function PeopleColorLegendWidget({
   expanded,
   onExpandedChange,
 }) {
-  const legendCats = categories.filter(c => c.dimensionId === colorDimId)
+  const legendCats = colorPickerCategories(categories, dimensions, colorDimId)
   return (
     <div className={styles.peopleColorWidget} onClick={e => e.stopPropagation()}>
       {expanded && (
@@ -1598,12 +1597,13 @@ function PeopleColorLegendWidget({
               <div
                 key={cat.id}
                 className={`${styles.peopleColorItem} ${paintActive ? styles.peopleColorItemActive : ''}`}
-                onClick={() => onPaintActivate(cat.id, cat.color)}
-                title="Click notes to assign this category"
+                onClick={() => !cat.readOnly && onPaintActivate(cat.id, cat.color)}
+                title={cat.readOnly ? 'Shows every note; not a paint action' : cat.unassign ? 'Click notes to remove this dimension assignment' : 'Click notes to assign this category'}
               >
                 <span className={styles.peopleColorDot} style={{ background: cat.color || '#aaa' }} />
                 <span className={styles.peopleColorName}>{cat.name}</span>
-                <button
+                {cat.specialLabel && <ColorPickerCategoryBadge>{cat.specialLabel}</ColorPickerCategoryBadge>}
+                {!cat.colorPickerSpecial && <button
                   className={`${styles.peopleColorFilterBtn} ${filterActive ? styles.peopleColorFilterBtnActive : ''}`}
                   title="Filter notes by this category"
                   onClick={e => {
@@ -1614,7 +1614,7 @@ function PeopleColorLegendWidget({
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M3 5h18l-7 8v5l-4 2v-7L3 5z" />
                   </svg>
-                </button>
+                </button>}
               </div>
             )
           })}
@@ -1636,7 +1636,7 @@ function PeopleColorLegendWidget({
         onClick={() => onExpandedChange(!expanded)}
         title={expanded ? 'Collapse color picker' : 'Color notes'}
       >
-        <PaletteIcon size={17} />
+        <ColorPickerIcon />
       </button>
       {!expanded && (
         <span className={styles.peopleColorHint}>
@@ -2159,6 +2159,9 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
   const [colorDimId, setColorDimId] = useState('')
   const [paintCat, setPaintCat] = useState(null)
   const [quickFilters, setQuickFilters] = useState([])
+  const [savedFilters, setSavedFilters] = useState([])
+  const [activeFilterIds, setActiveFilterIds] = useState([])
+  const [editingFilter, setEditingFilter] = useState(null)
   const [floatingPanel, setFloatingPanel] = useState(null)
   const { confirm: confirmDialog, dialog: confirmDialogNode } = useConfirmDialog()
 
@@ -2173,8 +2176,8 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
   }, [])
 
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getDirectPersonaAssignments(), api.getNotes(), api.getAssignments(), api.getDirectPersonaNoteAssignments(), api.getCategoryLeaders()])
-      .then(([dims, cats, pers, personaAsns, notesList, noteAsns, pnAsns, leaders]) => {
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getDirectPersonaAssignments(), api.getNotes(), api.getAssignments(), api.getDirectPersonaNoteAssignments(), api.getCategoryLeaders(), api.getFilters()])
+      .then(([dims, cats, pers, personaAsns, notesList, noteAsns, pnAsns, leaders, filters]) => {
         setDimensions(dims)
         setCategories(cats)
         setDimIndex(0)
@@ -2184,6 +2187,7 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
         setNoteAssignments(noteAsns)
         setPersonaNoteAssignments(pnAsns)
         setCategoryLeaders(leaders)
+        setSavedFilters((filters || []).map(normalizeSavedFilter))
       })
       .catch(console.error)
   }, [replacePersonaAssignments])
@@ -2204,17 +2208,29 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
     personaAssignmentsRef.current = personaAssignments
   }, [personaAssignments])
 
+  const filterCategories = useMemo(() => savedFilters.map(filter => ({
+    id: filterCategoryId(filter.id), dimensionId: FILTER_DIMENSION_ID, name: filter.name,
+    color: filter.color || '#64748b', dynamic: true, dynamicType: 'filter', dynamicLabel: 'Filter', filterId: filter.id,
+  })), [savedFilters])
+  const timeCategories = useMemo(() => TIME_DYNAMIC_CATEGORIES.map(category => ({ ...category, dimensionId: TIME_DIMENSION_ID, dynamic: true, dynamicType: 'time', dynamicLabel: 'Time' })), [])
+  const colorDimensions = useMemo(() => [...dimensions,
+    { id: FILTER_DIMENSION_ID, name: 'Filters', dynamic: true, dynamicType: 'filter', dynamicLabel: 'Filter' },
+    { id: TIME_DIMENSION_ID, name: 'Time', dynamic: true, dynamicType: 'time', dynamicLabel: 'Time' },
+  ], [dimensions])
+  const colorCategories = useMemo(() => [...categories, ...filterCategories, ...timeCategories], [categories, filterCategories, timeCategories])
+
   useEffect(() => {
-    if (colorDimId && !dimensions.some(d => d.id === colorDimId)) {
+    if (colorDimId && !colorDimensions.some(d => d.id === colorDimId)) {
       setColorDimId('')
       setPaintCat(null)
       setQuickFilters([])
     }
-  }, [colorDimId, dimensions])
+  }, [colorDimId, colorDimensions])
 
   useEffect(() => {
     setPaintCat(null)
     setQuickFilters([])
+    if (colorDimId !== FILTER_DIMENSION_ID) setActiveFilterIds([])
   }, [colorDimId])
 
   useEffect(() => {
@@ -2273,19 +2289,57 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
     })
   }, [])
 
+  const toggleSavedFilter = useCallback(filterId => setActiveFilterIds(previous => previous.includes(filterId) ? previous.filter(id => id !== filterId) : [...previous, filterId]), [])
+
+  const saveFilter = useCallback(async filter => {
+    try {
+      const saved = normalizeSavedFilter(filter.id ? await api.updateFilter(filter.id, filter) : await api.createFilter(filter))
+      setSavedFilters(previous => [...previous.filter(item => item.id !== saved.id), saved].sort((a, b) => a.name.localeCompare(b.name)))
+      setEditingFilter(null)
+    } catch (error) { console.error(error) }
+  }, [])
+
+  const deleteFilter = useCallback(async filterId => {
+    try {
+      await api.deleteFilter(filterId)
+      setSavedFilters(previous => previous.filter(filter => filter.id !== filterId))
+      setActiveFilterIds(previous => previous.filter(id => id !== filterId))
+      setEditingFilter(null)
+    } catch (error) { console.error(error) }
+  }, [])
+
   const activatePaint = useCallback((catId, color) => {
     setPaintCat(prev => prev?.id === catId ? null : { id: catId, color })
   }, [])
 
   const getNoteColor = useCallback(noteId => {
     if (!colorDimId) return null
+    const note = notes.find(item => item.id === noteId)
+    const assignmentForDimension = (id, dimensionId) => noteAssignments.find(assignment => assignment.noteId === id && assignment.dimensionId === dimensionId)?.categoryId
+    if (colorDimId === FILTER_DIMENSION_ID) {
+      return filterCategories.find(category => filterMatchesNote(savedFilters.find(filter => filter.id === category.filterId), note, assignmentForDimension))?.color ?? null
+    }
+    if (colorDimId === TIME_DIMENSION_ID) {
+      const categoryId = timeCategoryIdForNote(note)
+      return timeCategories.find(category => category.id === categoryId)?.color ?? null
+    }
     const catId = noteAssignments.find(a => a.noteId === noteId && a.dimensionId === colorDimId)?.categoryId
     if (!catId) return null
     return categories.find(c => c.id === catId)?.color ?? null
-  }, [categories, colorDimId, noteAssignments])
+  }, [categories, colorDimId, noteAssignments, notes, filterCategories, savedFilters, timeCategories])
 
   const paintNote = useCallback(async noteId => {
     if (!paintCat || !colorDimId) return
+    if (paintCat.id === COLOR_UNASSIGNED_CATEGORY_ID) {
+      setNoteAssignments(prev => prev.filter(a => !(a.noteId === noteId && a.dimensionId === colorDimId)))
+      try {
+        await api.unassign(noteId, colorDimId)
+      } catch (e) {
+        console.error(e)
+        handleDimDataChanged()
+      }
+      return
+    }
     setNoteAssignments(prev => [
       ...prev.filter(a => !(a.noteId === noteId && a.dimensionId === colorDimId)),
       { noteId, dimensionId: colorDimId, categoryId: paintCat.id },
@@ -2542,6 +2596,13 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
     setEditPersonaId(personaId)
   }
 
+  const filteredNotes = useMemo(() => {
+    const activeSavedFilters = activeFilterIds.map(id => savedFilters.find(filter => filter.id === id)).filter(Boolean)
+    if (!activeSavedFilters.length && !quickFilters.length) return notes
+    const assignmentForDimension = (noteId, dimensionId) => noteAssignments.find(assignment => assignment.noteId === noteId && assignment.dimensionId === dimensionId)?.categoryId
+    return notes.filter(note => activeSavedFilters.some(filter => filterMatchesNote(filter, note, assignmentForDimension)) || quickFilterMatchesNote(quickFilters, note, assignmentForDimension))
+  }, [activeFilterIds, noteAssignments, notes, quickFilters, savedFilters])
+
   const editPersona = editPersonaId ? personas.find(p => p.id === editPersonaId) : null
 
   return (
@@ -2560,7 +2621,7 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
             personas={personas}
             personaAssignments={effectivePersonaAssignments}
             assignmentRevision={assignmentRevision}
-            notes={notes}
+            notes={filteredNotes}
             noteAssignments={noteAssignments}
             personaNoteAssignments={personaNoteAssignments}
             categoryLeaders={categoryLeaders}
@@ -2580,7 +2641,7 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
             paintCat={paintCat}
             onPaintNote={paintNote}
             getNoteColor={getNoteColor}
-            quickFilters={quickFilters}
+            quickFilters={[]}
             onNoteOpen={onNoteOpen}
             selected={selected}
           />
@@ -2594,7 +2655,7 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
           categories={categories}
           personas={personas}
           personaAssignments={effectivePersonaAssignments}
-          notes={notes}
+          notes={filteredNotes}
           noteAssignments={noteAssignments}
           personaNoteAssignments={personaNoteAssignments}
           categoryLeaders={categoryLeaders}
@@ -2611,7 +2672,7 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
           paintCat={paintCat}
           onPaintNote={paintNote}
           getNoteColor={getNoteColor}
-          quickFilters={quickFilters}
+          quickFilters={[]}
           onNoteOpen={onNoteOpen}
           onSelect={setSelected}
           selected={selected}
@@ -2654,20 +2715,40 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
       )}
 
       {focusedCategory && boardMode === 'category' && (
-        <PeopleColorLegendWidget
-          dimensions={dimensions}
-          categories={categories}
-          colorDimId={colorDimId}
-          onColorDimChange={setColorDimId}
-          onDimDataChanged={handleDimDataChanged}
+        <StandardColorPicker
+          dimensions={colorDimensions}
+          categories={colorCategories}
+          colorDimensionId={colorDimId}
+          onColorDimensionChange={setColorDimId}
+          onDimensionDataChanged={handleDimDataChanged}
           quickFilters={quickFilters}
           onToggleQuickFilter={toggleQuickFilter}
-          paintCat={paintCat}
-          onPaintActivate={activatePaint}
+          activeSavedFilterIds={activeFilterIds}
+          onToggleSavedFilter={toggleSavedFilter}
+          onCreateSavedFilter={() => setEditingFilter({})}
+          onEditSavedFilter={filterId => setEditingFilter(savedFilters.find(filter => filter.id === filterId))}
+          paintCategoryId={paintCat?.id}
+          onPaintCategory={activatePaint}
           expanded={floatingPanel === 'color'}
           onExpandedChange={open => setFloatingPanel(open ? 'color' : null)}
+          variant="people"
+          onSwapWithCanvasDim={activeDimension ? () => {
+            const newColorDimId = activeDimension.id
+            const newDimIndex = dimensions.findIndex(d => d.id === colorDimId)
+            setColorDimId(newColorDimId)
+            setDimIndex(newDimIndex >= 0 ? newDimIndex : 0)
+          } : undefined}
         />
       )}
+
+      {editingFilter && <SavedFilterEditorModal
+        filter={editingFilter}
+        dimensions={colorDimensions.filter(dimension => dimension.id !== FILTER_DIMENSION_ID)}
+        categories={colorCategories.filter(category => category.dimensionId !== FILTER_DIMENSION_ID)}
+        onSave={saveFilter}
+        onDelete={deleteFilter}
+        onClose={() => setEditingFilter(null)}
+      />}
 
       {!showAddPanel && (
       <aside className={styles.personaPanel}>
