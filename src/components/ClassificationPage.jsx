@@ -4,6 +4,7 @@ import styles from './ClassificationPage.module.css'
 import { api } from '../api'
 import PeopleWidget from './PeopleWidget'
 import PersonaAvatarStack from './PersonaAvatarStack'
+import { useConfirmDialog } from './ConfirmDialog'
 import { usePersonaCursor } from '../hooks/usePersonaCursor'
 
 const PRESET_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#94a3b8']
@@ -1294,6 +1295,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const [unassignedCollapsed, setUnassignedCollapsed] = useState(false)
   const [floatingPanel, setFloatingPanel] = useState(null)
   const [statusNotice, setStatusNotice] = useState('')
+  const { confirm: confirmDialog, dialog: confirmDialogNode } = useConfirmDialog()
 
   const applyAssignments = assigns => {
     const map = {}
@@ -1330,12 +1332,24 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
 
   const catPersonasMap = useMemo(() => {
     const map = {}
+    const seen = new Set()
+    const add = (categoryId, personaId) => {
+      const p = personas.find(p => p.id === personaId)
+      const key = `${categoryId}:${personaId}`
+      if (p && !seen.has(key)) {
+        seen.add(key)
+        ;(map[categoryId] = map[categoryId] || []).push(p)
+      }
+    }
     personaCatAssignments.forEach(a => {
-      const p = personas.find(p => p.id === a.personaId)
-      if (p) (map[a.categoryId] = map[a.categoryId] || []).push(p)
+      add(a.categoryId, a.personaId)
+    })
+    personaNoteAssignments.forEach(a => {
+      const noteDims = assignments[a.noteId] || {}
+      Object.values(noteDims).forEach(categoryId => add(categoryId, a.personaId))
     })
     return map
-  }, [personas, personaCatAssignments])
+  }, [assignments, personas, personaCatAssignments, personaNoteAssignments])
 
   const notePersonasMap = useMemo(() => {
     const map = {}
@@ -1714,10 +1728,31 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
       .catch(console.error)
   }
 
-  const removePersonaFromCategory = (personaId, dimId, catId) => {
+  const removePersonaFromCategory = async (personaId, dimId, catId) => {
     if (!personaId || !dimId || !catId || isDynamicDimensionId(dimId)) return
+    const affectedNotes = notes
+      .filter(note =>
+        assignments[note.id]?.[dimId] === catId &&
+        personaNoteAssignments.some(a => a.personaId === personaId && a.noteId === note.id)
+      )
+    const personaName = personas.find(p => p.id === personaId)?.name || 'this person'
+    const categoryName = categories.find(c => c.id === catId)?.name || 'this category'
+    const ok = await confirmDialog({
+      title: `Remove ${personaName} from ${categoryName}?`,
+      message: 'This will also unassign them from these notes:',
+      items: affectedNotes.map(note => note.title || 'Untitled'),
+      emptyText: 'No note assignments in this category will be removed.',
+      confirmLabel: 'Remove person',
+    })
+    if (!ok) return
+    const noteIdsInCategory = affectedNotes
+      .map(note => note.id)
     setPersonaCatAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.dimensionId === dimId && a.categoryId === catId)))
-    api.unassignPersona(personaId, dimId, catId)
+    setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && noteIdsInCategory.includes(a.noteId))))
+    Promise.all([
+      api.unassignPersona(personaId, dimId, catId),
+      ...noteIdsInCategory.map(noteId => api.unassignPersonaFromNote(personaId, noteId)),
+    ])
       .then(() => onPeopleChanged?.())
       .catch(console.error)
   }
@@ -2137,6 +2172,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
         </div>,
         document.body
       )}
+      {confirmDialogNode}
     </div>
   )
 }

@@ -158,6 +158,38 @@
   letter-spacing: 0.04em;
 }
 
+.peopleSection {
+  padding: 12px 18px;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.peopleSectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.peopleCount {
+  min-width: 22px;
+  padding: 3px 7px;
+  color: #1a73e8;
+  background: #e8f0fe;
+  border: 1px solid #c5d8f8;
+  border-radius: 999px;
+  text-align: center;
+  font: 700 11px Arial, sans-serif;
+}
+
+.peopleStackWrap {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+}
+
 /* ── Description section ─────────────────────────────────────────────────── */
 .descSection {
   padding: 14px 18px;

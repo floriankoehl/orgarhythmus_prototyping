@@ -4,6 +4,7 @@ import styles from './NotePopup.module.css'
 import { api } from '../api'
 import CategoryAssignmentPicker from './CategoryAssignmentPicker'
 import CategoryHashtagSuggestions from './CategoryHashtagSuggestions'
+import PersonaAvatarStack from './PersonaAvatarStack'
 import { mergeSelectionsWithHashtags } from '../categoryHashtags'
 
 // ── Headline-mode helpers ─────────────────────────────────────────────────────
@@ -51,7 +52,7 @@ function ChevronIcon({ down }) {
 }
 
 // ── Main popup ────────────────────────────────────────────────────────────────
-export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsChanged, onNoteDeleted }) {
+export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsChanged, onPeopleChanged, onNoteDeleted }) {
   const [expanded, setExpanded]           = useState(false)
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false)
   const [headlineMode, setHeadlineMode]   = useState(false)
@@ -65,6 +66,8 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsC
   const [dimensions, setDimensions]   = useState([])
   const [categories, setCategories]   = useState([])
   const [assignments, setAssignments] = useState({}) // { dimId: catId }
+  const [personas, setPersonas] = useState([])
+  const [personaNoteAssignments, setPersonaNoteAssignments] = useState([])
 
   const editorRef      = useRef(null)
   const popupRef       = useRef(null)
@@ -98,10 +101,18 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsC
 
   // Fetch dimension/category/assignment data for compact and expanded views
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments()])
-      .then(([dims, cats, asns]) => {
+    Promise.all([
+      api.getDimensions(),
+      api.getAllCategories(),
+      api.getAssignments(),
+      api.getPersonas(),
+      api.getDirectPersonaNoteAssignments(),
+    ])
+      .then(([dims, cats, asns, pers, pnAsns]) => {
         setDimensions(dims)
         setCategories(cats)
+        setPersonas(pers)
+        setPersonaNoteAssignments(pnAsns)
         // asns is array of { noteId, dimensionId, categoryId }
         const myAsns = asns.filter(a => a.noteId === note.id)
         const map = {}
@@ -172,6 +183,23 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsC
       return cat ? { dim, cat } : null
     })
     .filter(Boolean)
+
+  const notePersonas = personaNoteAssignments
+    .filter(a => a.noteId === note.id)
+    .map(a => personas.find(p => p.id === a.personaId))
+    .filter(Boolean)
+
+  const removePersonaFromNote = async personaId => {
+    const previous = personaNoteAssignments
+    setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.noteId === note.id)))
+    try {
+      await api.unassignPersonaFromNote(personaId, note.id)
+      onPeopleChanged?.()
+    } catch (e) {
+      console.error(e)
+      setPersonaNoteAssignments(previous)
+    }
+  }
 
   const handleCategoryChange = async (newSels) => {
     const old = { ...assignments }
@@ -288,6 +316,23 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsC
                   {cat.name}
                 </span>
               ))}
+            </div>
+          )}
+        </div>
+
+        <div className={styles.peopleSection}>
+          <div className={styles.peopleSectionHeader}>
+            <span className={styles.sectionLabel}>People</span>
+            <span className={styles.peopleCount}>{notePersonas.length}</span>
+          </div>
+          {notePersonas.length === 0 ? (
+            <p className={styles.emptyNote}>No people assigned.</p>
+          ) : (
+            <div className={styles.peopleStackWrap}>
+              <PersonaAvatarStack
+                personas={notePersonas}
+                onRemove={removePersonaFromNote}
+              />
             </div>
           )}
         </div>

@@ -11,34 +11,393 @@
   height: 100% !important;
 }
 
-.viewModeToggle {
+.peopleToolbar {
   position: absolute;
   top: 18px;
-  left: 220px;
+  left: 18px;
+  right: 284px;
   z-index: 30;
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 4px;
+  gap: 12px;
+  min-height: 48px;
+  padding: 6px 10px;
   background: rgba(255,255,255,0.88);
   border: 1px solid #e1e1e1;
   border-radius: 10px;
   box-shadow: 0 2px 12px rgba(0,0,0,0.07);
   backdrop-filter: blur(8px);
+  box-sizing: border-box;
 }
 
-.viewModeLabel {
-  padding: 0 8px 0 6px;
+.peopleToolbarDimensionGroup {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+
+.peopleToolbarLabel {
   color: #999;
   font: 800 10px Arial, sans-serif;
   letter-spacing: 0.07em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
-.viewModeButton,
-.viewModeButtonActive {
+.peopleToolbarDimensionRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.peopleToolbarArrow {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f4f4f4;
+  border: 1px solid #e4e4e4;
+  border-radius: 6px;
+  color: #666;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.peopleToolbarArrow:hover {
+  color: #222;
+  background: #eaeaea;
+}
+
+.peopleToolbarDimensionName {
+  width: min(220px, 24vw);
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  color: #222;
+  background: #f8f8f8;
+  border: 1px solid #e2e2e2;
+  border-radius: 7px;
+  font: 800 12px Arial, sans-serif;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.peopleToolbarDimensionName:hover {
+  background: #fff;
+  border-color: #d2d2d2;
+}
+
+.peopleToolbarDimensionText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.peopleToolbarDimensionName svg {
+  flex: 0 0 auto;
+  color: #999;
+}
+
+.peopleToolbarDimensionSwatches {
+  width: 22px;
+  height: 12px;
+  position: relative;
+  flex: 0 0 22px;
+}
+
+.peopleToolbarDimensionSwatches b {
+  position: absolute;
+  top: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.08), 0 0 0 2px #fff;
+}
+
+.peopleToolbarDimensionSwatches b:nth-child(1) {
+  left: 0;
+}
+
+.peopleToolbarDimensionSwatches b:nth-child(2) {
+  left: 6px;
+}
+
+.peopleToolbarDimensionSwatches b:nth-child(3) {
+  left: 12px;
+}
+
+.peopleToolbarDimensionMenu {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 31px;
+  z-index: 40;
+  width: min(260px, 48vw);
+  max-height: min(280px, 48vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 5px;
+  background: #fff;
+  border: 1px solid #dedede;
+  border-radius: 8px;
+  box-shadow: 0 10px 26px rgba(0,0,0,0.16);
+}
+
+.peopleToolbarDimensionMenuItem,
+.peopleToolbarDimensionMenuItemActive {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  color: #333;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font: 700 12px Arial, sans-serif;
+  text-align: left;
+}
+
+.peopleToolbarDimensionMenuItem:hover {
+  background: #f4f7ff;
+}
+
+.peopleToolbarDimensionMenuItemActive {
+  color: #1a73e8;
+  background: #e8f0fe;
+}
+
+.peopleToolbarDimensionMenuItem span,
+.peopleToolbarDimensionMenuItemActive span {
+  width: 22px;
+  height: 12px;
+  position: relative;
+  flex: 0 0 22px;
+}
+
+.peopleToolbarDimensionMenuItem b,
+.peopleToolbarDimensionMenuItemActive b {
+  position: absolute;
+  top: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.08), 0 0 0 2px #fff;
+}
+
+.peopleToolbarDimensionMenuItem b:nth-child(1),
+.peopleToolbarDimensionMenuItemActive b:nth-child(1) {
+  left: 0;
+}
+
+.peopleToolbarDimensionMenuItem b:nth-child(2),
+.peopleToolbarDimensionMenuItemActive b:nth-child(2) {
+  left: 6px;
+}
+
+.peopleToolbarDimensionMenuItem b:nth-child(3),
+.peopleToolbarDimensionMenuItemActive b:nth-child(3) {
+  left: 12px;
+}
+
+.peopleToolbarDimensionMenuItem strong,
+.peopleToolbarDimensionMenuItemActive strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 800 12px Arial, sans-serif;
+}
+
+.peopleToolbarDots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+}
+
+.peopleToolbarDot {
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #ddd;
+  cursor: pointer;
+}
+
+.peopleToolbarDot:hover {
+  background: #bbb;
+}
+
+.peopleToolbarDotActive {
+  background: #1a73e8;
+  transform: scale(1.3);
+}
+
+.peopleToolbarFocus {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding-left: 14px;
+  border-left: 1px solid #e6e6e6;
+}
+
+.peopleToolbarCategoryRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.peopleToolbarCategoryPicker {
+  position: relative;
+  min-width: 0;
+}
+
+.peopleToolbarCategoryName {
+  width: min(220px, 24vw);
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  color: #222;
+  background: #f8f8f8;
+  border: 1px solid #e2e2e2;
+  border-radius: 7px;
+  cursor: pointer;
+  font: 800 12px Arial, sans-serif;
+}
+
+.peopleToolbarCategoryName:hover {
+  background: #fff;
+  border-color: #d2d2d2;
+}
+
+.peopleToolbarCategoryName > span:nth-child(2) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.peopleToolbarCategoryName svg {
+  flex: 0 0 auto;
+  color: #999;
+}
+
+.peopleToolbarSwatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.08);
+}
+
+.peopleToolbarCategoryMenu {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 0;
+  z-index: 40;
+  width: min(260px, 48vw);
+  max-height: min(280px, 48vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 5px;
+  background: #fff;
+  border: 1px solid #dedede;
+  border-radius: 8px;
+  box-shadow: 0 10px 26px rgba(0,0,0,0.16);
+}
+
+.peopleToolbarCategoryMenuItem,
+.peopleToolbarCategoryMenuItemActive {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  color: #333;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.peopleToolbarCategoryMenuItem:hover {
+  background: #f4f7ff;
+}
+
+.peopleToolbarCategoryMenuItemActive {
+  color: #1a73e8;
+  background: #e8f0fe;
+}
+
+.peopleToolbarCategoryMenuItem span,
+.peopleToolbarCategoryMenuItemActive span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.08);
+}
+
+.peopleToolbarCategoryMenuItem strong,
+.peopleToolbarCategoryMenuItemActive strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 800 12px Arial, sans-serif;
+}
+
+.peopleToolbarBack {
+  min-height: 28px;
+  padding: 0 11px;
+  color: #fff;
+  background: #f97316;
+  border: 1px solid #ea580c;
+  border-radius: 7px;
+  box-shadow: 0 2px 8px rgba(249,115,22,0.28);
+  font: 800 12px Arial, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.peopleToolbarBack:hover {
+  color: #fff;
+  background: #ea580c;
+  border-color: #c2410c;
+}
+
+.peopleToolbarSpacer {
+  flex: 1;
+  min-width: 8px;
+}
+
+.peopleToolbarView {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+
+.peopleToolbarViewButton,
+.peopleToolbarViewButtonActive {
   min-width: 42px;
-  height: 30px;
+  height: 28px;
   padding: 0 12px;
   border: none;
   border-radius: 7px;
@@ -48,12 +407,12 @@
   cursor: pointer;
 }
 
-.viewModeButton:hover {
+.peopleToolbarViewButton:hover {
   color: #222;
   background: #f2f2f2;
 }
 
-.viewModeButtonActive {
+.peopleToolbarViewButtonActive {
   color: #fff;
   background: #1a73e8;
   box-shadow: 0 1px 6px rgba(26,115,232,0.22);
@@ -94,6 +453,116 @@
 
 .people2dCategory:hover {
   border-color: var(--cat-color);
+}
+
+.people2dPeopleGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+  align-content: start;
+  min-height: 100%;
+}
+
+.people2dPersonCard {
+  min-height: 230px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  background: rgba(255,255,255,0.92);
+  border: 2px solid #e4e4e4;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+  cursor: default;
+}
+
+.people2dPersonCard:hover,
+.people2dPersonCardActive {
+  border-color: #1a73e8;
+  background: #fbfdff;
+}
+
+.people2dPersonHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.people2dPersonHead > span:last-child {
+  min-width: 28px;
+  padding: 4px 8px;
+  color: #1a73e8;
+  background: #e8f0fe;
+  border: 1px solid #c5d8f8;
+  border-radius: 999px;
+  text-align: center;
+  font: 800 12px Arial, sans-serif;
+}
+
+.people2dPersonSection {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.people2dPersonSection h3 {
+  margin: 0;
+  color: #777;
+  font: 800 10px Arial, sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.people2dAssignmentList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.people2dAssignmentPill {
+  min-width: 0;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px;
+  color: color-mix(in srgb, var(--cat-color), #222 16%);
+  background: color-mix(in srgb, var(--cat-color), #fff 88%);
+  border: 1px solid color-mix(in srgb, var(--cat-color), #fff 42%);
+  border-radius: 999px;
+  cursor: pointer;
+  font: 800 11px Arial, sans-serif;
+}
+
+.people2dAssignmentPill:hover {
+  border-color: var(--cat-color);
+  background: #fff;
+}
+
+.people2dAssignmentPill span {
+  flex: 0 0 auto;
+  color: #888;
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.people2dAssignmentPill strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.people2dAssignmentPill b {
+  flex: 0 0 auto;
+  color: #999;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.people2dAssignmentPill:hover b {
+  color: #e53e3e;
 }
 
 .people2dCategoryHead {
@@ -213,6 +682,21 @@
   min-height: 100%;
 }
 
+.people2dFocusedCategoryPanel {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--cat-color), #fff 86%), rgba(255,255,255,0.94) 62%);
+  border: 2px solid color-mix(in srgb, var(--cat-color), #fff 24%);
+  border-left-width: 8px;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.07);
+  box-sizing: border-box;
+}
+
 .people2dCategoryToolbar {
   width: 100%;
   min-height: 62px;
@@ -226,6 +710,15 @@
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.07);
   box-sizing: border-box;
+}
+
+.people2dFocusedCategoryPanel .people2dCategoryToolbar {
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .people2dCategoryIdentity {
@@ -313,9 +806,24 @@
   box-shadow: 0 8px 24px rgba(0,0,0,0.06);
 }
 
-.people2dFocus .people2dLeaderLane:first-of-type {
-  background: color-mix(in srgb, var(--cat-color), #fff 86%);
-  border-color: var(--cat-color);
+.people2dFocusedCategoryRows {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.85fr) minmax(260px, 1.15fr);
+  gap: 12px;
+}
+
+.people2dFocusedCategoryPanel .people2dLeaderLane {
+  min-height: 74px;
+  padding: 11px 12px;
+  background: rgba(255,255,255,0.56);
+  border: 1px dashed color-mix(in srgb, var(--cat-color), #fff 22%);
+  box-shadow: none;
+}
+
+.people2dFocusedCategoryPanel .people2dLeaderLane:first-child {
+  background: rgba(255,255,255,0.74);
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--cat-color), #fff 8%);
 }
 
 .people2dLaneTitle {
@@ -333,12 +841,14 @@
 }
 
 .people2dNote {
+  position: relative;
+  overflow: hidden;
   min-height: 170px;
   display: flex;
   flex-direction: column;
   gap: 9px;
   padding: 13px;
-  background: #fff;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--note-color), #fff 84%), #fff 58%);
   border: 2px solid color-mix(in srgb, var(--cat-color), #fff 44%);
   border-radius: 8px;
   box-shadow: 0 6px 16px rgba(0,0,0,0.06);
@@ -346,6 +856,25 @@
 
 .people2dNote:hover {
   border-color: var(--cat-color);
+}
+
+.people2dNotePaintable {
+  cursor: copy;
+}
+
+.people2dNotePaintable:hover {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--cat-color), #fff 76%), #fff 54%);
+}
+
+.people2dNoteColorCorner {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-top: 24px solid var(--note-color);
+  border-left: 24px solid transparent;
+  pointer-events: none;
 }
 
 .people2dNote h3,
@@ -501,8 +1030,8 @@
 
 .layoutLockBtn {
   position: absolute;
-  top: 18px;
-  left: 370px;
+  top: 88px;
+  left: 18px;
   z-index: 10;
   width: 40px;
   height: 40px;
@@ -733,6 +1262,150 @@
   box-shadow: 0 6px 20px rgba(26,115,232,0.4);
 }
 .fab:active { transform: scale(0.96); }
+
+.peopleColorWidget {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  z-index: 35;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.peopleColorToggle {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #555;
+  background: rgba(255,255,255,0.92);
+  border: 1px solid #e4e4e4;
+  border-radius: 50%;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.14);
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+.peopleColorToggle:hover,
+.peopleColorToggleActive {
+  color: #fff;
+  background: #1a73e8;
+  border-color: #1a73e8;
+}
+
+.peopleColorHint {
+  position: absolute;
+  right: 58px;
+  bottom: 4px;
+  min-width: 142px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 9px;
+  color: #555;
+  background: rgba(255,255,255,0.9);
+  border: 1px solid #e4e4e4;
+  border-radius: 9px;
+  box-shadow: 0 3px 14px rgba(0,0,0,0.08);
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+}
+
+.peopleColorHint strong {
+  color: #222;
+  font: 800 12px Arial, sans-serif;
+}
+
+.peopleColorHint small {
+  color: #888;
+  font: 11px Arial, sans-serif;
+}
+
+.peopleColorPanel {
+  width: 244px;
+  max-height: min(420px, calc(100vh - 150px));
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px;
+  background: rgba(255,255,255,0.96);
+  border: 1px solid #e4e4e4;
+  border-radius: 14px;
+  box-shadow: 0 10px 32px rgba(0,0,0,0.16);
+  backdrop-filter: blur(12px);
+}
+
+.peopleColorItem {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 7px;
+  color: #222;
+  background: #fafafa;
+  border: 1px solid #ededed;
+  border-radius: 8px;
+  cursor: copy;
+}
+
+.peopleColorItem:hover,
+.peopleColorItemActive {
+  background: #f0f5ff;
+  border-color: #1a73e8;
+}
+
+.peopleColorDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.08);
+}
+
+.peopleColorName {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: #222;
+  font: 800 12px Arial, sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.peopleColorFilterBtn {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: #777;
+  background: #fff;
+  border: 1px solid #e2e2e2;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.peopleColorFilterBtn:hover,
+.peopleColorFilterBtnActive {
+  color: #fff;
+  background: #1a73e8;
+  border-color: #1a73e8;
+}
+
+.peopleColorEmpty {
+  padding: 10px;
+  color: #aaa;
+  background: #fafafa;
+  border: 1px dashed #ddd;
+  border-radius: 8px;
+  font: 12px Arial, sans-serif;
+  text-align: center;
+}
 
 /* ── Add persona panel ───────────────────────────────────────────────────────── */
 .addPanel {
@@ -1126,10 +1799,41 @@
 .modalConfirm:hover { background: #a93226; }
 
 @media (max-width: 720px) {
+  .peopleToolbar {
+    right: 18px;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .peopleToolbarDimensionGroup,
+  .peopleToolbarFocus,
+  .peopleToolbarView {
+    flex-wrap: wrap;
+  }
+
+  .peopleToolbarFocus {
+    padding-left: 0;
+    border-left: none;
+  }
+
+  .peopleToolbarDimensionGroup {
+    padding-left: 0;
+    border-left: none;
+  }
+
+  .peopleToolbarSpacer {
+    display: none;
+  }
+
   .people2dCategoryToolbar {
     align-items: stretch;
     flex-direction: column;
     gap: 10px;
+  }
+
+  .people2dFocusedCategoryRows {
+    grid-template-columns: 1fr;
   }
 
   .people2dCategoryStats {

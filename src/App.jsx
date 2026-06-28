@@ -289,6 +289,7 @@ export default function App() {
         <div className={styles.view} style={{ display: view === 5 ? 'flex' : 'none' }}>
           <PeoplePage
             peopleRefreshKey={peopleVersion}
+            onNoteOpen={openNotePopup}
             onPeopleChanged={() => setPeopleVersion(v => v + 1)}
           />
         </div>
@@ -300,6 +301,7 @@ export default function App() {
           onClose={closeNotePopup}
           onNoteUpdated={handleNoteUpdated}
           onAssignmentsChanged={handleNoteAssignmentsChanged}
+          onPeopleChanged={() => setPeopleVersion(v => v + 1)}
           onNoteDeleted={handleNoteDeleted}
         />
       )}

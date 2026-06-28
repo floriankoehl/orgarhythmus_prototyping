@@ -5,6 +5,7 @@ import { api, projectsApi } from '../api'
 import DimensionDropUp from './DimensionDropUp'
 import PeopleWidget from './PeopleWidget'
 import PersonaAvatarStack from './PersonaAvatarStack'
+import { useConfirmDialog } from './ConfirmDialog'
 import { usePersonaCursor } from '../hooks/usePersonaCursor'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -2250,6 +2251,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [personas, setPersonas] = useState([])
   const [personaNoteAssignments, setPersonaNoteAssignments] = useState([])
   const [personaCatAssignments, setPersonaCatAssignments] = useState([])
+  const { confirm: confirmDialog, dialog: confirmDialogNode } = useConfirmDialog()
   const activePersona = useMemo(() => personas.find(p => p.id === paintPersonaId) ?? null, [personas, paintPersonaId])
   const personaCursor = usePersonaCursor(activePersona)
   const [floatingPanel, setFloatingPanel] = useState(null)
@@ -2525,12 +2527,24 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
   const catPersonasMap = useMemo(() => {
     const map = {}
+    const seen = new Set()
+    const add = (categoryId, personaId) => {
+      const p = personas.find(p => p.id === personaId)
+      const key = `${categoryId}:${personaId}`
+      if (p && !seen.has(key)) {
+        seen.add(key)
+        ;(map[categoryId] = map[categoryId] || []).push(p)
+      }
+    }
     personaCatAssignments.forEach(a => {
-      const p = personas.find(p => p.id === a.personaId)
-      if (p) (map[a.categoryId] = map[a.categoryId] || []).push(p)
+      add(a.categoryId, a.personaId)
+    })
+    personaNoteAssignments.forEach(a => {
+      const noteDims = assignments[a.noteId] || {}
+      Object.values(noteDims).forEach(categoryId => add(categoryId, a.personaId))
     })
     return map
-  }, [personas, personaCatAssignments])
+  }, [assignments, personas, personaCatAssignments, personaNoteAssignments])
 
   const paintNote = useCallback(async noteId => {
     if (paintPersonaId) {
@@ -2580,13 +2594,36 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       .catch(console.error)
   }, [activeDimId, onPeopleChanged])
 
-  const removePersonaFromLaneCategory = useCallback((personaId, catId) => {
+  const removePersonaFromLaneCategory = useCallback(async (personaId, catId) => {
     if (!personaId || !catId || !activeDimId || activeDimId === FILTER_DIMENSION_ID) return
+    const affectedNoteIds = Object.entries(assignments)
+      .filter(([noteId, dims]) =>
+        dims?.[activeDimId] === catId &&
+        personaNoteAssignments.some(a => a.personaId === personaId && a.noteId === noteId)
+      )
+      .map(([noteId]) => noteId)
+    const affectedNotes = affectedNoteIds
+      .map(noteId => notes.find(note => note.id === noteId))
+      .filter(Boolean)
+    const personaName = personas.find(p => p.id === personaId)?.name || 'this person'
+    const categoryName = categories.find(c => c.id === catId)?.name || 'this category'
+    const ok = await confirmDialog({
+      title: `Remove ${personaName} from ${categoryName}?`,
+      message: 'This will also unassign them from these notes:',
+      items: affectedNotes.map(note => note.title || 'Untitled'),
+      emptyText: 'No note assignments in this category will be removed.',
+      confirmLabel: 'Remove person',
+    })
+    if (!ok) return
     setPersonaCatAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.dimensionId === activeDimId && a.categoryId === catId)))
-    api.unassignPersona(personaId, activeDimId, catId)
+    setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && affectedNoteIds.includes(a.noteId))))
+    Promise.all([
+      api.unassignPersona(personaId, activeDimId, catId),
+      ...affectedNoteIds.map(noteId => api.unassignPersonaFromNote(personaId, noteId)),
+    ])
       .then(() => onPeopleChanged?.())
       .catch(console.error)
-  }, [activeDimId, onPeopleChanged])
+  }, [activeDimId, assignments, categories, confirmDialog, notes, onPeopleChanged, personaNoteAssignments, personas])
 
   const saveFilter = useCallback(async filter => {
     const normalized = normalizeSavedFilter(filter)
@@ -6239,6 +6276,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         </div>,
         document.body
       )}
+      {confirmDialogNode}
     </div>
   )
 }
