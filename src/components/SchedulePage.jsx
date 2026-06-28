@@ -3475,6 +3475,24 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     applyNoteVisibilityFilter(selectedNoteIds)
   }, [applyNoteVisibilityFilter, selectedNoteIds])
 
+  const filterScheduleToPersona = useCallback(personaId => {
+    if (!personaId) return
+    const noteIds = new Set(
+      personaNoteAssignments
+        .filter(assignment => assignment.personaId === personaId)
+        .map(assignment => assignment.noteId)
+    )
+    notes.forEach(note => {
+      const noteDimensions = assignments[note.id] || {}
+      const hasCategoryResponsibility = personaCatAssignments.some(assignment =>
+        assignment.personaId === personaId &&
+        noteDimensions[assignment.dimensionId] === assignment.categoryId
+      )
+      if (hasCategoryResponsibility) noteIds.add(note.id)
+    })
+    applyNoteVisibilityFilter(noteIds)
+  }, [applyNoteVisibilityFilter, assignments, notes, personaCatAssignments, personaNoteAssignments])
+
   const expandEverything = useCallback(() => {
     setVisibleNoteFilterIds(new Set())
     setHiddenCatIds(new Set())
@@ -6305,6 +6323,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         <PeopleWidget
           paintPersonaId={paintPersonaId}
           onPaintPersonaChange={id => { setPaintCat(null); setPaintPersonaId(id) }}
+          onApplyQuickFilter={filterScheduleToPersona}
           expanded={floatingPanel === 'people'}
           onExpandedChange={open => setFloatingPanel(open ? 'people' : null)}
           refreshKey={peopleRefreshKey}

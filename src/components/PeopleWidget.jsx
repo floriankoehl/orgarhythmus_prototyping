@@ -22,6 +22,7 @@ export default function PeopleWidget({
   expanded,
   onExpandedChange,
   refreshKey = 0,
+  onApplyQuickFilter,
 }) {
   const [personas, setPersonas] = useState([])
 
@@ -30,6 +31,9 @@ export default function PeopleWidget({
   }, [refreshKey])
 
   const activePersona = personas.find(p => p.id === paintPersonaId) ?? null
+  const activatePersona = personaId => {
+    onPaintPersonaChange(paintPersonaId === personaId ? null : personaId)
+  }
 
   return (
     <div className={styles.widget} onClick={e => e.stopPropagation()}>
@@ -47,15 +51,22 @@ export default function PeopleWidget({
           {personas.map(persona => {
             const isActive = paintPersonaId === persona.id
             return (
-              <button
+              <div
                 key={persona.id}
                 className={`${styles.item} ${isActive ? styles.itemActive : ''}`}
+                role="button"
+                tabIndex={0}
                 draggable
                 onDragStart={e => {
                   e.dataTransfer.setData('persona-drag', persona.id)
                   e.dataTransfer.effectAllowed = 'all'
                 }}
-                onClick={() => onPaintPersonaChange(isActive ? null : persona.id)}
+                onClick={() => activatePersona(persona.id)}
+                onKeyDown={e => {
+                  if (e.key !== 'Enter' && e.key !== ' ') return
+                  e.preventDefault()
+                  activatePersona(persona.id)
+                }}
                 title={isActive ? `Deactivate ${persona.name}` : `Activate ${persona.name} for assignment`}
               >
                 <img
@@ -69,7 +80,23 @@ export default function PeopleWidget({
                     <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
                   </svg>
                 )}
-              </button>
+                {onApplyQuickFilter && (
+                  <button
+                    type="button"
+                    draggable={false}
+                    className={styles.filterBtn}
+                    title={`Filter now to notes involving ${persona.name}`}
+                    onClick={e => {
+                      e.stopPropagation()
+                      onApplyQuickFilter(persona.id)
+                    }}
+                    onKeyDown={e => e.stopPropagation()}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/>
+                    </svg>
+                  </button>
+                )}
+              </div>
             )
           })}
           {paintPersonaId && (
@@ -87,7 +114,7 @@ export default function PeopleWidget({
           paintPersonaId ? styles.togglePainting : '',
         ].filter(Boolean).join(' ')}
         onClick={() => onExpandedChange(!expanded)}
-        title={expanded ? 'Collapse people panel' : 'Assign people to notes / categories'}
+        title={expanded ? 'Collapse people panel' : 'Assign people or filter notes by responsibility'}
       >
         <PeopleIcon size={16} />
       </button>
@@ -95,7 +122,7 @@ export default function PeopleWidget({
       {!expanded && (
         <span className={styles.hint}>
           <strong>People</strong>
-          <small>{paintPersonaId && activePersona ? `Assigning ${activePersona.name}` : 'Assign people to notes / categories'}</small>
+          <small>{paintPersonaId && activePersona ? `Assigning ${activePersona.name}` : 'Assign people or filter the current view once'}</small>
         </span>
       )}
     </div>
