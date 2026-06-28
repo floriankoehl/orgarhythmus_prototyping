@@ -2208,7 +2208,7 @@ function ScheduleColorLegendWidget({
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged }) {
+export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, externalResolveRequest = null, onExternalResolveReturn }) {
   // ── Timeline anchor ────────────────────────────────────────────────────────
   // Keep the module-level anchor in sync with the project's creation date so that
   // col 0 = project creation date (fixed, immutable left boundary of the timeline).
@@ -2495,6 +2495,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const capturePerspectiveStateRef = useRef(null)
   const restorePerspectiveSnapshotRef = useRef(null)
   const resolveDependencySelectionRef = useRef(null)
+  const externalResolveHandledRef = useRef(null)
   const reportDependencyViolationsRef = useRef(null)
   const [dragOverNoteId, setDragOverNoteId] = useState(null)
   const [dragOverLaneCatId, setDragOverLaneCatId] = useState(null)
@@ -3553,8 +3554,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       const timeSlot = timeSlotsRef.current.find(m => m.id === msId)
       if (timeSlot) noteIds.add(timeSlot.noteId)
     })
-    const snapshot = capturePerspectiveStateRef.current?.()
-    if (snapshot) setDependencyResolveSnapshot(prev => prev ?? snapshot)
+    if (options.captureSnapshot !== false) {
+      const snapshot = capturePerspectiveStateRef.current?.()
+      if (snapshot) setDependencyResolveSnapshot(prev => prev ?? snapshot)
+    }
     if (resolveZoom) {
       const nextZoom = normalizeTimeZoom(resolveZoom)
       timeZoomRef.current = nextZoom
@@ -3574,6 +3577,84 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     clearWarningPrompt()
   }, [applyNoteVisibilityFilter, clearWarningPrompt, pendingDependencyResolveIds])
   resolveDependencySelectionRef.current = resolveDependencySelection
+
+  useEffect(() => {
+    if (!isActive || !externalResolveRequest?.id || timeSlots.length === 0) return
+    if (externalResolveHandledRef.current === externalResolveRequest.id) return
+    const requestedIds = externalResolveRequest.timeSlotIds ?? []
+    if (requestedIds.length > 0 && !requestedIds.every(id => timeSlots.some(timeSlot => timeSlot.id === id))) return
+    externalResolveHandledRef.current = externalResolveRequest.id
+    setDependencyResolveSnapshot(null)
+    if (externalResolveRequest.mode === 'inspect') {
+      const context = externalResolveRequest.calendarContext ?? {}
+      const nextDimId = dimensions.some(dimension => dimension.id === context.canvasDimId) ? context.canvasDimId : ''
+      const nextColorDimId = dimensions.some(dimension => dimension.id === context.colorDimId) ? context.colorDimId : ''
+      const hidden = new Set(Array.isArray(context.hiddenCatIds) ? context.hiddenCatIds : [])
+      if (context.focusedCatId && nextDimId) {
+        categories
+          .filter(category => category.dimensionId === nextDimId && category.id !== context.focusedCatId)
+          .forEach(category => hidden.add(category.id))
+        if (context.focusedCatId !== UNASSIGNED_LANE) hidden.add(UNASSIGNED_LANE)
+      }
+      const zoom = externalResolveRequest.timeScale === 'month'
+        ? 'months'
+        : externalResolveRequest.timeScale === 'day' ? 'days' : 'minutes'
+      restoringPerspectiveRef.current = nextDimId !== activeDimId || activeLaneFilterId !== ''
+      restoringColorRef.current = nextColorDimId !== colorDimId
+      timeZoomRef.current = zoom
+      setTimeZoom(zoom)
+      setSpacing(prev => ({ ...prev, colW: Math.max(prev.colW, minColWidthForZoom(zoom)) }))
+      setActiveDimId(nextDimId)
+      setActiveLaneFilterId('')
+      setHiddenCatIds(hidden)
+      setHiddenNotesByLane({})
+      setVisibleNoteFilterIds(new Set(context.visibleNoteIds ?? []))
+      setColorDimId(nextColorDimId)
+      setActiveFilterIds([])
+      setQuickFilters([])
+      setPaintCat(null)
+      setPaintPersonaId(null)
+      setSelectedDepIds(new Set())
+      setSelectedIds(new Set(requestedIds))
+      setPinnedTimeSlotId(requestedIds[0] ?? null)
+      setPendingConflictTimeSlotIds(new Set(requestedIds))
+      setActivePerspectiveId(NONE_PERSPECTIVE_ID)
+      clearWarningPrompt()
+      return
+    }
+    const conflictNoteIds = new Set(
+      requestedIds
+        .map(id => timeSlots.find(timeSlot => timeSlot.id === id)?.noteId)
+        .filter(Boolean)
+    )
+    restoringPerspectiveRef.current = activeDimId !== '' || activeLaneFilterId !== ''
+    restoringColorRef.current = colorDimId !== ''
+    timeZoomRef.current = 'minutes'
+    setTimeZoom('minutes')
+    setSpacing(prev => ({ ...prev, colW: Math.max(prev.colW, minColWidthForZoom('minutes')) }))
+    setMode('timeSlot')
+    setActiveDimId('')
+    setActiveLaneFilterId('')
+    setColorDimId('')
+    setActiveFilterIds([])
+    setQuickFilters([])
+    setVisibleNoteFilterIds(conflictNoteIds)
+    setHiddenCatIds(new Set())
+    setHiddenNotesByLane({})
+    setRevealedConflictNoteIds(new Set())
+    setPaintCat(null)
+    setPaintPersonaId(null)
+    setShowDeps(true)
+    setHideCrossCatDeps(false)
+    setShowCrucialDepsOnly(false)
+    setSelectedDepIds(new Set())
+    setSelectedIds(new Set(requestedIds))
+    setPinnedTimeSlotId(requestedIds[0] ?? null)
+    setPendingConflictTimeSlotIds(new Set(requestedIds))
+    setPendingDependencyResolveIds(new Set())
+    setActivePerspectiveId(NONE_PERSPECTIVE_ID)
+    clearWarningPrompt()
+  }, [externalResolveRequest, isActive, resolveDependencySelection, timeSlots.length, dimensions, categories, activeDimId, activeLaneFilterId, colorDimId, clearWarningPrompt])
 
   const isNoteHighlighted = noteId => selectedNoteIds.has(noteId) || noteId === clickedNoteId
 
@@ -5460,11 +5541,15 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       appliedDefaultRef.current = false
       return
     }
+    if (externalResolveRequest) {
+      appliedDefaultRef.current = true
+      return
+    }
     if (appliedDefaultRef.current || dimensions.length === 0) return
     const defaultPerspective = perspectiveOptions.find(p => p.id === defaultPerspectiveId) ?? nonePerspective
     appliedDefaultRef.current = true
     applyPerspective(defaultPerspective)
-  }, [applyPerspective, defaultPerspectiveId, dimensions.length, isActive, nonePerspective, perspectiveOptions])
+  }, [applyPerspective, defaultPerspectiveId, dimensions.length, isActive, nonePerspective, perspectiveOptions, externalResolveRequest])
 
   const handlePanelResizeStart = useCallback(e => {
     if (e.button !== 0) return
@@ -6435,6 +6520,16 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       </div>
 
       <div className={styles.floatingViewTools}>
+	        {externalResolveRequest && (
+	          <button
+	            type="button"
+            className={styles.dependencyResolveReturnBtn}
+            onClick={onExternalResolveReturn}
+          >
+            <strong>{externalResolveRequest.mode === 'inspect' ? 'Calendar inspection' : 'Calendar resolve'}</strong>
+	            <span>Return to the previous calendar view</span>
+	          </button>
+	        )}
 	        {dependencyResolveSnapshot && (
 	          <button
 	            type="button"

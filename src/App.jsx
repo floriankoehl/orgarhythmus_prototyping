@@ -58,8 +58,26 @@ export default function App() {
   const [noteDataVersion, setNoteDataVersion] = useState(0)
   const [dimVersion, setDimVersion]   = useState(0)
   const [peopleVersion, setPeopleVersion] = useState(0)
+  const [calendarResolveRequest, setCalendarResolveRequest] = useState(null)
+  const [calendarRestoreRequest, setCalendarRestoreRequest] = useState(null)
   const [popupNoteId, setPopupNoteId] = useState(null)
   const [toast, setToast]             = useState(null)
+
+  const openScheduleResolverFromCalendar = request => {
+    setCalendarResolveRequest({ ...request, id: request?.id || crypto.randomUUID() })
+    setView(3)
+  }
+
+  const returnToCalendarFromResolver = () => {
+    if (calendarResolveRequest?.calendarState) {
+      setCalendarRestoreRequest({
+        id: crypto.randomUUID(),
+        state: calendarResolveRequest.calendarState,
+      })
+    }
+    setCalendarResolveRequest(null)
+    setView(6)
+  }
 
   useEffect(() => {
     let alive = true
@@ -91,6 +109,8 @@ export default function App() {
     setView(0)
     setRefreshKey(0)
     setNoteDataVersion(0)
+    setCalendarResolveRequest(null)
+    setCalendarRestoreRequest(null)
     setAppScreen('home')
     setAuthState('authenticated')
   }
@@ -105,6 +125,8 @@ export default function App() {
     setView(0)
     setRefreshKey(0)
     setNoteDataVersion(0)
+    setCalendarResolveRequest(null)
+    setCalendarRestoreRequest(null)
     setAppScreen('home')
     setAuthState('anonymous')
   }
@@ -118,6 +140,8 @@ export default function App() {
     setView(0)
     setRefreshKey(0)
     setNoteDataVersion(0)
+    setCalendarResolveRequest(null)
+    setCalendarRestoreRequest(null)
     setAppScreen('workspace')
   }
 
@@ -129,6 +153,8 @@ export default function App() {
     setToast(null)
     setPopupNoteId(null)
     setNoteDataVersion(0)
+    setCalendarResolveRequest(null)
+    setCalendarRestoreRequest(null)
     setAppScreen('home')
   }
 
@@ -283,6 +309,8 @@ export default function App() {
             peopleRefreshKey={peopleVersion}
             onDimChanged={() => setDimVersion(v => v + 1)}
             onPeopleChanged={() => setPeopleVersion(v => v + 1)}
+            externalResolveRequest={calendarResolveRequest}
+            onExternalResolveReturn={returnToCalendarFromResolver}
           />
         </div>
         <div className={styles.view} style={{ display: view === 4 ? 'flex' : 'none' }}>
@@ -302,6 +330,11 @@ export default function App() {
             isActive={view === 6}
             onNoteOpen={openNotePopup}
             refreshKey={refreshKey}
+            peopleRefreshKey={peopleVersion}
+            onPeopleChanged={() => setPeopleVersion(v => v + 1)}
+            restoreRequest={calendarRestoreRequest}
+            onRestoreConsumed={() => setCalendarRestoreRequest(null)}
+            onRequestScheduleResolve={openScheduleResolverFromCalendar}
           />
         </div>
       </div>

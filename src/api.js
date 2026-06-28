@@ -186,6 +186,12 @@ export const api = {
   updateClassificationPerspective:  (id, patch)     => req('PATCH',  `/classification-perspectives/${id}`, patch),
   deleteClassificationPerspective:  (id)            => req('DELETE', `/classification-perspectives/${id}`),
 
+  // Calendar perspectives
+  getCalendarPerspectives:    ()              => req('GET',    '/calendar-perspectives'),
+  createCalendarPerspective:  (perspective)   => req('POST',   '/calendar-perspectives', perspective),
+  updateCalendarPerspective:  (id, patch)     => req('PATCH',  `/calendar-perspectives/${id}`, patch),
+  deleteCalendarPerspective:  (id)            => req('DELETE', `/calendar-perspectives/${id}`),
+
   // Time slots
   getTimeSlots:         ()        => req('GET',    '/time-slots'),
   createTimeSlot:       (data)    => req('POST',   '/time-slots', data),

@@ -235,6 +235,14 @@ def _init_db():
             )
         """)
         con.execute("""
+            CREATE TABLE IF NOT EXISTS calendar_perspectives (
+                id         TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL DEFAULT 'default',
+                name       TEXT NOT NULL,
+                state_json TEXT NOT NULL DEFAULT '{}'
+            )
+        """)
+        con.execute("""
             CREATE TABLE IF NOT EXISTS transaction_history (
                 id               TEXT PRIMARY KEY,
                 project_id       TEXT NOT NULL DEFAULT 'default',
@@ -392,6 +400,7 @@ def _migrate():
         for table, cols in {
             "schedule_perspectives": ("state_json",),
             "classification_perspectives": ("state_json",),
+            "calendar_perspectives": ("state_json",),
             "transaction_history": ("transaction_json", "before_json", "after_json"),
         }.items():
             table_exists = con.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
@@ -432,7 +441,7 @@ def _migrate():
             con.execute("ALTER TABLE users ADD COLUMN is_superuser INTEGER NOT NULL DEFAULT 0")
 
         # Add project_id to tables that need it
-        for table in ['notes', 'dimensions', 'saved_filters', 'schedule_perspectives', 'classification_perspectives']:
+        for table in ['notes', 'dimensions', 'saved_filters', 'schedule_perspectives', 'classification_perspectives', 'calendar_perspectives']:
             cols = [r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()]
             if 'project_id' not in cols:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default'")
@@ -818,6 +827,15 @@ class ClassificationPerspectivePatch(BaseModel):
     name: Optional[str] = None
     state: Optional[dict] = None
 
+class CalendarPerspectiveIn(BaseModel):
+    id: Optional[str] = None
+    name: str
+    state: dict = {}
+
+class CalendarPerspectivePatch(BaseModel):
+    name: Optional[str] = None
+    state: Optional[dict] = None
+
 class TransactionPayload(BaseModel):
     id: Optional[str] = None
     type: str
@@ -954,6 +972,14 @@ def _classification_perspective(row) -> dict:
         state = {}
     return {"id": d["id"], "name": d["name"], "state": state}
 
+def _calendar_perspective(row) -> dict:
+    d = dict(row)
+    try:
+        state = json.loads(d["state_json"] or "{}")
+    except json.JSONDecodeError:
+        state = {}
+    return {"id": d["id"], "name": d["name"], "state": state}
+
 def _normalize_filter_payload(data) -> tuple[str, str, str | None]:
     gate = data.gate if data.gate in ("AND", "OR") else "AND"
     selections = {}
@@ -1076,6 +1102,12 @@ def _project_id_for_schedule_perspective(con, perspective_id: str) -> str:
 
 def _project_id_for_classification_perspective(con, perspective_id: str) -> str:
     row = con.execute("SELECT project_id FROM classification_perspectives WHERE id = ?", (perspective_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Perspective not found")
+    return row["project_id"]
+
+def _project_id_for_calendar_perspective(con, perspective_id: str) -> str:
+    row = con.execute("SELECT project_id FROM calendar_perspectives WHERE id = ?", (perspective_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Perspective not found")
     return row["project_id"]
@@ -2042,8 +2074,9 @@ def get_project_stats(project_id: str, user: dict = Depends(current_user)):
         perspectives = con.execute(
             """SELECT
                 (SELECT COUNT(*) FROM schedule_perspectives WHERE project_id = ?) +
-                (SELECT COUNT(*) FROM classification_perspectives WHERE project_id = ?)""",
-            (project_id, project_id)
+                (SELECT COUNT(*) FROM classification_perspectives WHERE project_id = ?) +
+                (SELECT COUNT(*) FROM calendar_perspectives WHERE project_id = ?)""",
+            (project_id, project_id, project_id)
         ).fetchone()[0]
     return {
         "notes": notes,
@@ -2089,6 +2122,7 @@ def delete_project(project_id: str, user: dict = Depends(current_user)):
         con.execute("DELETE FROM saved_filters WHERE project_id = ?", (project_id,))
         con.execute("DELETE FROM schedule_perspectives WHERE project_id = ?", (project_id,))
         con.execute("DELETE FROM classification_perspectives WHERE project_id = ?", (project_id,))
+        con.execute("DELETE FROM calendar_perspectives WHERE project_id = ?", (project_id,))
         con.execute("DELETE FROM transaction_history WHERE project_id = ?", (project_id,))
         con.execute("DELETE FROM projects WHERE id = ?", (project_id,))
 
@@ -3072,6 +3106,54 @@ def delete_classification_perspective(perspective_id: str, user: dict = Depends(
         con.execute("DELETE FROM classification_perspectives WHERE id = ?", (perspective_id,))
 
 
+# ── Calendar perspectives ─────────────────────────────────────────────────────
+@app.get("/calendar-perspectives")
+def list_calendar_perspectives(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    with _db() as con:
+        rows = con.execute(
+            "SELECT * FROM calendar_perspectives WHERE project_id = ? ORDER BY name COLLATE NOCASE", (project_id,)
+        ).fetchall()
+    return [_calendar_perspective(row) for row in rows]
+
+@app.post("/calendar-perspectives", status_code=201)
+def create_calendar_perspective(data: CalendarPerspectiveIn, project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    perspective_id = data.id or str(uuid.uuid4())
+    name = data.name.strip() or "Untitled perspective"
+    with _db() as con:
+        if con.execute("SELECT id FROM calendar_perspectives WHERE id = ?", (perspective_id,)).fetchone():
+            raise HTTPException(409, "Perspective already exists")
+        con.execute(
+            "INSERT INTO calendar_perspectives (id, project_id, name, state_json) VALUES (?, ?, ?, ?)",
+            (perspective_id, project_id, name, json.dumps(data.state or {})),
+        )
+        row = con.execute("SELECT * FROM calendar_perspectives WHERE id = ?", (perspective_id,)).fetchone()
+    return _calendar_perspective(row)
+
+@app.patch("/calendar-perspectives/{perspective_id}")
+def update_calendar_perspective(perspective_id: str, data: CalendarPerspectivePatch, user: dict = Depends(current_user)):
+    with _db() as con:
+        assert_project_access(_project_id_for_calendar_perspective(con, perspective_id), user)
+        fields, values = [], []
+        if data.name is not None:
+            fields.append("name = ?")
+            values.append(data.name.strip() or "Untitled perspective")
+        if data.state is not None:
+            fields.append("state_json = ?")
+            values.append(json.dumps(data.state or {}))
+        if fields:
+            con.execute(f"UPDATE calendar_perspectives SET {', '.join(fields)} WHERE id = ?", (*values, perspective_id))
+        row = con.execute("SELECT * FROM calendar_perspectives WHERE id = ?", (perspective_id,)).fetchone()
+    return _calendar_perspective(row)
+
+@app.delete("/calendar-perspectives/{perspective_id}", status_code=204)
+def delete_calendar_perspective(perspective_id: str, user: dict = Depends(current_user)):
+    with _db() as con:
+        assert_project_access(_project_id_for_calendar_perspective(con, perspective_id), user)
+        con.execute("DELETE FROM calendar_perspectives WHERE id = ?", (perspective_id,))
+
+
 # ── Transactions ──────────────────────────────────────────────────────────────
 @app.get("/transactions/history")
 def get_transaction_history(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
@@ -3442,9 +3524,10 @@ def export_database(project_id: str = Query(...), user: dict = Depends(current_u
             saved_filters = con.execute(f"SELECT * FROM saved_filters WHERE project_id IN ({project_ph})", project_ids).fetchall()
             schedule_perspectives = con.execute(f"SELECT * FROM schedule_perspectives WHERE project_id IN ({project_ph})", project_ids).fetchall()
             classification_perspectives = con.execute(f"SELECT * FROM classification_perspectives WHERE project_id IN ({project_ph})", project_ids).fetchall()
+            calendar_perspectives = con.execute(f"SELECT * FROM calendar_perspectives WHERE project_id IN ({project_ph})", project_ids).fetchall()
             transaction_history = con.execute(f"SELECT * FROM transaction_history WHERE project_id IN ({project_ph})", project_ids).fetchall()
         else:
-            notes = dimensions = saved_filters = schedule_perspectives = classification_perspectives = transaction_history = []
+            notes = dimensions = saved_filters = schedule_perspectives = classification_perspectives = calendar_perspectives = transaction_history = []
 
         note_ids = [row["id"] for row in notes]
         dim_ids = [row["id"] for row in dimensions]
@@ -3496,6 +3579,7 @@ def export_database(project_id: str = Query(...), user: dict = Depends(current_u
                 "saved_filters":              rows(saved_filters,              ("selections_json",)),
                 "schedule_perspectives":      rows(schedule_perspectives,      ("state_json",)),
                 "classification_perspectives": rows(classification_perspectives, ("state_json",)),
+                "calendar_perspectives":      rows(calendar_perspectives,      ("state_json",)),
                 "transaction_history":        rows(transaction_history,        ("transaction_json", "before_json", "after_json")),
             },
         }

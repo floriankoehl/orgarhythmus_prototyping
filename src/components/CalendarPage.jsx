@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../api'
+import { usePersonaCursor } from '../hooks/usePersonaCursor'
+import PeopleWidget from './PeopleWidget'
+import PersonaAvatarStack from './PersonaAvatarStack'
 import styles from './CalendarPage.module.css'
 
 const DAY_MINUTES = 24 * 60
@@ -17,6 +20,167 @@ const SCALE_OPTIONS = [
   { id: 'day', label: 'Day scale' },
   { id: 'month', label: 'Month scale' },
 ]
+const NONE_PERSPECTIVE_ID = '__none__'
+const CALENDAR_DEFAULT_PERSPECTIVE_KEY = 'calendar.defaultPerspectiveId'
+
+function newClientId(prefix) {
+  const random = window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  return `${prefix}-${random}`
+}
+
+function normalizePerspective(perspective) {
+  return {
+    ...perspective,
+    name: (perspective?.name || 'Untitled perspective').trim(),
+    state: perspective?.state ?? {},
+  }
+}
+
+function SaveIcon({ size = 12 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M5 3h12l2 2v16H5V3zm2 2v5h9V5H7zm1 10v4h8v-4H8zm10-8.17V19h-1v-6H7v6H6V5h10.17L18 6.83z"/>
+    </svg>
+  )
+}
+
+function PerspectiveMenu({ perspectives, activePerspectiveId, defaultPerspectiveId, open, onOpenChange, onApply, onCreate, onUpdate, onRename, onDelete, onSetDefault }) {
+  const [name, setName] = useState('')
+  const [editingId, setEditingId] = useState('')
+  const [editingName, setEditingName] = useState('')
+  const wrapRef = useRef()
+  const wheelAtRef = useRef(0)
+  const applyTimerRef = useRef(null)
+  const active = perspectives.find(perspective => perspective.id === activePerspectiveId)
+  const canSaveActive = Boolean(active && !active.readOnly)
+
+  useEffect(() => {
+    if (!open) return
+    const close = event => { if (!wrapRef.current?.contains(event.target)) onOpenChange(false) }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [onOpenChange, open])
+
+  useEffect(() => () => {
+    if (applyTimerRef.current) window.clearTimeout(applyTimerRef.current)
+  }, [])
+
+  const create = () => {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    onCreate(trimmed)
+    setName('')
+  }
+
+  const cycle = deltaY => {
+    if (perspectives.length === 0) return
+    const now = Date.now()
+    if (now - wheelAtRef.current < 180) return
+    wheelAtRef.current = now
+    const activeIndex = Math.max(0, perspectives.findIndex(perspective => perspective.id === activePerspectiveId))
+    const direction = deltaY > 0 ? 1 : -1
+    onApply(perspectives[(activeIndex + direction + perspectives.length) % perspectives.length])
+  }
+
+  const commitRename = () => {
+    const trimmed = editingName.trim()
+    if (editingId && trimmed) onRename(editingId, trimmed)
+    setEditingId('')
+    setEditingName('')
+  }
+
+  const applyFromMenu = perspective => {
+    if (applyTimerRef.current) window.clearTimeout(applyTimerRef.current)
+    applyTimerRef.current = window.setTimeout(() => {
+      onApply(perspective)
+      onOpenChange(false)
+      applyTimerRef.current = null
+    }, 180)
+  }
+
+  return (
+    <div ref={wrapRef} className={styles.perspectiveWrap}>
+      <button
+        className={styles.perspectiveToolbarSaveBtn}
+        title={canSaveActive ? 'Update current perspective snapshot' : 'None cannot be saved'}
+        disabled={!canSaveActive}
+        onClick={() => canSaveActive && onUpdate(active.id)}>
+        <SaveIcon />
+      </button>
+      <button
+        className={`${styles.perspectiveBtn} ${open ? styles.perspectiveBtnOpen : ''}`}
+        onWheel={event => { event.preventDefault(); cycle(event.deltaY) }}
+        onClick={() => onOpenChange(!open)}>
+        <span>{active?.name ?? 'None'}</span>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z" /></svg>
+      </button>
+      {!open && (
+        <span className={styles.floatingHint}>
+          <strong>Perspective</strong>
+          <small>Switch saved calendar views</small>
+        </span>
+      )}
+      {open && (
+        <div className={styles.perspectiveMenu}>
+          <div className={styles.perspectiveCreateRow}>
+            <input
+              value={name}
+              onChange={event => setName(event.target.value)}
+              onKeyDown={event => { if (event.key === 'Enter') create() }}
+              placeholder="Perspective name"
+            />
+            <button onClick={create}>Save</button>
+          </div>
+          <div className={styles.perspectiveList}>
+            {perspectives.map(perspective => (
+              <div key={perspective.id} className={`${styles.perspectiveItem} ${perspective.id === activePerspectiveId ? styles.perspectiveItemActive : ''}`}>
+                {editingId === perspective.id ? (
+                  <input
+                    className={styles.perspectiveRenameInput}
+                    value={editingName}
+                    autoFocus
+                    onChange={event => setEditingName(event.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter') commitRename()
+                      if (event.key === 'Escape') { setEditingId(''); setEditingName('') }
+                    }}
+                  />
+                ) : (
+                  <button
+                    className={styles.perspectiveApplyBtn}
+                    onClick={() => applyFromMenu(perspective)}
+                    onDoubleClick={event => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      if (!perspective.readOnly) {
+                        setEditingId(perspective.id)
+                        setEditingName(perspective.name)
+                      }
+                    }}>
+                    <span>{perspective.name}</span>
+                  </button>
+                )}
+                <button
+                  className={`${styles.perspectiveIconBtn} ${defaultPerspectiveId === perspective.id ? styles.perspectiveIconBtnActive : ''}`}
+                  title="Use as calendar default"
+                  onClick={() => onSetDefault(perspective.id)}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27z"/></svg>
+                </button>
+                <button className={styles.perspectiveIconBtn} title={perspective.readOnly ? 'None cannot be saved' : 'Update snapshot'} disabled={perspective.readOnly} onClick={() => !perspective.readOnly && onUpdate(perspective.id)}>
+                  <SaveIcon />
+                </button>
+                <button className={styles.perspectiveIconBtn} title={perspective.readOnly ? 'None cannot be deleted' : 'Delete'} disabled={perspective.readOnly} onClick={() => !perspective.readOnly && onDelete(perspective.id)}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 4l1-1h6l1 1h4v2H4V4h4z"/></svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 function makeColorCursor(color) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="10" fill="${color}" stroke="white" stroke-width="2"/></svg>`
@@ -49,6 +213,12 @@ function addMinutes(date, minutes) {
 
 function minutesBetweenDates(start, end) {
   return Math.round((end.getTime() - start.getTime()) / 60000)
+}
+
+function calendarDayCol(anchor, date) {
+  const anchorUtc = Date.UTC(anchor.getFullYear(), anchor.getMonth(), anchor.getDate())
+  const dateUtc = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())
+  return Math.round((dateUtc - anchorUtc) / 86400000) * DAY_MINUTES
 }
 
 function calendarMonthBoundaryMinute(anchor, col) {
@@ -95,6 +265,13 @@ function dayKey(date) {
   const m = String(date.getMonth() + 1).padStart(2, '0')
   const d = String(date.getDate()).padStart(2, '0')
   return `${y}-${m}-${d}`
+}
+
+function dateFromDayKey(value, fallback = new Date()) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return localMidnight(fallback)
+  const parsed = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+  return Number.isNaN(parsed.getTime()) ? localMidnight(fallback) : parsed
 }
 
 function fmtDay(date) {
@@ -527,8 +704,13 @@ function ColorLegendWidget({ dimensions, categories, colorDimId, onColorDimensio
   )
 }
 
-function EventPill({ event, day, compact = false, onNoteOpen, paintCat, onPaint }) {
+function EventPill({ event, day, compact = false, minimal = false, onNoteOpen, paintCat, onPaint, paintPersonaId, onPersonaPaint, onRemovePersona, draggable = false, onDragStart, onDragEnd, onContextMenu }) {
   const handleClick = e => {
+    if (paintPersonaId) {
+      e.stopPropagation()
+      onPersonaPaint?.(event.noteId)
+      return
+    }
     if (paintCat) {
       e.stopPropagation()
       onPaint?.(event.noteId)
@@ -537,28 +719,47 @@ function EventPill({ event, day, compact = false, onNoteOpen, paintCat, onPaint 
     onNoteOpen?.(event.noteId)
   }
 
+  const hoverDetails = [
+    event.title,
+    `${event.scale.charAt(0).toUpperCase()}${event.scale.slice(1)} scale`,
+    rangeLabel(event, day),
+    event.locationCategory?.name,
+  ].filter(Boolean).join(' · ')
+
   return (
     <button
       type="button"
-      className={`${styles.eventPill} ${compact ? styles.eventPillCompact : ''}`}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onContextMenu={menuEvent => onContextMenu?.(menuEvent, event)}
+      className={`${styles.eventPill} ${compact ? styles.eventPillCompact : ''} ${minimal ? styles.eventPillMinimal : ''}`}
       style={colorStyle(event.color)}
       onClick={handleClick}
-      title={`${event.title} · ${rangeLabel(event, day)}`}
+      title={hoverDetails}
     >
       <span className={styles.eventColor} />
-      <span className={styles.eventText}>
-        {!compact && <span className={styles.eventTime}>{scaleLabel(event.scale)} · {rangeLabel(event, day)}</span>}
-        <span className={styles.eventTitle}>{event.title}</span>
-        {!compact && event.locationCategory && <span className={styles.eventMeta}>{event.locationCategory.name}</span>}
-      </span>
+      <div className={styles.eventText}>
+        {!compact && !minimal && <span className={styles.eventTime}>{scaleLabel(event.scale)} · {rangeLabel(event, day)}</span>}
+        <div className={styles.eventTitleRow}>
+          <span className={styles.eventTitle}>{event.title}</span>
+          <PersonaAvatarStack personas={event.personas} onRemove={personaId => onRemovePersona?.(personaId, event.noteId)} />
+        </div>
+        {!compact && !minimal && event.locationCategory && <span className={styles.eventMeta}>{event.locationCategory.name}</span>}
+      </div>
     </button>
   )
 }
 
-function SpanningEvent({ event, start, end, lane = null, onNoteOpen, paintCat, onPaint }) {
+function SpanningEvent({ event, start, end, lane = null, onNoteOpen, paintCat, onPaint, paintPersonaId, onPersonaPaint, onRemovePersona, onContextMenu, draggable = false, onDragStart, onDragEnd, editable = false, onResizeStart }) {
   const left = Math.max(0, ((Math.max(event.start, start) - start) / (end - start)) * 100)
   const right = Math.max(0, ((end - Math.min(event.end, end)) / (end - start)) * 100)
   const handleClick = e => {
+    if (paintPersonaId) {
+      e.stopPropagation()
+      onPersonaPaint?.(event.noteId)
+      return
+    }
     if (paintCat) {
       e.stopPropagation()
       onPaint?.(event.noteId)
@@ -570,7 +771,10 @@ function SpanningEvent({ event, start, end, lane = null, onNoteOpen, paintCat, o
   return (
     <button
       type="button"
-      className={styles.spanningEvent}
+      className={`${styles.spanningEvent} ${editable ? styles.spanningEventEditable : ''}`}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       style={{
         ...colorStyle(event.color),
         left: `${left}%`,
@@ -578,15 +782,23 @@ function SpanningEvent({ event, start, end, lane = null, onNoteOpen, paintCat, o
         ...(lane === null ? {} : { top: `${5 + lane * 27}px`, bottom: 'auto', height: '23px' }),
       }}
       onClick={handleClick}
+      onContextMenu={menuEvent => onContextMenu?.(menuEvent, event)}
       title={`${event.title} · ${scaleLabel(event.scale)}`}
     >
+      {editable && event.start >= start && (
+        <span className={`${styles.spanningResizeHandle} ${styles.spanningResizeHandleLeft}`} onMouseDown={mouseEvent => onResizeStart?.(mouseEvent, event, 'left')} aria-hidden="true" />
+      )}
       <span>{scaleLabel(event.scale)}</span>
       <strong>{event.title}</strong>
+      <PersonaAvatarStack personas={event.personas} onRemove={personaId => onRemovePersona?.(personaId, event.noteId)} />
+      {editable && event.end <= end && (
+        <span className={`${styles.spanningResizeHandle} ${styles.spanningResizeHandleRight}`} onMouseDown={mouseEvent => onResizeStart?.(mouseEvent, event, 'right')} aria-hidden="true" />
+      )}
     </button>
   )
 }
 
-export default function CalendarPage({ notes = [], project = null, isActive = false, onNoteOpen, refreshKey = 0 }) {
+export default function CalendarPage({ notes = [], project = null, isActive = false, onNoteOpen, refreshKey = 0, peopleRefreshKey = 0, onPeopleChanged, restoreRequest = null, onRestoreConsumed, onRequestScheduleResolve }) {
   const dateWheelAtRef = useRef(0)
   const [view, setView] = useState('today')
   const [focusDate, setFocusDate] = useState(() => localMidnight())
@@ -594,6 +806,17 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   const [dimensions, setDimensions] = useState([])
   const [categories, setCategories] = useState([])
   const [assignments, setAssignments] = useState({})
+  const [perspectives, setPerspectives] = useState([])
+  const [activePerspectiveId, setActivePerspectiveId] = useState(NONE_PERSPECTIVE_ID)
+  const [defaultPerspectiveId, setDefaultPerspectiveId] = useState(() => {
+    try { return window.localStorage.getItem(CALENDAR_DEFAULT_PERSPECTIVE_KEY) || NONE_PERSPECTIVE_ID }
+    catch { return NONE_PERSPECTIVE_ID }
+  })
+  const appliedDefaultRef = useRef(false)
+  const restoringPerspectiveRef = useRef(false)
+  const [personas, setPersonas] = useState([])
+  const [personaNoteAssignments, setPersonaNoteAssignments] = useState([])
+  const [noteInheritance, setNoteInheritance] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [clock, setClock] = useState(() => new Date())
@@ -604,6 +827,17 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   const [hiddenCatIds, setHiddenCatIds] = useState(() => new Set())
   const [visibleScales, setVisibleScales] = useState(() => new Set(SCALE_OPTIONS.map(option => option.id)))
   const [paintCat, setPaintCat] = useState(null)
+  const [paintPersonaId, setPaintPersonaId] = useState(null)
+  const [peopleOpen, setPeopleOpen] = useState(false)
+  const [perspectiveOpen, setPerspectiveOpen] = useState(false)
+  const [editPreview, setEditPreview] = useState(null)
+  const [calendarWarning, setCalendarWarning] = useState(null)
+  const [timeSlotContextMenu, setTimeSlotContextMenu] = useState(null)
+  const suppressOpenRef = useRef(null)
+  const restoreHandledRef = useRef(null)
+  const dayTimelineRef = useRef(null)
+  const weekViewRef = useRef(null)
+  const monthGridRef = useRef(null)
 
   useEffect(() => {
     if (!isActive) return
@@ -615,13 +849,21 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
       api.getDimensions(),
       api.getAllCategories(),
       api.getAssignments(),
+      api.getPersonas(),
+      api.getDirectPersonaNoteAssignments(),
+      api.getCalendarPerspectives(),
+      api.getNoteInheritance(),
     ])
-      .then(([slots, dims, cats, rows]) => {
+      .then(([slots, dims, cats, rows, loadedPersonas, loadedPersonaAssignments, loadedPerspectives, loadedInheritance]) => {
         if (!alive) return
         setTimeSlots(slots || [])
         setDimensions(dims || [])
         setCategories(cats || [])
         setAssignments(assignmentMapFromRows(rows))
+        setPersonas(loadedPersonas || [])
+        setPersonaNoteAssignments(loadedPersonaAssignments || [])
+        setPerspectives((loadedPerspectives || []).map(normalizePerspective))
+        setNoteInheritance(loadedInheritance || [])
       })
       .catch(err => {
         console.error('Failed to load calendar data', err)
@@ -632,12 +874,26 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   }, [isActive, refreshKey, project?.id])
 
   useEffect(() => {
+    if (!isActive || !peopleRefreshKey) return
+    Promise.all([api.getPersonas(), api.getDirectPersonaNoteAssignments()])
+      .then(([loadedPersonas, loadedAssignments]) => {
+        setPersonas(loadedPersonas || [])
+        setPersonaNoteAssignments(loadedAssignments || [])
+      })
+      .catch(console.error)
+  }, [isActive, peopleRefreshKey])
+
+  useEffect(() => {
     if (!dimensions.length) return
     setCanvasDimId(prev => prev || dimensions[0]?.id || '')
     setColorDimId(prev => prev || dimensions[0]?.id || '')
   }, [dimensions])
 
   useEffect(() => {
+    if (restoringPerspectiveRef.current) {
+      restoringPerspectiveRef.current = false
+      return
+    }
     setFocusedCatId('')
     setHiddenCatIds(new Set())
   }, [canvasDimId])
@@ -662,6 +918,19 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   const anchor = useMemo(() => projectAnchor(project), [project?.createdAt])
   const notesById = useMemo(() => new Map(notes.map(note => [note.id, note])), [notes])
   const categoriesById = useMemo(() => new Map(categories.map(cat => [cat.id, cat])), [categories])
+  const notePersonasMap = useMemo(() => {
+    const map = {}
+    personaNoteAssignments.forEach(assignment => {
+      const persona = personas.find(item => item.id === assignment.personaId)
+      if (persona) (map[assignment.noteId] = map[assignment.noteId] || []).push(persona)
+    })
+    return map
+  }, [personas, personaNoteAssignments])
+  const activePersona = useMemo(
+    () => personas.find(persona => persona.id === paintPersonaId) ?? null,
+    [personas, paintPersonaId]
+  )
+  const personaCursor = usePersonaCursor(activePersona)
   const activeCategories = useMemo(() => {
     if (!canvasDimId) return []
     return [
@@ -676,9 +945,11 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
 
   const allEvents = useMemo(() => timeSlots.map(slot => {
     const note = notesById.get(slot.noteId)
-    const start = addMinutes(anchor, Number(slot.startCol) || 0)
-    const duration = Math.max(1, Number(slot.duration) || 1)
-    const end = addMinutes(anchor, (Number(slot.startCol) || 0) + duration)
+    const effectiveSlot = editPreview?.id === slot.id ? { ...slot, ...editPreview } : slot
+    const startCol = Number(effectiveSlot.startCol) || 0
+    const start = addMinutes(anchor, startCol)
+    const duration = Math.max(1, Number(effectiveSlot.duration) || 1)
+    const end = addMinutes(anchor, startCol + duration)
     const locationCatId = canvasDimId ? assignments[slot.noteId]?.[canvasDimId] || UNASSIGNED_CATEGORY_ID : ''
     const locationCategory = locationCatId === UNASSIGNED_CATEGORY_ID
       ? { id: UNASSIGNED_CATEGORY_ID, name: 'Unassigned', color: '#9ca3af' }
@@ -693,13 +964,14 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
       noteId: slot.noteId,
       title: note?.title || slot.title || 'Untitled note',
       color: eventColor,
+      personas: notePersonasMap[slot.noteId] || [],
       locationCatId,
       locationCategory,
-      scale: timeSlotScale(slot, anchor),
+      scale: timeSlotScale(effectiveSlot, anchor),
       start,
       end,
     }
-  }).sort((a, b) => a.start - b.start), [timeSlots, notesById, anchor, assignments, canvasDimId, colorDimId, categoriesById])
+  }).sort((a, b) => a.start - b.start), [timeSlots, notesById, anchor, assignments, canvasDimId, colorDimId, categoriesById, notePersonasMap, editPreview])
 
   const events = useMemo(() => {
     const visibleEvents = canvasDimId
@@ -734,7 +1006,37 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
 
   const activatePaint = (catId, color) => {
     if (!colorDimId || !catId) return
+    setPaintPersonaId(null)
     setPaintCat(prev => prev?.id === catId ? null : { id: catId, color: color || UNASSIGNED_COLOR })
+  }
+
+  const paintPersonaOnNote = async noteId => {
+    if (!paintPersonaId || !noteId) return
+    setPersonaNoteAssignments(prev => [
+      ...prev.filter(assignment => !(assignment.personaId === paintPersonaId && assignment.noteId === noteId)),
+      { personaId: paintPersonaId, noteId },
+    ])
+    try {
+      await api.assignPersonaToNote(paintPersonaId, noteId)
+      onPeopleChanged?.()
+    } catch (err) {
+      console.error('Failed to assign person from calendar', err)
+      api.getDirectPersonaNoteAssignments().then(setPersonaNoteAssignments).catch(console.error)
+    }
+  }
+
+  const removePersonaFromNote = async (personaId, noteId) => {
+    if (!personaId || !noteId) return
+    setPersonaNoteAssignments(prev => prev.filter(assignment => (
+      !(assignment.personaId === personaId && assignment.noteId === noteId)
+    )))
+    try {
+      await api.unassignPersonaFromNote(personaId, noteId)
+      onPeopleChanged?.()
+    } catch (err) {
+      console.error('Failed to unassign person from calendar', err)
+      api.getDirectPersonaNoteAssignments().then(setPersonaNoteAssignments).catch(console.error)
+    }
   }
 
   const paintNote = async noteId => {
@@ -753,15 +1055,427 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     }
   }
 
+  const nonePerspective = normalizePerspective({
+    id: NONE_PERSPECTIVE_ID,
+    name: 'None',
+    readOnly: true,
+    state: {
+      canvasDimId: dimensions[0]?.id || '',
+      focusedCatId: '',
+      hiddenCatIds: [],
+      colorDimId: dimensions[0]?.id || '',
+      view: 'today',
+      visibleScales: SCALE_OPTIONS.map(option => option.id),
+      focusDate: dayKey(actualToday),
+      scroll: { dayTop: 0, weekTop: 0, weekLeft: 0, monthTop: 0 },
+    },
+  })
+  const perspectiveOptions = [nonePerspective, ...perspectives]
+
+  const capturePerspectiveState = () => ({
+    canvasDimId,
+    focusedCatId,
+    hiddenCatIds: [...hiddenCatIds],
+    colorDimId,
+    view,
+    visibleScales: [...visibleScales],
+    focusDate: dayKey(focusDate),
+    scroll: {
+      dayTop: dayTimelineRef.current?.scrollTop || 0,
+      weekTop: weekViewRef.current?.scrollTop || 0,
+      weekLeft: weekViewRef.current?.scrollLeft || 0,
+      monthTop: monthGridRef.current?.scrollTop || 0,
+    },
+  })
+
+  const applyPerspective = perspective => {
+    const state = perspective?.state ?? {}
+    const nextCanvasDimId = dimensions.some(dimension => dimension.id === state.canvasDimId)
+      ? state.canvasDimId
+      : dimensions[0]?.id || ''
+    const nextColorDimId = dimensions.some(dimension => dimension.id === state.colorDimId)
+      ? state.colorDimId
+      : dimensions[0]?.id || ''
+    const dimensionCategoryIds = new Set([
+      ...categories.filter(category => category.dimensionId === nextCanvasDimId).map(category => category.id),
+      UNASSIGNED_CATEGORY_ID,
+    ])
+    const nextFocusedCatId = dimensionCategoryIds.has(state.focusedCatId) ? state.focusedCatId : ''
+    const nextHiddenCatIds = Array.isArray(state.hiddenCatIds)
+      ? state.hiddenCatIds.filter(categoryId => dimensionCategoryIds.has(categoryId))
+      : []
+    const nextVisibleScales = Array.isArray(state.visibleScales)
+      ? state.visibleScales.filter(scale => SCALE_OPTIONS.some(option => option.id === scale))
+      : SCALE_OPTIONS.map(option => option.id)
+
+    restoringPerspectiveRef.current = nextCanvasDimId !== canvasDimId
+    setCanvasDimId(nextCanvasDimId)
+    setFocusedCatId(nextFocusedCatId)
+    setHiddenCatIds(new Set(nextHiddenCatIds))
+    setColorDimId(nextColorDimId)
+    setView(VIEW_OPTIONS.some(option => option.id === state.view) ? state.view : 'today')
+    setVisibleScales(new Set(nextVisibleScales))
+    setFocusDate(dateFromDayKey(state.focusDate, actualToday))
+    setPaintCat(null)
+    setPaintPersonaId(null)
+    setLegendOpen(false)
+    setPeopleOpen(false)
+    setPerspectiveOpen(false)
+    setActivePerspectiveId(perspective?.id ?? NONE_PERSPECTIVE_ID)
+    window.requestAnimationFrame(() => {
+      if (dayTimelineRef.current) dayTimelineRef.current.scrollTop = Math.max(0, Number(state.scroll?.dayTop) || 0)
+      if (weekViewRef.current) {
+        weekViewRef.current.scrollTop = Math.max(0, Number(state.scroll?.weekTop) || 0)
+        weekViewRef.current.scrollLeft = Math.max(0, Number(state.scroll?.weekLeft) || 0)
+      }
+      if (monthGridRef.current) monthGridRef.current.scrollTop = Math.max(0, Number(state.scroll?.monthTop) || 0)
+    })
+  }
+
+  const createPerspective = async name => {
+    try {
+      const created = normalizePerspective(await api.createCalendarPerspective({ name, state: capturePerspectiveState() }))
+      setPerspectives(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
+      setActivePerspectiveId(created.id)
+    } catch (err) { console.error('Failed to create calendar perspective', err) }
+  }
+
+  const updatePerspectiveSnapshot = async perspectiveId => {
+    if (perspectiveId === NONE_PERSPECTIVE_ID) return
+    try {
+      const saved = normalizePerspective(await api.updateCalendarPerspective(perspectiveId, { state: capturePerspectiveState() }))
+      setPerspectives(prev => prev.map(perspective => perspective.id === saved.id ? saved : perspective))
+      setActivePerspectiveId(saved.id)
+    } catch (err) { console.error('Failed to update calendar perspective', err) }
+  }
+
+  const renamePerspective = async (perspectiveId, name) => {
+    if (perspectiveId === NONE_PERSPECTIVE_ID) return
+    try {
+      const saved = normalizePerspective(await api.updateCalendarPerspective(perspectiveId, { name }))
+      setPerspectives(prev => prev
+        .map(perspective => perspective.id === saved.id ? saved : perspective)
+        .sort((a, b) => a.name.localeCompare(b.name)))
+    } catch (err) { console.error('Failed to rename calendar perspective', err) }
+  }
+
+  const setCalendarDefaultPerspective = perspectiveId => {
+    const nextId = perspectiveId || NONE_PERSPECTIVE_ID
+    setDefaultPerspectiveId(nextId)
+    try { window.localStorage.setItem(CALENDAR_DEFAULT_PERSPECTIVE_KEY, nextId) } catch {}
+  }
+
+  const deletePerspective = async perspectiveId => {
+    if (perspectiveId === NONE_PERSPECTIVE_ID) return
+    try {
+      await api.deleteCalendarPerspective(perspectiveId)
+      setPerspectives(prev => prev.filter(perspective => perspective.id !== perspectiveId))
+      if (activePerspectiveId === perspectiveId) applyPerspective(nonePerspective)
+      if (defaultPerspectiveId === perspectiveId) setCalendarDefaultPerspective(NONE_PERSPECTIVE_ID)
+    } catch (err) { console.error('Failed to delete calendar perspective', err) }
+  }
+
+  useEffect(() => {
+    appliedDefaultRef.current = false
+  }, [isActive, project?.id])
+
+  useEffect(() => {
+    if (!isActive || !restoreRequest?.id || restoreHandledRef.current === restoreRequest.id) return
+    restoreHandledRef.current = restoreRequest.id
+    appliedDefaultRef.current = true
+    const state = restoreRequest.state ?? {}
+    applyPerspective({ id: state.activePerspectiveId ?? NONE_PERSPECTIVE_ID, state })
+    onRestoreConsumed?.()
+  }, [isActive, restoreRequest])
+
+  useEffect(() => {
+    if (!isActive || appliedDefaultRef.current || dimensions.length === 0) return
+    const defaultPerspective = perspectiveOptions.find(perspective => perspective.id === defaultPerspectiveId) ?? nonePerspective
+    appliedDefaultRef.current = true
+    applyPerspective(defaultPerspective)
+  }, [defaultPerspectiveId, dimensions.length, isActive, perspectives])
+
+  const resolveTimeSlotIdsForWarning = (detail, editedSlot) => {
+    const ids = new Set(Array.isArray(detail?.timeSlotIds) ? detail.timeSlotIds : [])
+    if (detail?.id) ids.add(detail.id)
+    if (editedSlot?.id) ids.add(editedSlot.id)
+    if (detail?.type === 'inheritance_deadline' || detail?.type === 'inheritance_earliest_start') {
+      noteInheritance
+        .filter(link => link.childNoteId === editedSlot?.noteId)
+        .forEach(link => {
+          const parentSlot = timeSlots.find(slot => slot.noteId === link.parentNoteId)
+          if (parentSlot) ids.add(parentSlot.id)
+        })
+    }
+    return [...ids]
+  }
+
+  const showEditWarning = (detail, editedSlot) => {
+    const type = detail?.type || 'transaction'
+    const title = type === 'dependency' || type === 'scale_mismatch'
+      ? 'Dependency violation'
+      : type === 'deadline' ? 'Hard deadline'
+      : type === 'inheritance_deadline' ? 'Inherited hard deadline'
+      : type === 'earliest_start' ? 'Earliest start date'
+      : type === 'inheritance_earliest_start' ? 'Inherited earliest start'
+      : type === 'past' ? 'Before today'
+      : 'Schedule change blocked'
+    setCalendarWarning({
+      title,
+      message: detail?.message || 'This schedule change violates a scheduling rule.',
+      timeSlotIds: resolveTimeSlotIdsForWarning(detail, editedSlot),
+      type,
+    })
+  }
+
+  const commitTimeSlotChange = async (slot, nextValues, label) => {
+    if (!slot || !['minute', 'day'].includes(timeSlotScale(slot, anchor))) return false
+    const after = { ...slot, ...nextValues }
+    if (timeSlotScale(after, anchor) !== timeSlotScale(slot, anchor)) {
+      showEditWarning({
+        type: 'time_slot_scale_mismatch',
+        message: 'This resize would change the planning scale of the time slot.',
+        id: slot.id,
+      }, slot)
+      return false
+    }
+    if (after.startCol === slot.startCol && after.duration === slot.duration) return true
+    const todayMinute = Math.max(0, calendarDayCol(anchor, actualToday))
+    if (after.startCol < todayMinute) {
+      showEditWarning({
+        type: 'past',
+        message: 'This change would place the time slot before today. Resolve it in Schedule if you intentionally need to work in the past.',
+        id: slot.id,
+      }, slot)
+      return false
+    }
+    try {
+      await api.applyTransaction({
+        id: newClientId('tx'),
+        type: label === 'Resize time slot' ? 'timeSlot.resize' : 'timeSlot.move',
+        label,
+        before: { timeSlots: [slot], dependencies: [] },
+        after: { timeSlots: [after], dependencies: [] },
+      })
+      setTimeSlots(prev => prev.map(item => item.id === slot.id ? after : item))
+      setCalendarWarning(null)
+      return true
+    } catch (err) {
+      console.error('Calendar schedule edit rejected', err)
+      showEditWarning(err?.detail || { message: err?.message }, slot)
+      return false
+    }
+  }
+
+  const beginDayTimeEdit = (mouseEvent, event, mode) => {
+    if (mouseEvent.button !== 0 || paintCat || paintPersonaId) return
+    const slot = timeSlots.find(item => item.id === event.id)
+    if (!slot || timeSlotScale(slot, anchor) !== 'minute') return
+    mouseEvent.preventDefault()
+    mouseEvent.stopPropagation()
+    const startY = mouseEvent.clientY
+    const originalStart = Number(slot.startCol) || 0
+    const originalDuration = Math.max(10, Number(slot.duration) || 10)
+    const originalEnd = originalStart + originalDuration
+    const dayStart = Math.max(0, calendarDayCol(anchor, focusDate))
+    const dayEnd = dayStart + DAY_MINUTES
+    let latest = { startCol: originalStart, duration: originalDuration }
+    let changed = false
+
+    const calculate = clientY => {
+      const delta = Math.round(((clientY - startY) / HOUR_HEIGHT) * 6) * 10
+      if (mode === 'move') {
+        const startCol = Math.max(dayStart, Math.min(dayEnd - originalDuration, originalStart + delta))
+        return { startCol, duration: originalDuration }
+      }
+      if (mode === 'resize-start') {
+        const earliestMinuteScaleStart = originalEnd - (DAY_MINUTES - 10)
+        const startCol = Math.min(
+          originalEnd - 10,
+          Math.max(dayStart, earliestMinuteScaleStart, originalStart + delta),
+        )
+        return { startCol, duration: originalEnd - startCol }
+      }
+      const latestMinuteScaleEnd = originalStart + DAY_MINUTES - 10
+      const endCol = Math.max(originalStart + 10, Math.min(dayEnd, latestMinuteScaleEnd, originalEnd + delta))
+      return { startCol: originalStart, duration: endCol - originalStart }
+    }
+
+    const onMove = moveEvent => {
+      moveEvent.preventDefault()
+      latest = calculate(moveEvent.clientY)
+      changed = latest.startCol !== originalStart || latest.duration !== originalDuration
+      if (changed) suppressOpenRef.current = slot.id
+      setEditPreview({ id: slot.id, ...latest })
+    }
+
+    const onUp = async upEvent => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      if (changed) await commitTimeSlotChange(slot, latest, mode === 'move' ? 'Move time slot' : 'Resize time slot')
+      setEditPreview(null)
+      window.setTimeout(() => {
+        if (suppressOpenRef.current === slot.id) suppressOpenRef.current = null
+      }, 120)
+      upEvent.preventDefault()
+    }
+
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
+
+  const startCalendarTimeSlotDrag = (dragEvent, event) => {
+    if (paintCat || paintPersonaId) {
+      dragEvent.preventDefault()
+      return
+    }
+    suppressOpenRef.current = event.id
+    dragEvent.dataTransfer.setData('calendar-time-slot', event.id)
+    dragEvent.dataTransfer.effectAllowed = 'move'
+  }
+
+  const endCalendarTimeSlotDrag = event => {
+    window.setTimeout(() => {
+      if (suppressOpenRef.current === event.id) suppressOpenRef.current = null
+    }, 120)
+  }
+
+  const dropTimeSlotOnDay = async (dropEvent, day) => {
+    const timeSlotId = dropEvent.dataTransfer.getData('calendar-time-slot')
+    if (!timeSlotId) return
+    dropEvent.preventDefault()
+    dropEvent.stopPropagation()
+    const slot = timeSlots.find(item => item.id === timeSlotId)
+    if (!slot || !['minute', 'day'].includes(timeSlotScale(slot, anchor))) return
+    const targetDayCol = calendarDayCol(anchor, day)
+    const scale = timeSlotScale(slot, anchor)
+    const minuteWithinDay = ((Number(slot.startCol) || 0) % DAY_MINUTES + DAY_MINUTES) % DAY_MINUTES
+    const startCol = scale === 'day' ? targetDayCol : targetDayCol + minuteWithinDay
+    await commitTimeSlotChange(slot, { startCol, duration: slot.duration }, 'Move time slot')
+    window.setTimeout(() => {
+      if (suppressOpenRef.current === slot.id) suppressOpenRef.current = null
+    }, 120)
+  }
+
+  const dropTimeSlotOnCalendarRow = (dropEvent, rowStart) => {
+    const timeSlotId = dropEvent.dataTransfer.getData('calendar-time-slot')
+    if (!timeSlotId) return
+    const rect = dropEvent.currentTarget.getBoundingClientRect()
+    const dayIndex = Math.max(0, Math.min(6, Math.floor(((dropEvent.clientX - rect.left) / rect.width) * 7)))
+    dropTimeSlotOnDay(dropEvent, addDays(rowStart, dayIndex))
+  }
+
+  const beginDayScaleResize = (mouseEvent, event, side) => {
+    if (mouseEvent.button !== 0 || paintCat || paintPersonaId) return
+    const slot = timeSlots.find(item => item.id === event.id)
+    if (!slot || timeSlotScale(slot, anchor) !== 'day') return
+    mouseEvent.preventDefault()
+    mouseEvent.stopPropagation()
+    const track = mouseEvent.currentTarget.closest('button')?.parentElement
+    const trackWidth = track?.getBoundingClientRect().width || 0
+    if (trackWidth <= 0) return
+    const startX = mouseEvent.clientX
+    const originalStart = Number(slot.startCol) || 0
+    const originalDuration = Math.max(DAY_MINUTES, Number(slot.duration) || DAY_MINUTES)
+    const maxDayDuration = DAY_MINUTES * 29
+    let latest = { startCol: originalStart, duration: originalDuration }
+    let changed = false
+
+    const calculate = clientX => {
+      const deltaDays = Math.round((clientX - startX) / (trackWidth / 7))
+      if (side === 'left') {
+        const minDelta = Math.max(-Math.floor(originalStart / DAY_MINUTES), -Math.floor((maxDayDuration - originalDuration) / DAY_MINUTES))
+        const maxDelta = Math.floor(originalDuration / DAY_MINUTES) - 1
+        const clamped = Math.max(minDelta, Math.min(maxDelta, deltaDays))
+        return {
+          startCol: originalStart + clamped * DAY_MINUTES,
+          duration: originalDuration - clamped * DAY_MINUTES,
+        }
+      }
+      const minDelta = 1 - Math.floor(originalDuration / DAY_MINUTES)
+      const maxDelta = Math.floor((maxDayDuration - originalDuration) / DAY_MINUTES)
+      const clamped = Math.max(minDelta, Math.min(maxDelta, deltaDays))
+      return { startCol: originalStart, duration: originalDuration + clamped * DAY_MINUTES }
+    }
+
+    const onMove = moveEvent => {
+      moveEvent.preventDefault()
+      latest = calculate(moveEvent.clientX)
+      changed = latest.startCol !== originalStart || latest.duration !== originalDuration
+      if (changed) suppressOpenRef.current = slot.id
+      setEditPreview({ id: slot.id, ...latest })
+    }
+
+    const onUp = async upEvent => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      if (changed) await commitTimeSlotChange(slot, latest, 'Resize time slot')
+      setEditPreview(null)
+      window.setTimeout(() => {
+        if (suppressOpenRef.current === slot.id) suppressOpenRef.current = null
+      }, 120)
+      upEvent.preventDefault()
+    }
+
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
+
+  const openTimeSlotContextMenu = (menuEvent, event) => {
+    menuEvent.preventDefault()
+    menuEvent.stopPropagation()
+    setTimeSlotContextMenu({ x: menuEvent.clientX, y: menuEvent.clientY, event })
+  }
+
+  const inspectTimeSlotInSchedule = event => {
+    if (!event) return
+    const visibleNoteIds = new Set(events.map(item => item.noteId))
+    visibleNoteIds.add(event.noteId)
+    onRequestScheduleResolve?.({
+      id: newClientId('calendar-inspect'),
+      mode: 'inspect',
+      timeSlotIds: [event.id],
+      timeScale: event.scale,
+      calendarContext: {
+        canvasDimId,
+        focusedCatId,
+        hiddenCatIds: [...hiddenCatIds],
+        colorDimId,
+        visibleNoteIds: [...visibleNoteIds],
+      },
+      calendarState: { ...capturePerspectiveState(), activePerspectiveId },
+    })
+    setTimeSlotContextMenu(null)
+  }
+
+  const openScheduleResolver = () => {
+    if (!calendarWarning?.timeSlotIds?.length) return
+    onRequestScheduleResolve?.({
+      id: newClientId('calendar-resolve'),
+      timeSlotIds: calendarWarning.timeSlotIds,
+      violationType: calendarWarning.type,
+      calendarState: { ...capturePerspectiveState(), activePerspectiveId },
+    })
+    setCalendarWarning(null)
+  }
+
   const todayEvents = useMemo(() => events.filter(event => overlapsDay(event, focusDate)), [events, focusDate])
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(focusDate, i)), [focusDate])
   const weekEnd = useMemo(() => addDays(weekDays[0], 7), [weekDays])
+  const todayWeekIndex = useMemo(
+    () => weekDays.findIndex(day => isSameDay(day, actualToday)),
+    [weekDays, actualToday]
+  )
   const todayPhaseEvents = useMemo(() => todayEvents.filter(event => event.scale === 'month'), [todayEvents])
   const todayDayEvents = useMemo(() => todayEvents.filter(event => event.scale === 'day'), [todayEvents])
   const todayMinuteEvents = useMemo(() => todayEvents.filter(event => event.scale === 'minute'), [todayEvents])
   const todayTimedEvents = useMemo(() => layoutTimedEvents(todayMinuteEvents, focusDate), [todayMinuteEvents, focusDate])
   const weekPhaseEvents = useMemo(
     () => events.filter(event => event.scale === 'month' && overlapsRange(event, weekDays[0], weekEnd)),
+    [events, weekDays, weekEnd]
+  )
+  const weekDayScaleEvents = useMemo(
+    () => events.filter(event => event.scale === 'day' && overlapsRange(event, weekDays[0], weekEnd)),
     [events, weekDays, weekEnd]
   )
   const monthStart = useMemo(
@@ -811,11 +1525,20 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     if (delta !== 0) navigateDate(delta > 0 ? 1 : -1)
   }
 
+  const personaPaintProps = {
+    paintPersonaId,
+    onPersonaPaint: paintPersonaOnNote,
+    onRemovePersona: removePersonaFromNote,
+    onContextMenu: openTimeSlotContextMenu,
+  }
+
   return (
     <div
-      className={styles.page}
-      style={paintCat ? { cursor: makeColorCursor(paintCat.color) } : undefined}
-      onClick={paintCat ? () => setPaintCat(null) : undefined}
+      className={`${styles.page} ${(paintCat || paintPersonaId) ? styles.paintMode : ''}`}
+      style={paintPersonaId
+        ? { cursor: personaCursor || 'crosshair' }
+        : paintCat ? { cursor: makeColorCursor(paintCat.color) } : undefined}
+      onClick={(paintCat || paintPersonaId) ? () => { setPaintCat(null); setPaintPersonaId(null) } : undefined}
     >
       <div className={styles.toolbar}>
         <CalendarGroupScroller
@@ -910,7 +1633,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
                     <span className={styles.planningBandLabel}>Phases</span>
                     <div className={styles.planningBandItems}>
                       {todayPhaseEvents.map(event => (
-                        <EventPill key={`phase-${event.id}`} event={event} day={focusDate} compact onNoteOpen={onNoteOpen} paintCat={paintCat} onPaint={paintNote} />
+                        <EventPill key={`phase-${event.id}`} event={event} day={focusDate} compact onNoteOpen={onNoteOpen} paintCat={paintCat} onPaint={paintNote} {...personaPaintProps} />
                       ))}
                     </div>
                   </div>
@@ -920,14 +1643,14 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
                     <span className={styles.planningBandLabel}>Day plan</span>
                     <div className={styles.planningBandItems}>
                       {todayDayEvents.map(event => (
-                        <EventPill key={`day-${event.id}`} event={event} day={focusDate} compact onNoteOpen={onNoteOpen} paintCat={paintCat} onPaint={paintNote} />
+                        <EventPill key={`day-${event.id}`} event={event} day={focusDate} compact onNoteOpen={onNoteOpen} paintCat={paintCat} onPaint={paintNote} {...personaPaintProps} />
                       ))}
                     </div>
                   </div>
                 )}
               </div>
             )}
-            <div className={styles.dayTimeline} style={{ '--hour-height': `${HOUR_HEIGHT}px` }}>
+            <div ref={dayTimelineRef} className={styles.dayTimeline} style={{ '--hour-height': `${HOUR_HEIGHT}px` }}>
               {isSameDay(focusDate, actualToday) && (
                 <div className={styles.nowLine} style={{ top: `${nowTop}px` }}>
                   <span>{fmtTime(now)}</span>
@@ -949,7 +1672,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
                     <button
                       type="button"
                       key={event.id}
-                      className={styles.timelineEvent}
+                      className={`${styles.timelineEvent} ${styles.timelineEventEditable}`}
                       style={{
                         ...colorStyle(event.color),
                         top: `${top}px`,
@@ -957,7 +1680,19 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
                         left: `calc(${event.layoutCol * colWidth}% + ${(event.layoutCol * gap) / event.layoutCols}px)`,
                         width: `calc(${colWidth}% - ${sharedGap}px)`,
                       }}
+                      onMouseDown={mouseEvent => beginDayTimeEdit(mouseEvent, event, 'move')}
+                      onContextMenu={menuEvent => openTimeSlotContextMenu(menuEvent, event)}
                       onClick={e => {
+                        if (suppressOpenRef.current === event.id) {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          return
+                        }
+                        if (paintPersonaId) {
+                          e.stopPropagation()
+                          paintPersonaOnNote(event.noteId)
+                          return
+                        }
                         if (paintCat) {
                           e.stopPropagation()
                           paintNote(event.noteId)
@@ -967,9 +1702,25 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
                       }}
                       title={`${event.title} · ${rangeLabel(event, focusDate)}`}
                     >
+                      <span
+                        className={`${styles.timelineResizeHandle} ${styles.timelineResizeHandleTop}`}
+                        onMouseDown={mouseEvent => beginDayTimeEdit(mouseEvent, event, 'resize-start')}
+                        aria-hidden="true"
+                      />
                       <span>{scaleLabel(event.scale)} · {rangeLabel(event, focusDate)}</span>
-                      <strong>{event.title}</strong>
+                      <div className={styles.timelineTitleRow}>
+                        <strong>{event.title}</strong>
+                        <PersonaAvatarStack
+                          personas={event.personas}
+                          onRemove={personaId => removePersonaFromNote(personaId, event.noteId)}
+                        />
+                      </div>
                       {event.locationCategory && <em>{event.locationCategory.name}</em>}
+                      <span
+                        className={`${styles.timelineResizeHandle} ${styles.timelineResizeHandleBottom}`}
+                        onMouseDown={mouseEvent => beginDayTimeEdit(mouseEvent, event, 'resize-end')}
+                        aria-hidden="true"
+                      />
                     </button>
                   )
                 })}
@@ -979,35 +1730,105 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
         )}
 
         {!error && view === 'week' && (
-          <section className={styles.weekView} aria-label="Seven day calendar">
+          <section ref={weekViewRef} className={styles.weekView} aria-label="Seven day calendar">
             {weekPhaseEvents.length > 0 && (
               <div className={styles.weekPhaseLane}>
                 <div className={styles.weekPhaseTrack}>
                   <span className={styles.weekPhaseLabel}>Phases</span>
                   {weekPhaseEvents.map(event => (
-                    <SpanningEvent key={`week-phase-${event.id}`} event={event} start={weekDays[0]} end={weekEnd} onNoteOpen={onNoteOpen} paintCat={paintCat} onPaint={paintNote} />
+                    <SpanningEvent key={`week-phase-${event.id}`} event={event} start={weekDays[0]} end={weekEnd} onNoteOpen={onNoteOpen} paintCat={paintCat} onPaint={paintNote} {...personaPaintProps} />
                   ))}
                 </div>
               </div>
             )}
-            <div className={styles.weekGrid}>
+            <div
+              className={styles.weekGrid}
+              onDragOver={dragEvent => {
+                if (dragEvent.dataTransfer.types.includes('calendar-time-slot')) dragEvent.preventDefault()
+              }}
+              onDrop={dropEvent => dropTimeSlotOnCalendarRow(dropEvent, weekDays[0])}
+            >
               {weekDays.map(day => {
-                const dayEvents = events.filter(event => event.scale !== 'month' && overlapsDay(event, day))
+                const dayEvents = events.filter(event => event.scale === 'minute' && overlapsDay(event, day))
                 return (
-                  <div key={dayKey(day)} className={`${styles.weekDay} ${isSameDay(day, actualToday) ? styles.todayCell : ''}`}>
+                  <div
+                    key={dayKey(day)}
+                    className={`${styles.weekDay} ${isSameDay(day, actualToday) ? styles.todayCell : ''}`}
+                    onDragOver={dragEvent => {
+                      if (dragEvent.dataTransfer.types.includes('calendar-time-slot')) dragEvent.preventDefault()
+                    }}
+                    onDrop={dropEvent => dropTimeSlotOnDay(dropEvent, day)}
+                  >
                     <div className={styles.dayHeader}>
                       <span>{day.toLocaleDateString(undefined, { weekday: 'short' })}</span>
                       <strong>{day.getDate()}</strong>
                       {isSameDay(day, actualToday) && <em>Today</em>}
                     </div>
-                    <div className={styles.eventStack}>
+                    <div
+                      className={styles.eventStack}
+                      style={weekDayScaleEvents.length
+                        ? { paddingTop: `${weekDayScaleEvents.length * 27 + 42}px` }
+                        : undefined}
+                    >
                       {dayEvents.length ? dayEvents.map(event => (
-                        <EventPill key={`${dayKey(day)}-${event.id}`} event={event} day={day} onNoteOpen={onNoteOpen} paintCat={paintCat} onPaint={paintNote} />
+                        <EventPill
+                          key={`${dayKey(day)}-${event.id}`}
+                          event={event}
+                          day={day}
+                          onNoteOpen={noteId => {
+                            if (suppressOpenRef.current === event.id) return
+                            onNoteOpen?.(noteId)
+                          }}
+                          paintCat={paintCat}
+                          onPaint={paintNote}
+                          draggable={!paintCat && !paintPersonaId}
+                          onDragStart={dragEvent => startCalendarTimeSlotDrag(dragEvent, event)}
+                          onDragEnd={() => endCalendarTimeSlotDrag(event)}
+                          {...personaPaintProps}
+                        />
                       )) : <span className={styles.emptyDay}>No matching notes</span>}
                     </div>
                   </div>
                 )
               })}
+              {weekDayScaleEvents.length > 0 && (
+                <div
+                  className={styles.weekDaySpanLayer}
+                  style={{ height: `${weekDayScaleEvents.length * 27 + 32}px` }}
+                >
+                  <span className={styles.weekDaySpanLabel}>Day-scale</span>
+                  {todayWeekIndex >= 0 && (
+                    <span
+                      className={styles.weekDaySpanToday}
+                      style={{ left: `${(todayWeekIndex / 7) * 100}%` }}
+                      aria-hidden="true"
+                    />
+                  )}
+                  <div className={styles.weekDaySpanBars}>
+                    {weekDayScaleEvents.map((event, lane) => (
+                      <SpanningEvent
+                        key={`week-day-${event.id}`}
+                        event={event}
+                        start={weekDays[0]}
+                        end={weekEnd}
+                        lane={lane}
+                        onNoteOpen={noteId => {
+                          if (suppressOpenRef.current === event.id) return
+                          onNoteOpen?.(noteId)
+                        }}
+                        paintCat={paintCat}
+                        onPaint={paintNote}
+                        draggable={!paintCat && !paintPersonaId}
+                        onDragStart={dragEvent => startCalendarTimeSlotDrag(dragEvent, event)}
+                        onDragEnd={() => endCalendarTimeSlotDrag(event)}
+                        editable={!paintCat && !paintPersonaId}
+                        onResizeStart={beginDayScaleResize}
+                        {...personaPaintProps}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </section>
         )}
@@ -1029,6 +1850,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
                       onNoteOpen={onNoteOpen}
                       paintCat={paintCat}
                       onPaint={paintNote}
+                      {...personaPaintProps}
                     />
                   )) : (
                     <span className={styles.monthScaleEmpty}>No month-scale timeslots in this month</span>
@@ -1039,7 +1861,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
             <div className={styles.monthWeekdays}>
               {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => <span key={day}>{day}</span>)}
             </div>
-            <div className={styles.monthGrid}>
+            <div ref={monthGridRef} className={styles.monthGrid}>
               {Array.from({ length: 6 }, (_, weekIndex) => {
                 const calendarWeek = monthDays.slice(weekIndex * 7, weekIndex * 7 + 7)
                 const calendarWeekEnd = addDays(calendarWeek[0], 7)
@@ -1051,11 +1873,14 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
                   <div
                     key={dayKey(calendarWeek[0])}
                     className={styles.monthWeekRow}
-                    style={{ minHeight: `${190 + spanLaneHeight}px` }}
+                    style={{ minHeight: `${182 + spanLaneHeight}px` }}
+                    onDragOver={dragEvent => {
+                      if (dragEvent.dataTransfer.types.includes('calendar-time-slot')) dragEvent.preventDefault()
+                    }}
+                    onDrop={dropEvent => dropTimeSlotOnCalendarRow(dropEvent, calendarWeek[0])}
                   >
                     {calendarWeek.map(day => {
                       const dayEvents = monthEventsByDay.get(dayKey(day)) || []
-                      const visible = dayEvents.slice(0, 3)
                       return (
                         <div
                           key={dayKey(day)}
@@ -1064,19 +1889,35 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
                             day.getMonth() !== focusDate.getMonth() ? styles.outsideMonth : '',
                             isSameDay(day, actualToday) ? styles.todayCell : '',
                           ].filter(Boolean).join(' ')}
+                          onDragOver={dragEvent => {
+                            if (dragEvent.dataTransfer.types.includes('calendar-time-slot')) dragEvent.preventDefault()
+                          }}
+                          onDrop={dropEvent => dropTimeSlotOnDay(dropEvent, day)}
                         >
                           <div className={styles.monthDayHeader}>
                             <strong>{day.getDate()}</strong>
                             {isSameDay(day, actualToday) && <em>Today</em>}
                           </div>
-                          {spanLaneHeight > 0 && <div style={{ height: `${spanLaneHeight}px` }} aria-hidden="true" />}
+                          {spanLaneHeight > 0 && <div className={styles.monthDaySpanSpacer} style={{ height: `${spanLaneHeight}px` }} aria-hidden="true" />}
                           <div className={styles.monthEvents}>
-                            {visible.map(event => (
-                              <EventPill key={`${dayKey(day)}-${event.id}`} event={event} day={day} onNoteOpen={onNoteOpen} paintCat={paintCat} onPaint={paintNote} />
+                            {dayEvents.map(event => (
+                              <EventPill
+                                key={`${dayKey(day)}-${event.id}`}
+                                event={event}
+                                day={day}
+                                minimal
+                                onNoteOpen={noteId => {
+                                  if (suppressOpenRef.current === event.id) return
+                                  onNoteOpen?.(noteId)
+                                }}
+                                paintCat={paintCat}
+                                onPaint={paintNote}
+                                draggable={!paintCat && !paintPersonaId}
+                                onDragStart={dragEvent => startCalendarTimeSlotDrag(dragEvent, event)}
+                                onDragEnd={() => endCalendarTimeSlotDrag(event)}
+                                {...personaPaintProps}
+                              />
                             ))}
-                            {dayEvents.length > visible.length && (
-                              <span className={styles.moreEvents}>+{dayEvents.length - visible.length} more</span>
-                            )}
                           </div>
                         </div>
                       )
@@ -1090,9 +1931,18 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
                             start={calendarWeek[0]}
                             end={calendarWeekEnd}
                             lane={lane}
-                            onNoteOpen={onNoteOpen}
+                            onNoteOpen={noteId => {
+                              if (suppressOpenRef.current === event.id) return
+                              onNoteOpen?.(noteId)
+                            }}
                             paintCat={paintCat}
                             onPaint={paintNote}
+                            draggable={!paintCat && !paintPersonaId}
+                            onDragStart={dragEvent => startCalendarTimeSlotDrag(dragEvent, event)}
+                            onDragEnd={() => endCalendarTimeSlotDrag(event)}
+                            editable={!paintCat && !paintPersonaId}
+                            onResizeStart={beginDayScaleResize}
+                            {...personaPaintProps}
                           />
                         ))}
                       </div>
@@ -1106,17 +1956,80 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
       </main>
 
       <div className={styles.floatingViewTools}>
+        <PerspectiveMenu
+          perspectives={perspectiveOptions}
+          activePerspectiveId={activePerspectiveId}
+          defaultPerspectiveId={defaultPerspectiveId}
+          open={perspectiveOpen}
+          onOpenChange={open => {
+            setPerspectiveOpen(open)
+            if (open) { setLegendOpen(false); setPeopleOpen(false) }
+          }}
+          onApply={applyPerspective}
+          onCreate={createPerspective}
+          onUpdate={updatePerspectiveSnapshot}
+          onRename={renamePerspective}
+          onDelete={deletePerspective}
+          onSetDefault={setCalendarDefaultPerspective}
+        />
         <ColorLegendWidget
           dimensions={dimensions}
           categories={categories}
           colorDimId={colorDimId}
           onColorDimension={setColorDimId}
           expanded={legendOpen}
-          onExpandedChange={setLegendOpen}
+          onExpandedChange={open => { setLegendOpen(open); if (open) { setPeopleOpen(false); setPerspectiveOpen(false) } }}
           paintCat={paintCat}
           onPaintActivate={activatePaint}
         />
+        <PeopleWidget
+          paintPersonaId={paintPersonaId}
+          onPaintPersonaChange={id => { setPaintCat(null); setPaintPersonaId(id) }}
+          expanded={peopleOpen}
+          onExpandedChange={open => { setPeopleOpen(open); if (open) { setLegendOpen(false); setPerspectiveOpen(false) } }}
+          refreshKey={peopleRefreshKey}
+        />
       </div>
+
+      {timeSlotContextMenu && createPortal(
+        <>
+          <div className={styles.calendarContextBackdrop} onMouseDown={() => setTimeSlotContextMenu(null)} />
+          <div
+            className={styles.calendarContextMenu}
+            style={{
+              left: Math.max(8, Math.min(timeSlotContextMenu.x, window.innerWidth - 238)),
+              top: Math.max(8, Math.min(timeSlotContextMenu.y, window.innerHeight - 64)),
+            }}>
+            <button type="button" onClick={() => inspectTimeSlotInSchedule(timeSlotContextMenu.event)}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M3 5h18v14H3V5zm2 2v10h14V7H5zm2 2h6v2H7V9zm0 4h10v2H7v-2z"/>
+              </svg>
+              Look in Schedule
+            </button>
+          </div>
+        </>,
+        document.body,
+      )}
+
+      {calendarWarning && (
+        <div className={styles.calendarWarning} role="alertdialog" aria-modal="true">
+          <button
+            type="button"
+            className={styles.calendarWarningClose}
+            aria-label="Close warning"
+            onClick={() => setCalendarWarning(null)}>
+            ×
+          </button>
+          <strong>{calendarWarning.title}</strong>
+          <p>{calendarWarning.message}</p>
+          <div className={styles.calendarWarningActions}>
+            <button type="button" onClick={() => setCalendarWarning(null)}>Close</button>
+            {calendarWarning.timeSlotIds?.length > 0 && onRequestScheduleResolve && (
+              <button type="button" className={styles.calendarWarningResolve} onClick={openScheduleResolver}>Resolve in Schedule</button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
