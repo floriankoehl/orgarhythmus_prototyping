@@ -10,6 +10,7 @@ import ProjectDashboard from './components/ProjectDashboard'
 import AuthPage from './components/AuthPage'
 import PeoplePage from './components/PeoplePage'
 import InheritancePage from './components/InheritancePage'
+import CalendarPage from './components/CalendarPage'
 import { api, authApi, hasAuthSession, setProjectId } from './api'
 import { mergeSelectionsWithHashtags } from './categoryHashtags'
 import styles from './App.module.css'
@@ -292,6 +293,15 @@ export default function App() {
             peopleRefreshKey={peopleVersion}
             onNoteOpen={openNotePopup}
             onPeopleChanged={() => setPeopleVersion(v => v + 1)}
+          />
+        </div>
+        <div className={styles.view} style={{ display: view === 6 ? 'flex' : 'none' }}>
+          <CalendarPage
+            notes={notes}
+            project={activeProject}
+            isActive={view === 6}
+            onNoteOpen={openNotePopup}
+            refreshKey={refreshKey}
           />
         </div>
       </div>
