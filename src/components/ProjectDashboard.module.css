@@ -79,6 +79,197 @@
   color: #9aa0a6;
 }
 
+/* ── Note/project hierarchy ──────────────────────────────────────────────── */
+.hierarchyTree {
+  padding: 12px 14px;
+  overflow-x: auto;
+  border: 1px solid #e8eaed;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.hierarchyToggle {
+  padding: 4px 9px;
+  border: 1px solid #c5d9f8;
+  border-radius: 6px;
+  background: #f4f8ff;
+  color: #1d4ed8;
+  font: 600 11px Arial, sans-serif;
+  cursor: pointer;
+}
+
+.hierarchyToggle:hover {
+  border-color: #93b7ee;
+  background: #e8f0fe;
+}
+
+.hierarchyRow {
+  --tree-depth: 0;
+  position: relative;
+  min-width: max-content;
+  margin-left: calc(var(--tree-depth) * 22px);
+}
+
+.hierarchyRow[draggable="true"] {
+  cursor: grab;
+}
+
+.hierarchyRow[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.hierarchyRow + .hierarchyRow {
+  margin-top: 5px;
+}
+
+.hierarchyBranch {
+  position: absolute;
+  left: -13px;
+  top: -8px;
+  width: 12px;
+  height: 25px;
+  border-left: 1px solid #cbd5e1;
+  border-bottom: 1px solid #cbd5e1;
+  border-bottom-left-radius: 5px;
+  pointer-events: none;
+}
+
+.hierarchyRow:first-child .hierarchyBranch {
+  display: none;
+}
+
+.hierarchyNode {
+  width: min(100%, 560px);
+  min-height: 34px;
+  padding: 6px 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #374151;
+  font: 600 12px Arial, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hierarchyNode:hover:not([aria-disabled="true"]) {
+  border-color: #c5d9f8;
+  background: #f4f8ff;
+  color: #1d4ed8;
+}
+
+.hierarchyNode[aria-disabled="true"] {
+  opacity: 1;
+  cursor: default;
+}
+
+.hierarchyRowCurrent .hierarchyNode {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1e40af;
+}
+
+.hierarchyRowDropTarget .hierarchyNode {
+  border-color: #2563eb;
+  background: #dbeafe;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.16);
+}
+
+.hierarchyRowDragging {
+  opacity: 0.48;
+}
+
+.hierarchyIcon {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  display: grid;
+  place-items: center;
+  color: #94a3b8;
+}
+
+.hierarchyIcon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.hierarchyProjectIcon {
+  color: #d97706;
+}
+
+.hierarchyNoteIcon {
+  color: #64748b;
+}
+
+.hierarchyRowCurrent .hierarchyIcon {
+  color: #2563eb;
+}
+
+.hierarchyTitle {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hierarchyKind {
+  flex: 0 0 auto;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.hierarchyWarning {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 1000;
+  width: min(360px, calc(100vw - 48px));
+  padding: 14px 38px 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  box-sizing: border-box;
+  border: 1px solid #fecaca;
+  border-left: 4px solid #dc2626;
+  border-radius: 9px;
+  background: #fff;
+  color: #4b5563;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.2);
+  font: 12px/1.45 Arial, sans-serif;
+}
+
+.hierarchyWarning strong {
+  color: #991b1b;
+  font-size: 13px;
+}
+
+.hierarchyWarningClose {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 18px;
+  line-height: 24px;
+  cursor: pointer;
+}
+
+.hierarchyWarningClose:hover {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
 /* ── Stats grid ────────────────────────────────────────────────────────────── */
 .statsGrid {
   display: grid;
@@ -246,6 +437,13 @@
   border: 1.5px solid #e8eaed;
   border-radius: 7px;
   user-select: none;
+}
+
+.timelineSource {
+  width: 100%;
+  font-size: 12px;
+  color: #777;
+  line-height: 1.4;
 }
 
 /* ── Footer row ────────────────────────────────────────────────────────────── */

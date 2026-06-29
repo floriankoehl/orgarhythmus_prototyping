@@ -52,8 +52,58 @@ function ChevronIcon({ down }) {
   )
 }
 
+function ChildNotesPreview({ note, notes = [], isProjectRootNote = false, onNoteOpen }) {
+  const [checked, setChecked] = useState({})
+  const children = notes
+    .filter(item => item.parentNoteId === note.id)
+    .sort((a, b) => (a.orderIdx ?? 0) - (b.orderIdx ?? 0))
+
+  useEffect(() => {
+    setChecked({})
+  }, [note.id])
+
+  return (
+    <div className={styles.childrenSection}>
+      <div className={styles.childrenHeader}>
+        <span className={styles.sectionLabel}>{isProjectRootNote ? 'Child notes' : 'Subnotes'}</span>
+        <span className={styles.childrenCount}>{children.length}</span>
+      </div>
+      {children.length === 0 ? (
+        <p className={styles.emptyNote}>No child notes.</p>
+      ) : (
+        <div className={styles.childrenList}>
+          {children.map(child => {
+            const isChecked = Boolean(checked[child.id])
+            return (
+              <div key={child.id} className={styles.childRow}>
+                {isProjectRootNote ? (
+                  <span className={styles.childBullet} />
+                ) : (
+                  <input
+                    className={styles.childCheckbox}
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={e => setChecked(prev => ({ ...prev, [child.id]: e.target.checked }))}
+                  />
+                )}
+                <button
+                  type="button"
+                  className={`${styles.childTitle} ${isChecked ? styles.childTitleChecked : ''}`}
+                  onClick={() => onNoteOpen?.(child.id)}
+                  title="Open child note">
+                  {child.title || 'Untitled'}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main popup ────────────────────────────────────────────────────────────────
-export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsChanged, onPeopleChanged, onNoteDeleted, onOpenAsWorkspace }) {
+export default function NotePopup({ note, notes = [], isProjectRootNote = false, onClose, onNoteUpdated, onAssignmentsChanged, onPeopleChanged, onNoteDeleted, onNoteOpen, onOpenAsWorkspace }) {
   const [expanded, setExpanded]           = useState(false)
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false)
   const [headlineMode, setHeadlineMode]   = useState(false)
@@ -350,6 +400,16 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsC
             </div>
           )}
         </div>
+
+        <ChildNotesPreview
+          note={note}
+          notes={notes}
+          isProjectRootNote={isProjectRootNote}
+          onNoteOpen={childId => {
+            onClose()
+            requestAnimationFrame(() => onNoteOpen?.(childId))
+          }}
+        />
 
         {/* Description section */}
         <div className={styles.descSection}>

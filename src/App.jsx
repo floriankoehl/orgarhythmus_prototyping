@@ -360,9 +360,13 @@ export default function App() {
         <div className={styles.view} style={{ display: view === 0 ? 'flex' : 'none' }}>
           <ProjectDashboard
             project={activeProject}
+            notes={notes}
+            workspaceRootNote={activeWorkspaceRoot}
             workspaceNote={activeWorkspaceRootId !== activeProject.rootNoteId ? activeWorkspaceRoot : null}
             onUpdate={handleProjectUpdate}
             onWorkspaceNoteUpdated={handleNoteUpdated}
+            onWorkspaceOpen={openNoteAsWorkspace}
+            onNotesChanged={handleNotesChanged}
             isActive={view === 0}
           />
         </div>
@@ -400,6 +404,7 @@ export default function App() {
         <div className={styles.view} style={{ display: view === 3 ? 'flex' : 'none' }}>
           <SchedulePage
             notes={visibleNotes}
+            allNotes={notes}
             project={activeProject}
             isActive={view === 3}
             onNoteOpen={openNotePopup}
@@ -419,6 +424,7 @@ export default function App() {
             archivedDimensionIds={activeContextState.archivedDimensionIds || []}
             onSetContextDefaultPerspective={setContextDefaultPerspective}
             workspaceRootNoteId={activeWorkspaceRootId}
+            workspaceRootNote={activeWorkspaceRoot}
           />
         </div>
         <div className={styles.view} style={{ display: view === 4 ? 'flex' : 'none' }}>
@@ -458,11 +464,14 @@ export default function App() {
       {popupNote && (
         <NotePopup
           note={popupNote}
+          notes={notes}
+          isProjectRootNote={popupNote.id === activeProject?.rootNoteId}
           onClose={closeNotePopup}
           onNoteUpdated={handleNoteUpdated}
           onAssignmentsChanged={handleNoteAssignmentsChanged}
           onPeopleChanged={() => setPeopleVersion(v => v + 1)}
           onNoteDeleted={handleNoteDeleted}
+          onNoteOpen={openNotePopup}
           onOpenAsWorkspace={openNoteAsWorkspace}
         />
       )}

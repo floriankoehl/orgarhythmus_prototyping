@@ -106,14 +106,35 @@ export default function InheritancePage({ notes = [], isActive = false, onNoteOp
     return map
   }, [timeSlots])
 
+  const effectiveInheritance = useMemo(() => {
+    const links = []
+    const seen = new Set()
+    notes.forEach(note => {
+      if (!note.parentNoteId) return
+      const key = `${note.id}:${note.parentNoteId}`
+      seen.add(key)
+      links.push({ childNoteId: note.id, parentNoteId: note.parentNoteId, structural: true })
+    })
+    inheritance.forEach(link => {
+      // The current note tree is authoritative for structural inheritance.
+      // Only keep separately assigned, non-structural relationships here.
+      if (link.structural) return
+      const key = `${link.childNoteId}:${link.parentNoteId}`
+      if (seen.has(key)) return
+      seen.add(key)
+      links.push(link)
+    })
+    return links
+  }, [notes, inheritance])
+
   const parentsByChild = useMemo(() => {
     const map = new Map()
-    inheritance.forEach(link => {
+    effectiveInheritance.forEach(link => {
       if (!map.has(link.childNoteId)) map.set(link.childNoteId, new Set())
       map.get(link.childNoteId).add(link.parentNoteId)
     })
     return map
-  }, [inheritance])
+  }, [effectiveInheritance])
 
   const [childScale, parentScale] = INHERITANCE_MODES[mode] ?? INHERITANCE_MODES['minute-day']
   const parentNotes = notes.filter(note => timeSlotScale(timeSlotByNote.get(note.id)) === parentScale)
@@ -173,12 +194,19 @@ export default function InheritancePage({ notes = [], isActive = false, onNoteOp
                   <div className={styles.window}>{formatWindow(parentMs)}</div>
                   <div className={styles.childList}>
                     {children.length === 0 && <div className={styles.empty}>No children</div>}
-                    {children.map(child => (
-                      <div key={child.id} className={styles.childRow}>
-                        <button onClick={() => onNoteOpen?.(child.id)}>{noteTitle(child)}</button>
-                        <button className={styles.removeBtn} onClick={() => remove(child.id, parent.id)}>Remove</button>
-                      </div>
-                    ))}
+                    {children.map(child => {
+                      const link = effectiveInheritance.find(item => item.childNoteId === child.id && item.parentNoteId === parent.id)
+                      return (
+                        <div key={child.id} className={styles.childRow}>
+                          <button onClick={() => onNoteOpen?.(child.id)}>{noteTitle(child)}</button>
+                          {link?.structural ? (
+                            <span className={styles.empty}>Automatic</span>
+                          ) : (
+                            <button className={styles.removeBtn} onClick={() => remove(child.id, parent.id)}>Remove</button>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 </article>
               )

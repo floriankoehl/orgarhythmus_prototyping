@@ -245,9 +245,25 @@ function findApplicableDeadline(deadlines, timeSlot) {
   return deadlines.find(d => d.noteId === timeSlot.noteId && deadlineAppliesToTimeSlot(d, timeSlot)) ?? null
 }
 
+function findApplicableDeadlineForPlacement(deadlines, timeSlot) {
+  if (!timeSlot) return null
+  return deadlines.find(d => (
+    d.noteId === timeSlot.noteId
+    && (deadlineAppliesToTimeSlot(d, timeSlot) || d.inherited)
+  )) ?? null
+}
+
 function findApplicableEarliestStart(earliestStarts, timeSlot) {
   if (!timeSlot) return null
   return earliestStarts.find(es => es.noteId === timeSlot.noteId && earliestStartAppliesToTimeSlot(es, timeSlot)) ?? null
+}
+
+function findApplicableEarliestStartForPlacement(earliestStarts, timeSlot) {
+  if (!timeSlot) return null
+  return earliestStarts.find(es => (
+    es.noteId === timeSlot.noteId
+    && (earliestStartAppliesToTimeSlot(es, timeSlot) || es.inherited)
+  )) ?? null
 }
 
 function noteTimeSlotScaleConflict(timeSlots, noteId, duration, startCol = null) {
@@ -755,9 +771,107 @@ function laneKeyForCat(cat) {
   return cat?.id ?? UNASSIGNED_LANE
 }
 
-function buildRowItems(notes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds = new Set(), hiddenNotesByLane = {}, filterAsLane = null) {
+function compareNoteOrder(a, b) {
+  const ao = a.orderIdx ?? a.order_idx ?? Number.MAX_SAFE_INTEGER
+  const bo = b.orderIdx ?? b.order_idx ?? Number.MAX_SAFE_INTEGER
+  if (ao !== bo) return ao - bo
+  return String(a.title || '').localeCompare(String(b.title || ''))
+}
+
+function buildNoteTreeMeta(notes) {
+  const noteById = new Map(notes.map(note => [note.id, note]))
+  const childrenByParent = new Map()
+  notes.forEach(note => {
+    const parentId = noteById.has(note.parentNoteId) ? note.parentNoteId : ''
+    if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, [])
+    childrenByParent.get(parentId).push(note)
+  })
+  childrenByParent.forEach(children => children.sort(compareNoteOrder))
+
+  const meta = new Map()
+  const ordered = []
+  const visit = (note, depth, ancestorLastFlags, ancestorIds, isLast) => {
+    const children = childrenByParent.get(note.id) || []
+    meta.set(note.id, {
+      depth,
+      isLast,
+      hasChildren: children.length > 0,
+      childCount: children.length,
+      ancestorLastFlags,
+      ancestorIds,
+      treeOrder: ordered.length,
+      parentNoteId: note.parentNoteId || '',
+      metaFound: true,
+    })
+    ordered.push(note)
+    children.forEach((child, index) => visit(
+      child,
+      depth + 1,
+      [...ancestorLastFlags, isLast],
+      [...ancestorIds, note.id],
+      index === children.length - 1,
+    ))
+  }
+
+  const roots = childrenByParent.get('') || []
+  roots.forEach((note, index) => visit(note, 0, [], [], index === roots.length - 1))
+  notes.forEach(note => {
+    if (!meta.has(note.id)) visit(note, 0, [], [], true)
+  })
+  return { meta, ordered }
+}
+
+function withTreeMeta(note, treeMeta) {
+  return {
+    depth: 0,
+    ancestorLastFlags: [],
+    ancestorIds: [],
+    isLast: true,
+    hasChildren: false,
+    childCount: 0,
+    parentNoteId: note.parentNoteId || '',
+    metaFound: false,
+    ...treeMeta.get(note.id),
+  }
+}
+
+function TreeGutter({ tree, collapsed, onToggle }) {
+  const depth = Math.max(0, tree?.depth ?? 0)
+  return (
+    <span
+      className={styles.noteTreeGutter}
+      style={{ width: 22 + depth * 18 }}
+      title={`Level ${depth}${tree?.hasChildren ? ' · has subnotes' : ''}`}>
+      {tree?.hasChildren ? (
+        <button
+          type="button"
+          className={`${styles.noteTreeToggle} ${collapsed ? styles.noteTreeToggleCollapsed : ''}`}
+          onClick={onToggle}
+          onMouseDown={e => e.stopPropagation()}
+          draggable={false}
+          title={collapsed ? 'Expand subnotes' : 'Collapse subnotes'}
+          aria-label={collapsed ? 'Expand subnotes' : 'Collapse subnotes'}>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M7 10l5 5 5-5z"/>
+          </svg>
+        </button>
+      ) : (
+        <span className={styles.noteTreeSpacer} aria-hidden="true" />
+      )}
+    </span>
+  )
+}
+
+function buildRowItems(notes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds = new Set(), hiddenNotesByLane = {}, filterAsLane = null, collapsedTreeNoteIds = new Set(), treeContextNotes = notes) {
   const { rowH, rowGap, laneGap } = spacing
   const slotH = rowH + rowGap
+  const tree = buildNoteTreeMeta(treeContextNotes)
+  const treeMeta = tree.meta
+  const displayedNoteIds = new Set(notes.map(note => note.id))
+  const hiddenByCollapsedAncestor = note => {
+    const ancestorIds = treeMeta.get(note.id)?.ancestorIds ?? []
+    return ancestorIds.some(id => collapsedTreeNoteIds.has(id))
+  }
 
   // Filter-as-lane: two lanes — notes matching the filter, and the rest
   if (filterAsLane) {
@@ -767,13 +881,13 @@ function buildRowItems(notes, categories, assignments, assignmentOrders, activeD
     const items = []; let top = 0
     const addFilterLane = (cat, laneNotes, key, first) => {
       const hiddenNoteIds = hiddenNotesByLane[key] ?? new Set()
-      const visible = laneNotes.filter(g => !hiddenNoteIds.has(g.id))
+      const visible = laneNotes.filter(g => !hiddenNoteIds.has(g.id) && !hiddenByCollapsedAncestor(g))
       if (!first) { items.push({ type: 'lane-gap', cat: null, top, height: laneGap }); top += laneGap }
       items.push({ type: 'lane-header', cat, top, height: LANE_HDR_H }); top += LANE_HDR_H
       if (laneNotes.length === 0) {
         items.push({ type: 'empty', cat, top, height: slotH }); top += slotH
       } else {
-        visible.forEach(g => { items.push({ type: 'note', note: g, cat, top, height: slotH }); top += slotH })
+        visible.forEach(g => { items.push({ type: 'note', note: g, tree: withTreeMeta(g, treeMeta), cat, top, height: slotH }); top += slotH })
       }
     }
     const matchHidden = hiddenCatIds.has(filterAsLane.id)
@@ -784,7 +898,10 @@ function buildRowItems(notes, categories, assignments, assignmentOrders, activeD
   }
 
   if (!activeDimId) {
-    return notes.map((g, i) => ({ type: 'note', note: g, cat: null, top: i * slotH, height: slotH }))
+    return tree.ordered
+      .filter(g => displayedNoteIds.has(g.id))
+      .filter(g => !hiddenByCollapsedAncestor(g))
+      .map((g, i) => ({ type: 'note', note: g, tree: withTreeMeta(g, treeMeta), cat: null, top: i * slotH, height: slotH }))
   }
 
   const allCats = categories.filter(c => c.dimensionId === activeDimId)
@@ -802,19 +919,20 @@ function buildRowItems(notes, categories, assignments, assignmentOrders, activeD
   const sortLaneNotes = laneNotes => [...laneNotes].sort((a, b) => {
     const ao = assignmentOrders[a.id]?.[activeDimId] ?? Number.MAX_SAFE_INTEGER
     const bo = assignmentOrders[b.id]?.[activeDimId] ?? Number.MAX_SAFE_INTEGER
-    return ao - bo
+    if (ao !== bo) return ao - bo
+    return (treeMeta.get(a.id)?.treeOrder ?? 0) - (treeMeta.get(b.id)?.treeOrder ?? 0)
   })
 
   const items = []; let top = 0
   const addLane = (cat, laneNotes, first) => {
     const hiddenNoteIds = hiddenNotesByLane[laneKeyForCat(cat)] ?? new Set()
-    const visibleLaneNotes = sortLaneNotes(laneNotes).filter(g => !hiddenNoteIds.has(g.id))
+    const visibleLaneNotes = sortLaneNotes(laneNotes).filter(g => !hiddenNoteIds.has(g.id) && !hiddenByCollapsedAncestor(g))
     if (!first) { items.push({ type: 'lane-gap', cat: null, top, height: laneGap }); top += laneGap }
     items.push({ type: 'lane-header', cat, top, height: LANE_HDR_H }); top += LANE_HDR_H
     if (laneNotes.length === 0) {
       items.push({ type: 'empty', cat, top, height: slotH }); top += slotH
     } else {
-      visibleLaneNotes.forEach(g => { items.push({ type: 'note', note: g, cat, top, height: slotH }); top += slotH })
+      visibleLaneNotes.forEach(g => { items.push({ type: 'note', note: g, tree: withTreeMeta(g, treeMeta), cat, top, height: slotH }); top += slotH })
     }
   }
   cats.forEach((cat, i) => addLane(cat, catMap[cat.id] ?? [], i === 0))
@@ -1245,12 +1363,16 @@ function InheritanceInspectorModal({
               <span className={styles.inheritanceEmptyText}>No assigned categories</span>
             )}
           </div>
-          <button
-            type="button"
-            className={styles.inheritanceUnlinkBtn}
-            onClick={() => onUnlink(link.childNoteId, link.parentNoteId)}>
-            Remove inheritance
-          </button>
+          {link.structural ? (
+            <span className={styles.inheritanceEmptyText}>Automatic from note hierarchy</span>
+          ) : (
+            <button
+              type="button"
+              className={styles.inheritanceUnlinkBtn}
+              onClick={() => onUnlink(link.childNoteId, link.parentNoteId)}>
+              Remove inheritance
+            </button>
+          )}
         </div>
       </details>
     )
@@ -2223,7 +2345,7 @@ function ScheduleColorLegendWidget({
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, externalResolveRequest = null, onExternalResolveReturn, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [], onSetContextDefaultPerspective, workspaceRootNoteId = null }) {
+export default function SchedulePage({ notes = [], allNotes = notes, project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, externalResolveRequest = null, onExternalResolveReturn, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [], onSetContextDefaultPerspective, workspaceRootNoteId = null, workspaceRootNote = null }) {
   // ── Timeline anchor ────────────────────────────────────────────────────────
   // Keep the module-level anchor in sync with the project's creation date so that
   // col 0 = project creation date (fixed, immutable left boundary of the timeline).
@@ -2373,20 +2495,42 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     onDimChanged?.()
   }
 
+  const effectiveNoteInheritance = useMemo(() => {
+    const links = []
+    const seen = new Set()
+    notes.forEach(note => {
+      if (!note.parentNoteId) return
+      const key = `${note.id}:${note.parentNoteId}`
+      seen.add(key)
+      links.push({ childNoteId: note.id, parentNoteId: note.parentNoteId, structural: true })
+    })
+    noteInheritance.forEach(link => {
+      // Structural inheritance is always derived from the live tree above.
+      // Ignoring fetched structural snapshots prevents an old parent window
+      // from surviving briefly after a drag-to-reparent operation.
+      if (link.structural) return
+      const key = `${link.childNoteId}:${link.parentNoteId}`
+      if (seen.has(key)) return
+      seen.add(key)
+      links.push(link)
+    })
+    return links
+  }, [notes, noteInheritance])
+
   const inheritedWindows = useMemo(() => {
     const timeSlotByNote = new Map(timeSlots.map(ms => [ms.noteId, ms]))
     const starts = []
     const ends = []
-    noteInheritance.forEach(link => {
+    effectiveNoteInheritance.forEach(link => {
       const child = timeSlotByNote.get(link.childNoteId)
       const parent = timeSlotByNote.get(link.parentNoteId)
-      if (!child || !parent) return
-      const childScale = timeSlotScaleBucket(child)
+      if (!parent) return
+      const inheritedScale = child ? timeSlotScaleBucket(child) : timeSlotScaleBucket(parent)
       starts.push({
         id: `inh-start:${link.childNoteId}:${link.parentNoteId}`,
         noteId: link.childNoteId,
         col: parent.startCol,
-        scale: childScale,
+        scale: inheritedScale,
         inherited: true,
         parentNoteId: link.parentNoteId,
       })
@@ -2394,13 +2538,13 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         id: `inh-deadline:${link.childNoteId}:${link.parentNoteId}`,
         noteId: link.childNoteId,
         col: parent.startCol + parent.duration,
-        scale: childScale,
+        scale: inheritedScale,
         inherited: true,
         parentNoteId: link.parentNoteId,
       })
     })
     return { starts, deadlines: ends }
-  }, [timeSlots, noteInheritance])
+  }, [timeSlots, effectiveNoteInheritance])
 
   const effectiveDeadlines = useMemo(() => {
     const byKey = new Map()
@@ -2477,6 +2621,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   const [showRowScheduleMarker, setShowRowScheduleMarker] = useState(true)
   const [showRowTimeSlotMeta, setShowRowTimeSlotMeta] = useState(true)
   const [timeSlotLabelMode, setTimeSlotLabelMode] = useState('date')
+  const [collapsedTreeNoteIds, setCollapsedTreeNoteIds] = useState(() => new Set())
   const timeSlotLabelWheelAtRef = useRef(0)
   const [reasonModal, setReasonModal] = useState(null)   // null | { depId }
   const [reasonDraft, setReasonDraft] = useState('')
@@ -3327,8 +3472,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 
   // ── Row model ──────────────────────────────────────────────────────────────
   const rowItems = useMemo(
-    () => buildRowItems(visibleNotes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenNotesByLane, activeLaneFilter),
-    [visibleNotes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenNotesByLane, activeLaneFilter]
+    () => {
+      const treeContextNotes = allNotes
+      const renderedNotes = workspaceRootNote
+        ? [workspaceRootNote, ...visibleNotes.filter(note => note.id !== workspaceRootNote.id)]
+        : visibleNotes
+      return buildRowItems(renderedNotes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenNotesByLane, activeLaneFilter, collapsedTreeNoteIds, treeContextNotes)
+    },
+    [visibleNotes, allNotes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenNotesByLane, activeLaneFilter, collapsedTreeNoteIds, workspaceRootNote]
   )
   const rowItemsRef = useRef([])
   rowItemsRef.current = rowItems
@@ -3340,6 +3491,15 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
   }, [rowItems])
   const noteRowMapRef = useRef({})
   noteRowMapRef.current = noteRowMap
+
+  const toggleTreeNoteCollapse = useCallback(noteId => {
+    setCollapsedTreeNoteIds(prev => {
+      const next = new Set(prev)
+      if (next.has(noteId)) next.delete(noteId)
+      else next.add(noteId)
+      return next
+    })
+  }, [])
   const timeSlotByNote = useMemo(() => new Map(timeSlots.map(m => [m.noteId, m])), [timeSlots])
   const timeSlotByNoteRef = useRef(new Map())
   timeSlotByNoteRef.current = timeSlotByNote
@@ -3753,29 +3913,6 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
     })
   }, [activeDimId, activeLaneFilter, assignmentOrders, assignments, visibleNotes])
 
-  const reorderNoteInLane = useCallback(async (dragNoteId, targetNoteId) => {
-    if (!activeDimId || dragNoteId === targetNoteId) return
-    const catId = assignments[dragNoteId]?.[activeDimId]
-    if (!catId || assignments[targetNoteId]?.[activeDimId] !== catId) return
-    const laneNotes = notesForLane(categories.find(c => c.id === catId))
-    const fromIdx = laneNotes.findIndex(g => g.id === dragNoteId)
-    const toIdx = laneNotes.findIndex(g => g.id === targetNoteId)
-    if (fromIdx === -1 || toIdx === -1) return
-    const reordered = [...laneNotes]
-    const [moved] = reordered.splice(fromIdx, 1)
-    reordered.splice(toIdx, 0, moved)
-    const noteIds = reordered.map(g => g.id)
-    setAssignmentOrders(prev => {
-      const next = { ...prev }
-      noteIds.forEach((noteId, idx) => {
-        next[noteId] = { ...(next[noteId] ?? {}), [activeDimId]: idx }
-      })
-      return next
-    })
-    try { await api.reorderAssignments(activeDimId, catId, noteIds) }
-    catch (err) { console.error(err) }
-  }, [activeDimId, assignments, categories, notesForLane])
-
   const moveNoteToLane = useCallback(async (noteId, targetCatId) => {
     if (!activeDimId) return
     const currentCatId = assignments[noteId]?.[activeDimId] ?? null
@@ -3811,6 +3948,59 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       })
     }
   }, [activeDimId, assignments])
+
+  const moveNoteUnderNote = useCallback(async (noteId, parentNoteId) => {
+    if (!noteId || !parentNoteId) return
+    const note = allNotes.find(item => item.id === noteId)
+    const parent = allNotes.find(item => item.id === parentNoteId)
+    if (!note || !parent) return
+    if (note.parentNoteId === parentNoteId) return
+
+    const descendants = new Set()
+    const pending = [noteId]
+    while (pending.length) {
+      const currentId = pending.pop()
+      allNotes.forEach(item => {
+        if (item.parentNoteId !== currentId || descendants.has(item.id)) return
+        descendants.add(item.id)
+        pending.push(item.id)
+      })
+    }
+    if (noteId === parentNoteId || descendants.has(parentNoteId)) {
+      showWarningPrompt({
+        title: 'Note move blocked',
+        message: 'A note cannot be moved into itself or one of its own subnotes.',
+        actions: 'close',
+      })
+      return
+    }
+
+    try {
+      await api.updateNote(noteId, { parentNoteId })
+    } catch (err) {
+      console.error(err)
+      const type = err?.detail?.type
+      const title = type === 'inheritance_deadline'
+        ? 'Hard deadline'
+        : type === 'inheritance_earliest_start'
+          ? 'Earliest start date'
+          : type === 'inheritance_window' || type === 'inheritance_scale_mismatch'
+            ? 'Time slot conflict'
+            : 'Note move blocked'
+      showWarningPrompt({
+        title,
+        message: err?.message || 'This note cannot be moved to the selected parent.',
+        actions: 'close',
+      })
+      return
+    }
+
+    playSound('noteMove')
+    await Promise.all([
+      onNotesChanged?.(),
+      api.getNoteInheritance().then(setNoteInheritance),
+    ]).catch(err => console.error('Note moved, but hierarchy refresh failed', err))
+  }, [allNotes, onNotesChanged, showWarningPrompt])
 
   const reorderCategoryInGantt = useCallback(async (draggedCatId, targetCatId) => {
     if (!activeDimId || draggedCatId === targetCatId) return
@@ -4348,10 +4538,19 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       })
       return
     }
-    const dl = findApplicableDeadline(deadlinesRef.current, ms)
-    const es = findApplicableEarliestStart(earliestStartsRef.current, ms)
+    const dl = findApplicableDeadlineForPlacement(deadlinesRef.current, ms)
+    const es = findApplicableEarliestStartForPlacement(earliestStartsRef.current, ms)
     if (es && startCol < es.col) {
-      reportEarliestStartViolation([ms.id])
+      const parentTimeSlot = es.parentNoteId ? timeSlotsRef.current.find(m => m.noteId === es.parentNoteId) : null
+      showWarningPrompt({
+        title: es.inherited ? 'Inherited earliest start' : 'Earliest start date',
+        message: es.inherited
+          ? 'This note is bounded by its parent project time slot. Place the time slot inside the visible inherited window.'
+          : "This time slot cannot start before the row's earliest start date.",
+        actions: parentTimeSlot ? 'resolve' : 'close',
+        timeSlotIds: parentTimeSlot ? [parentTimeSlot.id] : [],
+        replaceSelection: true,
+      })
       return
     }
     if (!nostalgiaModeRef.current && startCol < todayMinuteRef.current) {
@@ -4359,7 +4558,16 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       return
     }
     if (startCol < 0 || (dl && startCol + duration > dl.col)) {
-      reportDeadlineViolation([ms.id])
+      const parentTimeSlot = dl?.parentNoteId ? timeSlotsRef.current.find(m => m.noteId === dl.parentNoteId) : null
+      showWarningPrompt({
+        title: dl?.inherited ? 'Inherited hard deadline' : 'Hard deadline',
+        message: dl?.inherited
+          ? 'This note is bounded by its parent project time slot. Place the time slot inside the visible inherited window.'
+          : "This time slot cannot move before the project start or past its note's hard deadline.",
+        actions: parentTimeSlot ? 'resolve' : 'close',
+        timeSlotIds: parentTimeSlot ? [parentTimeSlot.id] : [],
+        replaceSelection: true,
+      })
       return
     }
 	    await commitTransaction({
@@ -4370,7 +4578,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
 	      after: { timeSlots: [ms], dependencies: [] },
 	    })
 	    showProjectEndWarningIfNeeded(ms)
-	  }, [clearWarningPrompt, commitTransaction, reportDeadlineViolation, reportEarliestStartViolation, showPastWorkWarning, showProjectEndWarningIfNeeded, showWarningPrompt])
+	  }, [clearWarningPrompt, commitTransaction, showPastWorkWarning, showProjectEndWarningIfNeeded, showWarningPrompt])
 
   const handleGridDoubleClick = useCallback(e => {
     if (modeRef.current !== 'timeSlot') return
@@ -6063,11 +6271,10 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                         dragOverNoteId === item.note.id && styles.noteRowDropTarget,
                         isNoteHighlighted(item.note.id) && styles.noteRowHighlight,
                       ].filter(Boolean).join(' ')}
-                      draggable={Boolean(activeDimId) && !paintCat && !paintPersonaId}
+                      draggable={!paintCat && !paintPersonaId && item.note.id !== project?.rootNoteId}
                       onDragStart={e => {
-                        if (paintCat || paintPersonaId || !activeDimId) return
+                        if (paintCat || paintPersonaId || item.note.id === project?.rootNoteId) return
                         e.dataTransfer.setData('schedule-note-id', item.note.id)
-                        e.dataTransfer.setData('schedule-note-cat', item.cat?.id ?? '')
                         e.dataTransfer.effectAllowed = 'move'
                         // Ghost must be in the viewport for browsers to render it at full opacity
                         const el = e.currentTarget
@@ -6089,7 +6296,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                           setDragOverLaneCatId(null)
                           return
                         }
-                        if (!activeDimId || !e.dataTransfer.types.includes('schedule-note-id')) return
+                        if (!e.dataTransfer.types.includes('schedule-note-id')) return
                         e.preventDefault()
                         setDragOverNoteId(item.note.id)
                         setDragOverLaneCatId(null)
@@ -6104,16 +6311,9 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                           return
                         }
                         const dragNoteId = e.dataTransfer.getData('schedule-note-id')
-                        const dragCat = e.dataTransfer.getData('schedule-note-cat')
                         setDragOverNoteId(null)
                         if (!dragNoteId) return
-                        const targetCatId = item.cat?.id ?? null
-                        const sourceCatId = dragCat || null
-                        if (sourceCatId !== targetCatId) {
-                          moveNoteToLane(dragNoteId, targetCatId)
-                        } else {
-                          reorderNoteInLane(dragNoteId, item.note.id)
-                        }
+                        moveNoteUnderNote(dragNoteId, item.note.id)
                       }}
                       onDragEnd={() => setDragOverNoteId(null)}
                       onClick={(paintCat || paintPersonaId) ? e => {
@@ -6145,6 +6345,14 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                         onNoteOpen?.(item.note.id)
                       }}
                       style={{ top: item.top, height: item.height, borderLeftColor: item.cat?.color ?? 'transparent' }}>
+                      <TreeGutter
+                        tree={item.tree}
+                        collapsed={collapsedTreeNoteIds.has(item.note.id)}
+                        onToggle={e => {
+                          e.stopPropagation()
+                          toggleTreeNoteCollapse(item.note.id)
+                        }}
+                      />
                       {showRowScheduleMarker && noteTimeSlot && (
                         <span className={styles.noteScheduleDot} title="Scheduled" aria-hidden="true" />
                       )}
@@ -6369,7 +6577,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
                 : minuteToZoomCol(es.col, timeZoom)
               const hatchWidth = Math.max(0, visualCol) * colW
               return hatchWidth > 0 ? (
-                <div key={`es-${es.noteId}`} className={styles.earliestStartHatch}
+                <div key={es.id || `es-${es.noteId}-${es.col}`} className={styles.earliestStartHatch}
                   style={{ left: 0, top: HEADER_H + row.top, width: hatchWidth, height: row.height }} />
               ) : null
             })}
@@ -6384,7 +6592,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
               const hatchLeft  = visualCol * colW
               const hatchWidth = Math.max(0, totalCols - visualCol) * colW
               return hatchWidth > 0 ? (
-                <div key={`dl-${dl.noteId}`} className={styles.deadlineHatch}
+                <div key={dl.id || `dl-${dl.noteId}-${dl.col}`} className={styles.deadlineHatch}
                   style={{ left: hatchLeft, top: HEADER_H + row.top, width: hatchWidth, height: row.height }} />
               ) : null
             })}
@@ -6731,7 +6939,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
           noteId={inheritanceInspectorNoteId}
           notes={notes}
           timeSlots={timeSlots}
-          noteInheritance={noteInheritance}
+          noteInheritance={effectiveNoteInheritance}
           assignments={assignments}
           dimensions={visibleDimensions}
           categories={categories}

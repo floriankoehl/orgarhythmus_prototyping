@@ -1009,7 +1009,57 @@ def _es(row) -> dict:
 
 def _inheritance(row) -> dict:
     d = dict(row)
-    return {"childNoteId": d["child_note_id"], "parentNoteId": d["parent_note_id"]}
+    return {
+        "childNoteId": d["child_note_id"],
+        "parentNoteId": d["parent_note_id"],
+        "structural": bool(d.get("structural", False)),
+    }
+
+def _combined_note_inheritance(con, project_id: str) -> list[dict]:
+    links = []
+    seen = set()
+
+    for row in con.execute(
+        """
+        SELECT
+          n.id AS child_note_id,
+          n.parent_note_id AS parent_note_id,
+          1 AS structural,
+          n.order_idx AS child_order_idx,
+          parent.order_idx AS parent_order_idx
+        FROM notes n
+        JOIN notes parent ON parent.id = n.parent_note_id
+        WHERE n.project_id = ? AND parent.project_id = ?
+        ORDER BY n.order_idx, parent.order_idx
+        """,
+        (project_id, project_id),
+    ).fetchall():
+        item = _inheritance(row)
+        key = (item["childNoteId"], item["parentNoteId"])
+        if key in seen:
+            continue
+        seen.add(key)
+        links.append(item)
+
+    for row in con.execute(
+        """
+        SELECT ni.*, 0 AS structural, child.order_idx AS child_order_idx, parent.order_idx AS parent_order_idx
+        FROM note_inheritance ni
+        JOIN notes child ON child.id = ni.child_note_id
+        JOIN notes parent ON parent.id = ni.parent_note_id
+        WHERE child.project_id = ? AND parent.project_id = ?
+        ORDER BY child.order_idx, parent.order_idx
+        """,
+        (project_id, project_id),
+    ).fetchall():
+        item = _inheritance(row)
+        key = (item["childNoteId"], item["parentNoteId"])
+        if key in seen:
+            continue
+        seen.add(key)
+        links.append(item)
+
+    return links
 
 def _filter(row) -> dict:
     d = dict(row)
@@ -1136,6 +1186,9 @@ def _project_id_for_note(con, note_id: str) -> str:
     return row["project_id"]
 
 def _assert_valid_structural_parent(con, note_id: str, project_id: str, parent_note_id: str | None) -> str | None:
+    project = con.execute("SELECT root_note_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if project and project["root_note_id"] == note_id:
+        raise HTTPException(422, {"message": "The project root note cannot be moved", "type": "root_note_move"})
     if not parent_note_id:
         return None
     if note_id == parent_note_id:
@@ -1661,18 +1714,7 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
         if current is None or row["col"] > current["col"]:
             earliest_starts[key] = {"col": row["col"], "scale": scale}
 
-    inheritance_rows = [
-        _inheritance(row)
-        for row in con.execute(
-            """
-            SELECT ni.* FROM note_inheritance ni
-            JOIN notes child ON child.id = ni.child_note_id
-            JOIN notes parent ON parent.id = ni.parent_note_id
-            WHERE child.project_id = ? AND parent.project_id = ?
-            """,
-            (project_id, project_id),
-        ).fetchall()
-    ]
+    inheritance_rows = _combined_note_inheritance(con, project_id)
     time_slot_by_note = {}
     for time_slot in final_ms.values():
         time_slot_by_note[time_slot["noteId"]] = time_slot
@@ -2354,6 +2396,7 @@ def update_note(note_id: str, data: NotePatch, user: dict = Depends(current_user
         if data.collapsed is not None: fields.append("collapsed = ?"); values.append(int(data.collapsed))
         if data.parentNoteId is not None:
             parent_note_id = _assert_valid_structural_parent(con, note_id, project_id, data.parentNoteId)
+            _assert_structural_time_window_if_scheduled(con, note_id, parent_note_id)
             fields.append("parent_note_id = ?"); values.append(parent_note_id)
         if fields:
             con.execute(f"UPDATE notes SET {', '.join(fields)} WHERE id = ?", (*values, note_id))
@@ -2557,21 +2600,61 @@ def _assert_valid_note_inheritance(con, child_note_id: str, parent_note_id: str)
             "timeSlotIds": [child_ms["id"], parent_ms["id"]],
         })
 
+def _assert_structural_time_window_if_scheduled(con, child_note_id: str, parent_note_id: str):
+    child_ms = _single_time_slot_for_note(con, child_note_id)
+    parent_ms = _single_time_slot_for_note(con, parent_note_id)
+    if not child_ms:
+        return
+    child_scale = _planning_scale_for_time_slot(child_ms)
+    child_start = child_ms["startCol"]
+    child_end = child_start + child_ms["duration"]
+
+    if parent_ms:
+        parent_scale = _planning_scale_for_time_slot(parent_ms)
+        if not _is_parent_scale_for_child(parent_scale, child_scale):
+            raise HTTPException(422, {
+                "message": "A child note inherits its parent note window, so both scheduled notes must be on compatible planning scales",
+                "type": "inheritance_scale_mismatch",
+                "childScale": child_scale,
+                "parentScale": parent_scale,
+            })
+        parent_start = parent_ms["startCol"]
+        parent_end = parent_ms["startCol"] + parent_ms["duration"]
+        if child_start < parent_start or child_end > parent_end:
+            raise HTTPException(422, {
+                "message": "This note cannot be moved there because its time slot does not fit inside the destination note's time slot",
+                "type": "inheritance_window",
+                "timeSlotIds": [child_ms["id"], parent_ms["id"]],
+            })
+
+    deadline = con.execute(
+        "SELECT col, scale FROM deadlines WHERE note_id = ?",
+        (parent_note_id,),
+    ).fetchone()
+    if deadline and _normalize_planning_scale(deadline["scale"], deadline["col"]) == child_scale and child_end > deadline["col"]:
+        raise HTTPException(422, {
+            "message": "This note cannot be moved there because its time slot exceeds the destination note's hard deadline",
+            "type": "inheritance_deadline",
+            "timeSlotIds": [child_ms["id"]],
+        })
+
+    earliest_start = con.execute(
+        "SELECT col, scale FROM earliest_starts WHERE note_id = ?",
+        (parent_note_id,),
+    ).fetchone()
+    if earliest_start and _normalize_planning_scale(earliest_start["scale"], earliest_start["col"]) == child_scale and child_start < earliest_start["col"]:
+        raise HTTPException(422, {
+            "message": "This note cannot be moved there because its time slot starts before the destination note's earliest start date",
+            "type": "inheritance_earliest_start",
+            "timeSlotIds": [child_ms["id"]],
+        })
+
 @app.get("/note-inheritance")
 def list_note_inheritance(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     with _db() as con:
-        rows = con.execute(
-            """
-            SELECT ni.* FROM note_inheritance ni
-            JOIN notes child ON child.id = ni.child_note_id
-            JOIN notes parent ON parent.id = ni.parent_note_id
-            WHERE child.project_id = ? AND parent.project_id = ?
-            ORDER BY child.order_idx, parent.order_idx
-            """,
-            (project_id, project_id),
-        ).fetchall()
-    return [_inheritance(row) for row in rows]
+        links = _combined_note_inheritance(con, project_id)
+    return links
 
 @app.put("/notes/{child_note_id}/inheritance")
 def set_note_inheritance(child_note_id: str, data: NoteInheritanceIn, user: dict = Depends(current_user)):
