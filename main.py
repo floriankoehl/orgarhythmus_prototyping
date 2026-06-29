@@ -122,6 +122,7 @@ def _init_db():
             CREATE TABLE IF NOT EXISTS projects (
                 id          TEXT PRIMARY KEY,
                 user_id     TEXT NOT NULL REFERENCES users(id),
+                root_note_id TEXT,
                 name        TEXT NOT NULL DEFAULT 'Untitled',
                 description TEXT NOT NULL DEFAULT '',
                 resize_warn_order_threshold REAL NOT NULL DEFAULT 2,
@@ -134,6 +135,7 @@ def _init_db():
             CREATE TABLE IF NOT EXISTS notes (
                 id         TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL DEFAULT 'default',
+                parent_note_id TEXT,
                 html       TEXT NOT NULL DEFAULT '',
                 title      TEXT NOT NULL DEFAULT 'Untitled',
                 collapsed  INTEGER NOT NULL DEFAULT 0,
@@ -619,8 +621,42 @@ def _migrate():
             proj_cols = [r[1] for r in con.execute("PRAGMA table_info(projects)").fetchall()]
         if 'end_date' not in proj_cols:
             con.execute("ALTER TABLE projects ADD COLUMN end_date TEXT NOT NULL DEFAULT ''")
+            proj_cols = [r[1] for r in con.execute("PRAGMA table_info(projects)").fetchall()]
+        if 'root_note_id' not in proj_cols:
+            con.execute("ALTER TABLE projects ADD COLUMN root_note_id TEXT")
+            proj_cols = [r[1] for r in con.execute("PRAGMA table_info(projects)").fetchall()]
         if 'color' in proj_cols:
             pass  # keep for compat, just don't use in UI
+
+        note_cols = [r[1] for r in con.execute("PRAGMA table_info(notes)").fetchall()]
+        if 'parent_note_id' not in note_cols:
+            con.execute("ALTER TABLE notes ADD COLUMN parent_note_id TEXT")
+
+        for project in con.execute("SELECT id, name, description, root_note_id FROM projects").fetchall():
+            root_note_id = project["root_note_id"]
+            root_exists = root_note_id and con.execute(
+                "SELECT 1 FROM notes WHERE id = ? AND project_id = ?",
+                (root_note_id, project["id"]),
+            ).fetchone()
+            if not root_exists:
+                root_note_id = str(uuid.uuid4())
+                root_title = project["name"] or "Untitled"
+                root_html = project["description"] or ""
+                con.execute(
+                    "INSERT INTO notes (id, project_id, parent_note_id, html, title, collapsed, order_idx) VALUES (?, ?, NULL, ?, ?, 0, ?)",
+                    (root_note_id, project["id"], root_html, root_title, -1),
+                )
+                con.execute("UPDATE projects SET root_note_id = ? WHERE id = ?", (root_note_id, project["id"]))
+            con.execute(
+                """
+                UPDATE notes
+                SET parent_note_id = ?
+                WHERE project_id = ?
+                  AND id != ?
+                  AND (parent_note_id IS NULL OR parent_note_id = '')
+                """,
+                (root_note_id, project["id"], root_note_id),
+            )
 
 _migrate()
 
@@ -730,11 +766,13 @@ class NoteIn(BaseModel):
     html: str = ""
     title: str = "Untitled"
     collapsed: bool = False
+    parentNoteId: Optional[str] = None
 
 class NotePatch(BaseModel):
     html: Optional[str] = None
     title: Optional[str] = None
     collapsed: Optional[bool] = None
+    parentNoteId: Optional[str] = None
 
 class OrderIn(BaseModel):
     ids: list[str]
@@ -878,6 +916,7 @@ def _project(row) -> dict:
     return {
         "id": d["id"],
         "userId": d.get("user_id", ""),
+        "rootNoteId": d.get("root_note_id"),
         "name": d["name"],
         "description": d.get("description", ""),
         "endDate": d.get("end_date", ""),
@@ -889,10 +928,16 @@ def _project(row) -> dict:
 
 def _note(row) -> dict:
     d = dict(row)
-    d["collapsed"] = bool(d["collapsed"])
-    if "created_at" in d:
-        d["createdAt"] = d["created_at"]
-    return d
+    return {
+        "id": d["id"],
+        "projectId": d["project_id"],
+        "parentNoteId": d.get("parent_note_id"),
+        "html": d["html"],
+        "title": d["title"],
+        "collapsed": bool(d["collapsed"]),
+        "orderIdx": d["order_idx"],
+        **({"createdAt": d["created_at"]} if "created_at" in d else {}),
+    }
 
 def _kanban_dimension_id(project_id: str) -> str:
     return f"{KANBAN_DIMENSION_PREFIX}{project_id}"
@@ -1066,11 +1111,50 @@ def assert_project_access(project_id: str, user: dict):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Project access denied")
     return _project(row)
 
+def _ensure_project_root_note(con, project_id: str) -> str:
+    project = con.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if not project:
+        raise HTTPException(404, "Project not found")
+    root_note_id = project["root_note_id"] if "root_note_id" in project.keys() else None
+    if root_note_id:
+        row = con.execute("SELECT id FROM notes WHERE id = ? AND project_id = ?", (root_note_id, project_id)).fetchone()
+        if row:
+            return root_note_id
+
+    root_note_id = str(uuid.uuid4())
+    con.execute(
+        "INSERT INTO notes (id, project_id, parent_note_id, html, title, collapsed, order_idx) VALUES (?, ?, NULL, ?, ?, 0, ?)",
+        (root_note_id, project_id, project["description"] or "", project["name"] or "Untitled", -1),
+    )
+    con.execute("UPDATE projects SET root_note_id = ? WHERE id = ?", (root_note_id, project_id))
+    return root_note_id
+
 def _project_id_for_note(con, note_id: str) -> str:
     row = con.execute("SELECT project_id FROM notes WHERE id = ?", (note_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Note not found")
     return row["project_id"]
+
+def _assert_valid_structural_parent(con, note_id: str, project_id: str, parent_note_id: str | None) -> str | None:
+    if not parent_note_id:
+        return None
+    if note_id == parent_note_id:
+        raise HTTPException(422, {"message": "A note cannot be its own parent", "type": "note_parent_cycle"})
+    parent = con.execute("SELECT id, project_id, parent_note_id FROM notes WHERE id = ?", (parent_note_id,)).fetchone()
+    if not parent:
+        raise HTTPException(404, "Parent note not found")
+    if parent["project_id"] != project_id:
+        raise HTTPException(400, "Cannot parent notes across projects")
+
+    current = parent["parent_note_id"]
+    seen = {note_id, parent_note_id}
+    while current:
+        if current in seen:
+            raise HTTPException(422, {"message": "Parenting cannot create a cycle", "type": "note_parent_cycle"})
+        seen.add(current)
+        row = con.execute("SELECT parent_note_id FROM notes WHERE id = ? AND project_id = ?", (current, project_id)).fetchone()
+        current = row["parent_note_id"] if row else None
+    return parent_note_id
 
 def _project_id_for_dimension(con, dim_id: str) -> str:
     row = con.execute("SELECT project_id FROM dimensions WHERE id = ?", (dim_id,)).fetchone()
@@ -2075,6 +2159,12 @@ def list_projects(user: dict = Depends(current_user)):
             rows = con.execute("SELECT * FROM projects ORDER BY created_at").fetchall()
         else:
             rows = con.execute("SELECT * FROM projects WHERE user_id = ? ORDER BY created_at", (user["id"],)).fetchall()
+        for row in rows:
+            _ensure_project_root_note(con, row["id"])
+        if user.get("isSuperuser"):
+            rows = con.execute("SELECT * FROM projects ORDER BY created_at").fetchall()
+        else:
+            rows = con.execute("SELECT * FROM projects WHERE user_id = ? ORDER BY created_at", (user["id"],)).fetchall()
     return [_project(r) for r in rows]
 
 @app.post("/projects", status_code=201)
@@ -2082,12 +2172,17 @@ def create_project(data: ProjectIn, user: dict = Depends(current_user)):
     pid = data.id or str(uuid.uuid4())
     name = data.name.strip() or 'Untitled'
     end_date = data.endDate or ''
+    root_note_id = str(uuid.uuid4())
     with _db() as con:
         if con.execute("SELECT id FROM projects WHERE id = ?", (pid,)).fetchone():
             raise HTTPException(409, "Project already exists")
         con.execute(
-            "INSERT INTO projects (id, user_id, name, description, end_date, resize_warn_order_threshold, resize_block_order_threshold, resize_scale_crossing_warning_enabled) VALUES (?, ?, ?, ?, ?, 2, 2, 1)",
-            (pid, user["id"], name, data.description or '', end_date),
+            "INSERT INTO projects (id, user_id, root_note_id, name, description, end_date, resize_warn_order_threshold, resize_block_order_threshold, resize_scale_crossing_warning_enabled) VALUES (?, ?, ?, ?, ?, ?, 2, 2, 1)",
+            (pid, user["id"], root_note_id, name, data.description or '', end_date),
+        )
+        con.execute(
+            "INSERT INTO notes (id, project_id, parent_note_id, html, title, collapsed, order_idx) VALUES (?, ?, NULL, ?, ?, 0, ?)",
+            (root_note_id, pid, data.description or '', name, -1),
         )
         row = con.execute("SELECT * FROM projects WHERE id = ?", (pid,)).fetchone()
     _seed_defaults(pid)
@@ -2113,14 +2208,24 @@ def update_project(project_id: str, data: ProjectPatch, user: dict = Depends(cur
         if fields:
             con.execute(f"UPDATE projects SET {', '.join(fields)} WHERE id = ?", (*values, project_id))
         row = con.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        root_note_id = _ensure_project_root_note(con, project_id)
+        note_fields, note_values = [], []
+        if data.name is not None:
+            note_fields.append("title = ?"); note_values.append(data.name.strip() or 'Untitled')
+        if data.description is not None:
+            note_fields.append("html = ?"); note_values.append(data.description)
+        if note_fields:
+            con.execute(f"UPDATE notes SET {', '.join(note_fields)} WHERE id = ?", (*note_values, root_note_id))
+        row = con.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
     return _project(row)
 
 @app.get("/projects/{project_id}/stats")
 def get_project_stats(project_id: str, user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     with _db() as con:
+        root_note_id = _ensure_project_root_note(con, project_id)
         notes = con.execute(
-            "SELECT COUNT(*) FROM notes WHERE project_id = ?", (project_id,)
+            "SELECT COUNT(*) FROM notes WHERE project_id = ? AND id != ?", (project_id, root_note_id)
         ).fetchone()[0]
         time_slots = con.execute(
             "SELECT COUNT(*) FROM time_slots WHERE note_id IN (SELECT id FROM notes WHERE project_id = ?)",
@@ -2199,12 +2304,23 @@ def delete_project(project_id: str, user: dict = Depends(current_user)):
 
 # ── Notes (notes) ─────────────────────────────────────────────────────────────
 @app.get("/notes")
-def list_notes(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+def list_notes(
+    project_id: str = Query(default='default'),
+    include_root: bool = False,
+    user: dict = Depends(current_user),
+):
     assert_project_access(project_id, user)
     with _db() as con:
-        rows = con.execute(
-            "SELECT * FROM notes WHERE project_id = ? ORDER BY order_idx", (project_id,)
-        ).fetchall()
+        root_note_id = _ensure_project_root_note(con, project_id)
+        if include_root:
+            rows = con.execute(
+                "SELECT * FROM notes WHERE project_id = ? ORDER BY order_idx", (project_id,)
+            ).fetchall()
+        else:
+            rows = con.execute(
+                "SELECT * FROM notes WHERE project_id = ? AND id != ? ORDER BY order_idx",
+                (project_id, root_note_id),
+            ).fetchall()
     return [_note(r) for r in rows]
 
 @app.post("/notes", status_code=201)
@@ -2214,12 +2330,15 @@ def create_note(data: NoteIn, project_id: str = Query(default='default'), user: 
     with _db() as con:
         if con.execute("SELECT id FROM notes WHERE id = ?", (pid,)).fetchone():
             raise HTTPException(409, "Note already exists")
+        parent_note_id = data.parentNoteId or _ensure_project_root_note(con, project_id)
+        _assert_valid_structural_parent(con, pid, project_id, parent_note_id)
         max_ord = con.execute(
-            "SELECT COALESCE(MAX(order_idx), -1) FROM notes WHERE project_id = ?", (project_id,)
+            "SELECT COALESCE(MAX(order_idx), -1) FROM notes WHERE project_id = ? AND parent_note_id IS ?",
+            (project_id, parent_note_id),
         ).fetchone()[0]
         con.execute(
-            "INSERT INTO notes (id, project_id, html, title, collapsed, order_idx) VALUES (?, ?, ?, ?, ?, ?)",
-            (pid, project_id, data.html, data.title, int(data.collapsed), max_ord + 1),
+            "INSERT INTO notes (id, project_id, parent_note_id, html, title, collapsed, order_idx) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (pid, project_id, parent_note_id, data.html, data.title, int(data.collapsed), max_ord + 1),
         )
         row = con.execute("SELECT * FROM notes WHERE id = ?", (pid,)).fetchone()
     return _note(row)
@@ -2227,11 +2346,15 @@ def create_note(data: NoteIn, project_id: str = Query(default='default'), user: 
 @app.patch("/notes/{note_id}")
 def update_note(note_id: str, data: NotePatch, user: dict = Depends(current_user)):
     with _db() as con:
-        assert_project_access(_project_id_for_note(con, note_id), user)
+        project_id = _project_id_for_note(con, note_id)
+        assert_project_access(project_id, user)
         fields, values = [], []
         if data.html is not None:      fields.append("html = ?");      values.append(data.html)
         if data.title is not None:     fields.append("title = ?");     values.append(data.title)
         if data.collapsed is not None: fields.append("collapsed = ?"); values.append(int(data.collapsed))
+        if data.parentNoteId is not None:
+            parent_note_id = _assert_valid_structural_parent(con, note_id, project_id, data.parentNoteId)
+            fields.append("parent_note_id = ?"); values.append(parent_note_id)
         if fields:
             con.execute(f"UPDATE notes SET {', '.join(fields)} WHERE id = ?", (*values, note_id))
         row = con.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
@@ -2253,8 +2376,8 @@ def duplicate_note(note_id: str, user: dict = Depends(current_user)):
             (project_id, source_order),
         )
         con.execute(
-            "INSERT INTO notes (id, project_id, html, title, collapsed, order_idx) VALUES (?, ?, ?, ?, ?, ?)",
-            (new_note_id, project_id, source["html"], source["title"], source["collapsed"], source_order + 1),
+            "INSERT INTO notes (id, project_id, parent_note_id, html, title, collapsed, order_idx) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (new_note_id, project_id, source["parent_note_id"], source["html"], source["title"], source["collapsed"], source_order + 1),
         )
 
         for row in con.execute("SELECT dimension_id, category_id, order_idx FROM assignments WHERE note_id = ?", (note_id,)).fetchall():
@@ -2350,7 +2473,15 @@ def duplicate_note(note_id: str, user: dict = Depends(current_user)):
 @app.delete("/notes/{note_id}", status_code=204)
 def delete_note(note_id: str, user: dict = Depends(current_user)):
     with _db() as con:
-        assert_project_access(_project_id_for_note(con, note_id), user)
+        project_id = _project_id_for_note(con, note_id)
+        assert_project_access(project_id, user)
+        project = con.execute("SELECT root_note_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if project and project["root_note_id"] == note_id:
+            raise HTTPException(422, {"message": "The project root note cannot be deleted", "type": "root_note_delete"})
+        note = con.execute("SELECT parent_note_id FROM notes WHERE id = ?", (note_id,)).fetchone()
+        root_note_id = _ensure_project_root_note(con, project_id)
+        fallback_parent_id = note["parent_note_id"] if note and note["parent_note_id"] else root_note_id
+        con.execute("UPDATE notes SET parent_note_id = ? WHERE parent_note_id = ?", (fallback_parent_id, note_id))
         ms_rows = con.execute("SELECT id FROM time_slots WHERE note_id = ?", (note_id,)).fetchall()
         ms_ids = [r["id"] for r in ms_rows]
         if ms_ids:

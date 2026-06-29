@@ -82,6 +82,7 @@
   flex-shrink: 0;
 }
 
+.openWorkspaceBtn,
 .expandBtn {
   display: flex;
   align-items: center;
@@ -98,6 +99,12 @@
   transition: background 0.12s, color 0.12s;
 }
 .expandBtn:hover { background: #e8f0fe; color: #1a73e8; }
+
+.openWorkspaceBtn {
+  color: #1a73e8;
+  background: #e8f0fe;
+}
+.openWorkspaceBtn:hover { background: #d8e7fd; color: #1558b0; }
 
 .deleteBtn, .closeBtn {
   width: 28px;

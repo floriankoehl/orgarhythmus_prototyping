@@ -53,7 +53,7 @@ function ChevronIcon({ down }) {
 }
 
 // ── Main popup ────────────────────────────────────────────────────────────────
-export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsChanged, onPeopleChanged, onNoteDeleted }) {
+export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsChanged, onPeopleChanged, onNoteDeleted, onOpenAsWorkspace }) {
   const [expanded, setExpanded]           = useState(false)
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false)
   const [headlineMode, setHeadlineMode]   = useState(false)
@@ -271,6 +271,15 @@ export default function NotePopup({ note, onClose, onNoteUpdated, onAssignmentsC
             )}
           </div>
           <div className={styles.headerActions}>
+            {onOpenAsWorkspace && (
+              <button
+                className={styles.openWorkspaceBtn}
+                onClick={() => { playSound('viewChange'); onOpenAsWorkspace(note.id) }}
+                title="Open this note as a project"
+              >
+                Open as project
+              </button>
+            )}
             <button
               className={styles.expandBtn}
               onClick={() => { playSound('collapseToggle'); setExpanded(e => !e) }}

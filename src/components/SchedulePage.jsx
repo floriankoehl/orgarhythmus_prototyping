@@ -2223,7 +2223,7 @@ function ScheduleColorLegendWidget({
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, externalResolveRequest = null, onExternalResolveReturn, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [], onSetContextDefaultPerspective }) {
+export default function SchedulePage({ notes = [], project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, externalResolveRequest = null, onExternalResolveReturn, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [], onSetContextDefaultPerspective, workspaceRootNoteId = null }) {
   // ── Timeline anchor ────────────────────────────────────────────────────────
   // Keep the module-level anchor in sync with the project's creation date so that
   // col 0 = project creation date (fixed, immutable left boundary of the timeline).
@@ -3437,6 +3437,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         title: 'Untitled',
         html: '',
         collapsed: false,
+        parentNoteId: workspaceRootNoteId,
       })
       if (targetCatId) await api.assign(note.id, activeDimId, targetCatId)
       setClickedNoteId(note.id)
@@ -3453,7 +3454,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         actions: 'close',
       })
     }
-  }, [activeDimId, onNoteCreated, onNoteOpen, onNotesChanged, refreshScheduleData, showWarningPrompt])
+  }, [activeDimId, onNoteCreated, onNoteOpen, onNotesChanged, refreshScheduleData, showWarningPrompt, workspaceRootNoteId])
 
   const pasteCopiedNote = useCallback(async () => {
     if (!copiedNoteId) return
@@ -5087,6 +5088,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
         title: `${originalNote.title} (Resized ${draft.direction})`,
         html: originalNote.html ?? '',
         collapsed: false,
+        parentNoteId: workspaceRootNoteId,
       })
       onNoteCreated?.(clonedNote)
       const noteAssignments = assignments[originalNote.id] ?? {}
@@ -5105,7 +5107,7 @@ export default function SchedulePage({ notes = [], project = null, isActive = fa
       })
       setTimeSlots(prev => [...prev, clonedMs])
     } catch (err) { console.error('Clone note failed', err) }
-  }, [assignments, metricResizeDraft, notes, onNoteCreated])
+  }, [assignments, metricResizeDraft, notes, onNoteCreated, workspaceRootNoteId])
 
   const updatePreviewArrow = useCallback((sourceId, clientX, clientY) => {
     const rect = gridBodyRef.current?.getBoundingClientRect()

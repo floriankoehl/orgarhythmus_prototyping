@@ -127,7 +127,7 @@ export const projectsApi = {
 
 export const api = {
   // Notes
-  getNotes:     ()            => req('GET',    '/notes'),
+  getNotes:     (options = {}) => req('GET',    `/notes${options.includeRoot ? '?include_root=true' : ''}`),
   createNote:   (note)        => req('POST',   '/notes', note),
   updateNote:   (id, patch)   => req('PATCH',  `/notes/${id}`, patch),
   deleteNote:   (id)          => req('DELETE', `/notes/${id}`),

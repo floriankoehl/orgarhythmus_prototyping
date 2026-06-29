@@ -10,6 +10,8 @@ FastAPI + SQLite backend (`main.py`) + Vite/React frontend (`src/`), both on loc
 
 **Project scoping:** `notes`, `dimensions`, `saved_filters`, and perspectives have `project_id` directly. `categories`, `milestones`, `dependencies`, `deadlines` don't — they're reached via subqueries (e.g. `WHERE note_id IN (SELECT id FROM notes WHERE project_id = ?)`).
 
+**Root-note model:** Each project has a `root_note_id`. The root note is the project-as-note: its title/body mirror the project name/description during the transitional UI. Normal `/notes` calls hide the root by default, while `/notes?include_root=true` returns it. Every non-root note has one structural `parent_note_id`; notes without an explicit parent are created as children of the project root. This is a tree model, separate from the existing scheduled `note_inheritance` links.
+
 **Transaction system (most important part):** Schedule writes go through `POST /transactions` with a `before` + `after` snapshot. Backend validates:
 1. Current DB matches `before` (optimistic locking — catches stale edits)
 2. `after` state passes all schedule rules (no overlaps, no passing milestones, deadline enforcement, dependency constraints, no cycles)

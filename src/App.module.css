@@ -22,6 +22,42 @@
   background: #f0f0f0;
 }
 
+.workspaceTrail {
+  height: 34px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid #e5e7eb;
+  border-bottom: 1px solid #d1d5db;
+  background: #ffffff;
+  color: #4b5563;
+  font: 600 12px Arial, sans-serif;
+  flex-shrink: 0;
+}
+
+.workspaceUpBtn {
+  min-height: 24px;
+  padding: 0 10px;
+  border: 1px solid #c7d2fe;
+  border-radius: 6px;
+  background: #eef2ff;
+  color: #1d4ed8;
+  font: inherit;
+  cursor: pointer;
+}
+
+.workspaceUpBtn:hover {
+  background: #e0e7ff;
+}
+
+.workspaceTrailLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .loading {
   flex: 1;
   display: grid;

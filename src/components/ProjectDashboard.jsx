@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { projectsApi } from '../api'
+import { api, projectsApi } from '../api'
 import { useConfirmDialog } from './ConfirmDialog'
 import styles from './ProjectDashboard.module.css'
 import { playSound } from '../sounds/sound_registry'
@@ -22,25 +22,28 @@ function StatCard({ label, value }) {
   )
 }
 
-export default function ProjectDashboard({ project, onUpdate, isActive }) {
-  const [name,        setName]        = useState(project.name)
-  const [desc,        setDesc]        = useState(project.description || '')
+export default function ProjectDashboard({ project, workspaceNote = null, onUpdate, onWorkspaceNoteUpdated, isActive }) {
+  const isNoteWorkspace = Boolean(workspaceNote)
+  const workspaceName = workspaceNote?.title || project.name
+  const workspaceDesc = workspaceNote?.html || project.description || ''
+  const [name,        setName]        = useState(workspaceName)
+  const [desc,        setDesc]        = useState(workspaceDesc)
   const [endDate,     setEndDate]     = useState(project.endDate || '')
   const [stats,       setStats]       = useState(null)
   const [editingName, setEditingName] = useState(false)
   const [editingDesc, setEditingDesc] = useState(false)
-  const [draftDesc,   setDraftDesc]   = useState(project.description || '')
+  const [draftDesc,   setDraftDesc]   = useState(workspaceDesc)
   const [exporting,   setExporting]   = useState(false)
   const nameInputRef = useRef()
   const saveTimerRef = useRef(null)
   const { confirm: confirmDialog, dialog: confirmDialogEl } = useConfirmDialog()
 
   useEffect(() => {
-    setName(project.name)
-    setDesc(project.description || '')
-    setDraftDesc(project.description || '')
+    setName(workspaceName)
+    setDesc(workspaceDesc)
+    setDraftDesc(workspaceDesc)
     setEndDate(project.endDate || '')
-  }, [project.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [project.id, workspaceNote?.id, workspaceName, workspaceDesc]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (isActive) {
@@ -55,16 +58,24 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
   const persist = useCallback((patch) => {
     clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(async () => {
-      const updated = await projectsApi.updateProject(project.id, patch)
-      onUpdate(updated)
+      if (isNoteWorkspace) {
+        const notePatch = {}
+        if (patch.name !== undefined) notePatch.title = patch.name
+        if (patch.description !== undefined) notePatch.html = patch.description
+        const updated = await api.updateNote(workspaceNote.id, notePatch)
+        onWorkspaceNoteUpdated?.(updated.id, updated)
+      } else {
+        const updated = await projectsApi.updateProject(project.id, patch)
+        onUpdate(updated)
+      }
     }, 400)
-  }, [project.id, onUpdate])
+  }, [isNoteWorkspace, project.id, workspaceNote?.id, onUpdate, onWorkspaceNoteUpdated])
 
   const handleNameBlur = () => {
     setEditingName(false)
-    const trimmed = name.trim() || project.name
+    const trimmed = name.trim() || workspaceName
     setName(trimmed)
-    if (trimmed !== project.name) { playSound('projectNameSave'); persist({ name: trimmed }) }
+    if (trimmed !== workspaceName) { playSound('projectNameSave'); persist({ name: trimmed }) }
   }
 
   const handleNameKey = e => {
@@ -155,6 +166,9 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
         {/* Timeline dates */}
         <div className={styles.section}>
           <label className={styles.sectionLabel}>Timeline</label>
+          {isNoteWorkspace ? (
+            <p className={styles.descText}>This workspace is a note inside {project.name}.</p>
+          ) : (
           <div className={styles.dateRow}>
             <div className={styles.dateField}>
               <label className={styles.dateLabel}>Created (start)</label>
@@ -173,6 +187,7 @@ export default function ProjectDashboard({ project, onUpdate, isActive }) {
               />
             </div>
           </div>
+          )}
         </div>
 
         {/* Description */}

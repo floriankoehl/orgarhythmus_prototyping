@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import Header from './components/Header'
 import ClassificationPage from './components/ClassificationPage'
@@ -53,6 +53,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(null)
   const [view, setView]               = useState(0)
   const [activeProject, setActiveProject] = useState(null)
+  const [workspaceRootNoteId, setWorkspaceRootNoteId] = useState(null)
   const [appScreen, setAppScreen]     = useState('home') // 'home' | 'workspace'
   const [notes, setNotes]             = useState([])
   const [refreshKey, setRefreshKey]   = useState(0)
@@ -66,6 +67,34 @@ export default function App() {
   const [activeContextState, setActiveContextState] = useState({})
   const [popupNoteId, setPopupNoteId] = useState(null)
   const [toast, setToast]             = useState(null)
+
+  const activeWorkspaceRootId = workspaceRootNoteId || activeProject?.rootNoteId || null
+  const activeWorkspaceRoot = useMemo(
+    () => notes.find(note => note.id === activeWorkspaceRootId) || null,
+    [notes, activeWorkspaceRootId],
+  )
+  const visibleNotes = useMemo(() => {
+    if (!activeWorkspaceRootId) return notes
+    const childrenByParent = new Map()
+    notes.forEach(note => {
+      const parentId = note.parentNoteId || ''
+      if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, [])
+      childrenByParent.get(parentId).push(note)
+    })
+    const visibleIds = new Set()
+    const stack = [...(childrenByParent.get(activeWorkspaceRootId) || [])]
+    while (stack.length) {
+      const note = stack.shift()
+      if (!note || visibleIds.has(note.id)) continue
+      visibleIds.add(note.id)
+      stack.push(...(childrenByParent.get(note.id) || []))
+    }
+    return notes.filter(note => visibleIds.has(note.id))
+  }, [notes, activeWorkspaceRootId])
+  const workspaceParent = useMemo(() => {
+    if (!activeWorkspaceRoot?.parentNoteId) return null
+    return notes.find(note => note.id === activeWorkspaceRoot.parentNoteId) || null
+  }, [notes, activeWorkspaceRoot])
 
   const openScheduleResolverFromCalendar = request => {
     setCalendarResolveRequest({ ...request, id: request?.id || crypto.randomUUID() })
@@ -129,6 +158,7 @@ export default function App() {
   const handleAuthenticated = (user) => {
     setCurrentUser(user)
     setActiveProject(null)
+    setWorkspaceRootNoteId(null)
     setNotes([])
     setToast(null)
     setPopupNoteId(null)
@@ -148,6 +178,7 @@ export default function App() {
     authApi.logout()
     setCurrentUser(null)
     setActiveProject(null)
+    setWorkspaceRootNoteId(null)
     setNotes([])
     setToast(null)
     setPopupNoteId(null)
@@ -166,6 +197,7 @@ export default function App() {
   const openProject = (project) => {
     setProjectId(project.id)
     setActiveProject(project)
+    setWorkspaceRootNoteId(project.rootNoteId || null)
     setNotes([])
     setToast(null)
     setPopupNoteId(null)
@@ -184,6 +216,7 @@ export default function App() {
 
   const backToHome = () => {
     setActiveProject(null)
+    setWorkspaceRootNoteId(null)
     setNotes([])
     setToast(null)
     setPopupNoteId(null)
@@ -206,17 +239,13 @@ export default function App() {
     const words = text.trim().split(/\s+/).filter(Boolean)
     const title = customTitle || words.slice(0, 7).join(' ') || 'Untitled'
     const html = text.replace(/\n/g, '<br>')
-    const newNote = { id: crypto.randomUUID(), html, title, collapsed: false }
+    const newNote = { id: crypto.randomUUID(), html, title, collapsed: false, parentNoteId: activeWorkspaceRootId }
     try {
       const cats = text.includes('#') ? await api.getAllCategories().catch(() => []) : []
       const selections = mergeSelectionsWithHashtags(categorySelections, text, cats)
       const savedNote = await api.createNote(newNote)
       await assignNoteCategories(newNote.id, selections)
-      setNotes(prev => {
-        const next = [savedNote, ...prev.filter(g => g.id !== savedNote.id)]
-        api.reorderNotes(next.map(g => g.id)).catch(console.error)
-        return next
-      })
+      setNotes(prev => [savedNote, ...prev.filter(g => g.id !== savedNote.id)])
       setNoteDataVersion(v => v + 1)
       setRefreshKey(k => k + 1)
       setToast({ noteId: newNote.id, title })
@@ -227,6 +256,21 @@ export default function App() {
 
   const openNotePopup  = (noteId) => setPopupNoteId(noteId)
   const closeNotePopup = () => setPopupNoteId(null)
+
+  const openNoteAsWorkspace = (noteId) => {
+    setWorkspaceRootNoteId(noteId)
+    setPopupNoteId(null)
+    setToast(null)
+    setView(0)
+  }
+
+  const openParentWorkspace = () => {
+    if (!workspaceParent) return
+    setWorkspaceRootNoteId(workspaceParent.id)
+    setPopupNoteId(null)
+    setToast(null)
+    setView(0)
+  }
 
   const handleNoteUpdated = (noteId, patch) => {
     setNotes(prev => prev.map(g => g.id === noteId ? { ...g, ...patch } : g))
@@ -242,18 +286,14 @@ export default function App() {
   }
 
   const handleNoteCreated = (newNote) => {
-    setNotes(prev => {
-      const next = [newNote, ...prev.filter(g => g.id !== newNote.id)]
-      api.reorderNotes(next.map(g => g.id)).catch(console.error)
-      return next
-    })
+    setNotes(prev => [newNote, ...prev.filter(g => g.id !== newNote.id)])
     setNoteDataVersion(v => v + 1)
     setRefreshKey(k => k + 1)
     setToast({ noteId: newNote.id, title: newNote.title })
   }
 
   const handleNotesChanged = async () => {
-    const data = await api.getNotes()
+    const data = await api.getNotes({ includeRoot: true })
     setNotes(data)
     setNoteDataVersion(v => v + 1)
     setRefreshKey(k => k + 1)
@@ -261,12 +301,12 @@ export default function App() {
 
   useEffect(() => {
     if (!activeProject || appScreen !== 'workspace') return
-    api.getNotes().then(setNotes).catch(console.error)
+    api.getNotes({ includeRoot: true }).then(setNotes).catch(console.error)
   }, [activeProject?.id, appScreen]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!refreshKey || !activeProject) return
-    api.getNotes().then(data => { if (data.length > 0) setNotes(data) }).catch(console.error)
+    api.getNotes({ includeRoot: true }).then(data => { if (data.length > 0) setNotes(data) }).catch(console.error)
   }, [refreshKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const popupNote = notes.find(g => g.id === popupNoteId)
@@ -300,20 +340,35 @@ export default function App() {
     <div className={styles.app}>
       <Header
         view={view} onNavigate={setView} onQuickAdd={handleQuickAdd}
-        projectName={activeProject.name} onBack={backToHome}
-        notes={notes} onNoteOpen={openNotePopup}
+        projectName={activeWorkspaceRoot?.title || activeProject.name} onBack={backToHome}
+        notes={visibleNotes} onNoteOpen={openNotePopup}
         activeContextId={activeContextId}
         activeContextState={activeContextState}
         onApplyContext={applyProjectContext}
       />
 
+      {workspaceParent && (
+        <div className={styles.workspaceTrail}>
+          <button className={styles.workspaceUpBtn} onClick={openParentWorkspace}>
+            Up to {workspaceParent.title || activeProject.name}
+          </button>
+          <span className={styles.workspaceTrailLabel}>{activeWorkspaceRoot?.title || activeProject.name}</span>
+        </div>
+      )}
+
       <div className={styles.views}>
         <div className={styles.view} style={{ display: view === 0 ? 'flex' : 'none' }}>
-          <ProjectDashboard project={activeProject} onUpdate={handleProjectUpdate} isActive={view === 0} />
+          <ProjectDashboard
+            project={activeProject}
+            workspaceNote={activeWorkspaceRootId !== activeProject.rootNoteId ? activeWorkspaceRoot : null}
+            onUpdate={handleProjectUpdate}
+            onWorkspaceNoteUpdated={handleNoteUpdated}
+            isActive={view === 0}
+          />
         </div>
         <div className={styles.view} style={{ display: view === 1 ? 'flex' : 'none' }}>
           <NotesPage
-            notes={notes}
+            notes={visibleNotes}
             onNoteCreated={handleNoteCreated}
             onNoteOpen={openNotePopup}
             onNoteUpdated={handleNoteUpdated}
@@ -322,11 +377,12 @@ export default function App() {
             dimRefreshKey={dimVersion}
             peopleRefreshKey={peopleVersion}
             onDimChanged={() => setDimVersion(v => v + 1)}
+            workspaceRootNoteId={activeWorkspaceRootId}
           />
         </div>
         <div className={styles.view} style={{ display: view === 2 ? 'flex' : 'none' }}>
           <ClassificationPage
-            notes={notes}
+            notes={visibleNotes}
             isActive={view === 2}
             onNoteOpen={openNotePopup}
             refreshKey={noteDataVersion}
@@ -343,7 +399,7 @@ export default function App() {
         </div>
         <div className={styles.view} style={{ display: view === 3 ? 'flex' : 'none' }}>
           <SchedulePage
-            notes={notes}
+            notes={visibleNotes}
             project={activeProject}
             isActive={view === 3}
             onNoteOpen={openNotePopup}
@@ -362,10 +418,11 @@ export default function App() {
             activeContextId={activeContextId}
             archivedDimensionIds={activeContextState.archivedDimensionIds || []}
             onSetContextDefaultPerspective={setContextDefaultPerspective}
+            workspaceRootNoteId={activeWorkspaceRootId}
           />
         </div>
         <div className={styles.view} style={{ display: view === 4 ? 'flex' : 'none' }}>
-          <InheritancePage notes={notes} isActive={view === 4} onNoteOpen={openNotePopup} />
+          <InheritancePage notes={visibleNotes} isActive={view === 4} onNoteOpen={openNotePopup} />
         </div>
         <div className={styles.view} style={{ display: view === 5 ? 'flex' : 'none' }}>
           <PeoplePage
@@ -376,7 +433,7 @@ export default function App() {
         </div>
         <div className={styles.view} style={{ display: view === 6 ? 'flex' : 'none' }}>
           <CalendarPage
-            notes={notes}
+            notes={visibleNotes}
             project={activeProject}
             isActive={view === 6}
             onNoteOpen={openNotePopup}
@@ -393,6 +450,7 @@ export default function App() {
             activeContextId={activeContextId}
             archivedDimensionIds={activeContextState.archivedDimensionIds || []}
             onSetContextDefaultPerspective={setContextDefaultPerspective}
+            workspaceRootNoteId={activeWorkspaceRootId}
           />
         </div>
       </div>
@@ -405,6 +463,7 @@ export default function App() {
           onAssignmentsChanged={handleNoteAssignmentsChanged}
           onPeopleChanged={() => setPeopleVersion(v => v + 1)}
           onNoteDeleted={handleNoteDeleted}
+          onOpenAsWorkspace={openNoteAsWorkspace}
         />
       )}
 

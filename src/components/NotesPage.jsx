@@ -525,7 +525,7 @@ function ModeControls({ mode, onModeChange }) {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
-export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpdated, onRefresh, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged }) {
+export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpdated, onRefresh, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, workspaceRootNoteId = null }) {
   // Canvas state
   const [openNoteIds, setOpenNoteIds]       = useState(new Set())
   const [notePositions, setNotePositions]   = useState({})
@@ -913,7 +913,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     try {
       await api.updateNote(noteId, { html: text1, title: original.title })
       const newId = crypto.randomUUID()
-      await api.createNote({ id: newId, html: text2, title: title2, collapsed: false })
+      await api.createNote({ id: newId, html: text2, title: title2, collapsed: false, parentNoteId: workspaceRootNoteId })
       await Promise.all(originalAsns.map(a => api.assign(newId, a.dimensionId, a.categoryId)))
       setAllAssignments(prev => [
         ...prev,
@@ -1190,7 +1190,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     const selections = mergeSelectionsWithHashtags(categorySelections, content, categories)
     setCategorySelections({})
 
-    const newNote = { id: crypto.randomUUID(), html, title: finalTitle, collapsed: false }
+    const newNote = { id: crypto.randomUUID(), html, title: finalTitle, collapsed: false, parentNoteId: workspaceRootNoteId }
     try {
       const saved = await api.createNote(newNote)
       await Promise.all(Object.entries(selections)
