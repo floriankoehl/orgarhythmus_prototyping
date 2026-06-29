@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { api, projectsApi } from '../api'
 import styles from './ProjectDashboard.module.css'
 import { playSound } from '../sounds/sound_registry'
+import { useConfirmDialog } from './ConfirmDialog'
 
 const STAT_LABELS = {
   notes:        'Notes',
@@ -54,6 +55,21 @@ function formatScheduleDuration(minutes) {
   if (value < DAY_MINUTES) return `${Number((value / 60).toFixed(value % 60 === 0 ? 0 : 1))} h`
   if (value < MONTH_MINUTES) return `${Number((value / DAY_MINUTES).toFixed(value % DAY_MINUTES === 0 ? 0 : 1))} d`
   return `${Number((value / MONTH_MINUTES).toFixed(value % MONTH_MINUTES === 0 ? 0 : 1))} mo`
+}
+
+function descriptionText(html) {
+  return String(html || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
 }
 
 function collectDescendantNoteIds(notes, rootNoteId) {
@@ -219,7 +235,7 @@ function HierarchyTypeIcon({ hasChildren }) {
   )
 }
 
-export default function ProjectDashboard({ project, notes = [], workspaceRootNote = null, workspaceNote = null, onUpdate, onWorkspaceNoteUpdated, onWorkspaceOpen, onNotesChanged, isActive }) {
+export default function ProjectDashboard({ project, notes = [], workspaceRootNote = null, workspaceNote = null, onUpdate, onWorkspaceNoteUpdated, onWorkspaceOpen, onNoteOpen, onNotesChanged, onProjectDeleted, isActive }) {
   const isNoteWorkspace = Boolean(workspaceNote)
   const workspaceName = workspaceNote?.title || project.name
   const workspaceDesc = workspaceNote?.html || project.description || ''
@@ -231,13 +247,18 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
   const [editingDesc, setEditingDesc] = useState(false)
   const [draftDesc,   setDraftDesc]   = useState(workspaceDesc)
   const [exporting,   setExporting]   = useState(false)
-  const [showAllDescendants, setShowAllDescendants] = useState(false)
+  const [descendantDepth, setDescendantDepth] = useState(1)
   const [draggedHierarchyNoteId, setDraggedHierarchyNoteId] = useState(null)
   const [hierarchyDropTargetId, setHierarchyDropTargetId] = useState(null)
   const [hierarchyWarning, setHierarchyWarning] = useState(null)
+  const [hierarchyContextMenu, setHierarchyContextMenu] = useState(null)
+  const [selectedHierarchyNoteId, setSelectedHierarchyNoteId] = useState(null)
+  const [newNoteDraft, setNewNoteDraft] = useState(null)
+  const [creatingHierarchyNote, setCreatingHierarchyNote] = useState(false)
   const nameInputRef = useRef()
   const saveTimerRef = useRef(null)
   const hierarchyWarningTimerRef = useRef(null)
+  const { confirm: confirmDialog, dialog: confirmDialogNode } = useConfirmDialog()
   const workspaceRootNoteId = workspaceRootNote?.id || project.rootNoteId || null
   const scheduleWindow = useMemo(() => (
     deriveWorkspaceWindow({ project, notes, timeSlots, rootNoteId: workspaceRootNoteId })
@@ -246,10 +267,14 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     () => buildWorkspaceHierarchy(notes, workspaceRootNoteId),
     [notes, workspaceRootNoteId],
   )
-  const hasNestedDescendants = hierarchyRows.some(row => row.relation === 'descendant')
-  const visibleHierarchyRows = showAllDescendants
-    ? hierarchyRows
-    : hierarchyRows.filter(row => row.relation !== 'descendant')
+  const currentHierarchyDepth = hierarchyRows.find(row => row.relation === 'current')?.depth ?? 0
+  const localHierarchyBaseDepth = Math.max(0, currentHierarchyDepth - 1)
+  const visibleHierarchyRows = hierarchyRows.filter(row => {
+    if (row.relation === 'current') return true
+    if (row.relation === 'ancestor') return row.depth === currentHierarchyDepth - 1
+    const hopsBelowCurrent = row.depth - currentHierarchyDepth
+    return hopsBelowCurrent > 0 && (descendantDepth === 'all' || hopsBelowCurrent <= descendantDepth)
+  })
 
   useEffect(() => {
     setName(workspaceName)
@@ -258,12 +283,27 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
   }, [project.id, workspaceNote?.id, workspaceName, workspaceDesc]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    setShowAllDescendants(false)
+    setDescendantDepth(1)
+    setSelectedHierarchyNoteId(null)
   }, [project.id, workspaceRootNoteId])
 
   useEffect(() => () => {
     if (hierarchyWarningTimerRef.current) window.clearTimeout(hierarchyWarningTimerRef.current)
   }, [])
+
+  useEffect(() => {
+    if (!hierarchyContextMenu) return undefined
+    const close = () => setHierarchyContextMenu(null)
+    const onKeyDown = event => { if (event.key === 'Escape') close() }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', onKeyDown)
+    window.addEventListener('blur', close)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('blur', close)
+    }
+  }, [hierarchyContextMenu])
 
   const showHierarchyWarning = useCallback((title, message) => {
     if (hierarchyWarningTimerRef.current) window.clearTimeout(hierarchyWarningTimerRef.current)
@@ -314,6 +354,120 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     playSound('noteMove')
     await onNotesChanged?.().catch(error => console.error('Note moved, but hierarchy refresh failed', error))
   }, [notes, onNotesChanged, project.rootNoteId, showHierarchyWarning])
+
+  const deleteHierarchyProject = useCallback(async noteToDelete => {
+    if (!noteToDelete) return
+    const isProjectRoot = noteToDelete.id === project.rootNoteId
+    const descendantIds = new Set()
+    const pending = [noteToDelete.id]
+    while (pending.length) {
+      const parentId = pending.pop()
+      notes.forEach(note => {
+        if (note.parentNoteId !== parentId || descendantIds.has(note.id)) return
+        descendantIds.add(note.id)
+        pending.push(note.id)
+      })
+    }
+    const descendants = notes.filter(note => descendantIds.has(note.id))
+    const displayName = isProjectRoot ? project.name : noteToDelete.title || 'Untitled'
+    const confirmed = await confirmDialog({
+      title: `Delete project “${displayName}”?`,
+      message: isProjectRoot
+        ? 'This permanently deletes the entire project, including every note, time slot, deadline, dimension, relationship, and perspective. This cannot be undone.'
+        : `This permanently deletes this project and all ${descendants.length} descendant note${descendants.length === 1 ? '' : 's'}, including their schedules and relationships. This cannot be undone.`,
+      items: descendants.map(note => note.title || 'Untitled'),
+      emptyText: isProjectRoot ? 'The complete project will be removed.' : 'This project has no descendant notes.',
+      confirmLabel: 'Delete project',
+    })
+    if (!confirmed) return
+
+    try {
+      if (isProjectRoot) {
+        await projectsApi.deleteProject(project.id)
+        playSound('projectDelete')
+        onProjectDeleted?.()
+        return
+      }
+
+      const deletesCurrentWorkspace = noteToDelete.id === workspaceRootNoteId || descendantIds.has(workspaceRootNoteId)
+      const fallbackWorkspaceId = noteToDelete.parentNoteId || project.rootNoteId
+      await api.deleteNoteTree(noteToDelete.id)
+      playSound('projectDelete')
+      if (deletesCurrentWorkspace) onWorkspaceOpen?.(fallbackWorkspaceId)
+      await onNotesChanged?.()
+    } catch (error) {
+      console.error(error)
+      showHierarchyWarning('Project not deleted', error?.message || 'The project could not be deleted.')
+    }
+  }, [confirmDialog, notes, onNotesChanged, onProjectDeleted, onWorkspaceOpen, project.id, project.name, project.rootNoteId, showHierarchyWarning, workspaceRootNoteId])
+
+  const deleteHierarchyNote = useCallback(async noteToDelete => {
+    if (!noteToDelete || noteToDelete.id === project.rootNoteId) return
+    const displayName = noteToDelete.title || 'Untitled'
+    const confirmed = await confirmDialog({
+      title: `Delete note “${displayName}”?`,
+      message: 'This permanently deletes the note, its schedule, deadlines, assignments, and relationships. This cannot be undone.',
+      confirmLabel: 'Delete note',
+    })
+    if (!confirmed) return
+
+    try {
+      const deletesCurrentWorkspace = noteToDelete.id === workspaceRootNoteId
+      const fallbackWorkspaceId = noteToDelete.parentNoteId || project.rootNoteId
+      await api.deleteNote(noteToDelete.id)
+      playSound('noteDelete')
+      if (deletesCurrentWorkspace) onWorkspaceOpen?.(fallbackWorkspaceId)
+      await onNotesChanged?.()
+    } catch (error) {
+      console.error(error)
+      showHierarchyWarning('Note not deleted', error?.message || 'The note could not be deleted.')
+    }
+  }, [confirmDialog, onNotesChanged, onWorkspaceOpen, project.rootNoteId, showHierarchyWarning, workspaceRootNoteId])
+
+  const createHierarchyNote = useCallback(async (parentNoteId, title) => {
+    const parent = notes.find(note => note.id === parentNoteId)
+    const trimmedTitle = String(title || '').trim()
+    if (!parent || !trimmedTitle) return null
+    try {
+      const created = await api.createNote({
+        id: crypto.randomUUID(),
+        parentNoteId,
+        title: trimmedTitle,
+        html: '',
+        collapsed: false,
+      })
+      playSound('noteCreate')
+      await onNotesChanged?.()
+      onNoteOpen?.(created.id)
+      return created
+    } catch (error) {
+      console.error(error)
+      showHierarchyWarning('Note not created', error?.message || 'The note could not be created here.')
+      return null
+    }
+  }, [notes, onNoteOpen, onNotesChanged, showHierarchyWarning])
+
+  const submitNewHierarchyNote = useCallback(async () => {
+    if (!newNoteDraft?.title?.trim() || creatingHierarchyNote) return
+    setCreatingHierarchyNote(true)
+    const created = await createHierarchyNote(newNoteDraft.parentNoteId, newNoteDraft.title)
+    setCreatingHierarchyNote(false)
+    if (created) setNewNoteDraft(null)
+  }, [createHierarchyNote, creatingHierarchyNote, newNoteDraft])
+
+  const openHierarchyContextMenu = useCallback((event, noteId) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const menuWidth = 210
+    const menuHeight = 126
+    setHierarchyContextMenu({
+      noteId,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+    })
+    setSelectedHierarchyNoteId(noteId)
+    playSound('projectMenuOpen')
+  }, [])
 
   useEffect(() => {
     if (isActive) {
@@ -423,35 +577,49 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
           <div className={styles.section}>
             <div className={styles.sectionHeader}>
               <label className={styles.sectionLabel}>Hierarchy</label>
-              {hasNestedDescendants && (
-                <button
-                  type="button"
-                  className={styles.hierarchyToggle}
-                  onClick={() => setShowAllDescendants(value => !value)}>
-                  {showAllDescendants ? 'Show direct children' : 'Show all descendants'}
-                </button>
-              )}
+              <label className={styles.hierarchyDepthControl}>
+                <span>Descendant depth</span>
+                <select
+                  value={descendantDepth}
+                  onChange={event => setDescendantDepth(event.target.value === 'all' ? 'all' : Number(event.target.value))}>
+                  <option value={1}>1 hop</option>
+                  <option value={2}>2 hops</option>
+                  <option value={3}>3 hops</option>
+                  <option value="all">All</option>
+                </select>
+              </label>
             </div>
-            <div className={styles.hierarchyTree} role="tree" aria-label="Project, ancestors, and child notes">
+            <div
+              className={styles.hierarchyTree}
+              role="tree"
+              aria-label="Project, ancestors, and child notes"
+              onClick={event => {
+                if (event.target === event.currentTarget) setSelectedHierarchyNoteId(null)
+              }}
+              onContextMenu={event => openHierarchyContextMenu(event, workspaceRootNoteId)}>
               {visibleHierarchyRows.map(({ note: hierarchyNote, depth, hasChildren }) => {
                 const ancestor = hierarchyNote
                 const isCurrent = ancestor.id === workspaceRootNoteId
                 const isProjectRoot = ancestor.id === project.rootNoteId
                 const displayTitle = isProjectRoot ? project.name : ancestor.title
+                const hoverDescription = descriptionText(isProjectRoot ? project.description : ancestor.html)
+                const displayDepth = Math.max(0, depth - localHierarchyBaseDepth)
                 return (
                   <div
                     key={ancestor.id}
                     className={[
                       styles.hierarchyRow,
                       isCurrent && styles.hierarchyRowCurrent,
+                      selectedHierarchyNoteId === ancestor.id && styles.hierarchyRowSelected,
                       hierarchyDropTargetId === ancestor.id && draggedHierarchyNoteId !== ancestor.id && styles.hierarchyRowDropTarget,
                       draggedHierarchyNoteId === ancestor.id && styles.hierarchyRowDragging,
                     ].filter(Boolean).join(' ')}
-                    style={{ '--tree-depth': depth }}
+                    style={{ '--tree-depth': displayDepth }}
                     role="treeitem"
                     aria-current={isCurrent ? 'page' : undefined}
-                    aria-level={depth + 1}
+                    aria-level={displayDepth + 1}
                     draggable={!isProjectRoot}
+                    onContextMenu={event => openHierarchyContextMenu(event, ancestor.id)}
                     onDragStart={event => {
                       if (isProjectRoot) return
                       event.dataTransfer.setData('project-hierarchy-note-id', ancestor.id)
@@ -484,9 +652,19 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
                     <button
                       type="button"
                       className={styles.hierarchyNode}
-                      aria-disabled={isCurrent}
-                      onClick={() => { if (!isCurrent) onWorkspaceOpen?.(ancestor.id) }}
-                      title={isCurrent ? `Current ${hasChildren ? 'project' : 'note'}` : `Open ${displayTitle || 'Untitled'}`}>
+                      aria-selected={selectedHierarchyNoteId === ancestor.id}
+                      onClick={event => {
+                        event.stopPropagation()
+                        setSelectedHierarchyNoteId(ancestor.id)
+                        playSound('noteSelect')
+                      }}
+                      onDoubleClick={event => {
+                        event.stopPropagation()
+                        if (isCurrent) return
+                        playSound('viewChange')
+                        onWorkspaceOpen?.(ancestor.id)
+                      }}
+                      title={hoverDescription || (isCurrent ? `Current ${hasChildren ? 'project' : 'note'}` : `Double-click to open ${displayTitle || 'Untitled'}`)}>
                       <span
                         className={`${styles.hierarchyIcon} ${hasChildren ? styles.hierarchyProjectIcon : styles.hierarchyNoteIcon}`}
                         title={hasChildren ? 'Project · contains child notes' : 'Note · no child notes'}>
@@ -601,6 +779,78 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
           <span>{hierarchyWarning.message}</span>
         </div>
       )}
+      {hierarchyContextMenu && (() => {
+        const contextNote = notes.find(note => note.id === hierarchyContextMenu.noteId)
+        if (!contextNote) return null
+        const hasChildren = notes.some(note => note.parentNoteId === contextNote.id)
+        const isProjectRoot = contextNote.id === project.rootNoteId
+        return (
+          <div
+            className={styles.hierarchyContextMenu}
+            style={{ left: hierarchyContextMenu.x, top: hierarchyContextMenu.y }}
+            role="menu"
+            onMouseDown={event => event.stopPropagation()}>
+            <button type="button" role="menuitem" onClick={() => {
+              setHierarchyContextMenu(null)
+              setNewNoteDraft({ parentNoteId: contextNote.id, title: '' })
+            }}>
+              New note inside
+            </button>
+            <button type="button" role="menuitem" onClick={() => {
+              setHierarchyContextMenu(null)
+              playSound('noteOpen')
+              onNoteOpen?.(contextNote.id)
+            }}>
+              Open details
+            </button>
+            <div className={styles.hierarchyContextDivider} />
+            <button type="button" role="menuitem" className={styles.hierarchyContextDanger} onClick={() => {
+              setHierarchyContextMenu(null)
+              if (hasChildren || isProjectRoot) deleteHierarchyProject(contextNote)
+              else deleteHierarchyNote(contextNote)
+            }}>
+              {hasChildren || isProjectRoot ? 'Delete project…' : 'Delete note…'}
+            </button>
+          </div>
+        )
+      })()}
+      {newNoteDraft && (
+        <div className={styles.newNoteBackdrop} onMouseDown={event => {
+          if (event.target === event.currentTarget && !creatingHierarchyNote) setNewNoteDraft(null)
+        }}>
+          <div className={styles.newNoteDialog} role="dialog" aria-modal="true" aria-labelledby="new-note-headline-label">
+            <label id="new-note-headline-label" className={styles.newNoteLabel} htmlFor="new-hierarchy-note-title">
+              Note headline
+            </label>
+            <input
+              id="new-hierarchy-note-title"
+              className={styles.newNoteInput}
+              value={newNoteDraft.title}
+              onChange={event => setNewNoteDraft(draft => ({ ...draft, title: event.target.value }))}
+              onKeyDown={event => {
+                if (event.key === 'Enter') submitNewHierarchyNote()
+                if (event.key === 'Escape' && !creatingHierarchyNote) setNewNoteDraft(null)
+              }}
+              placeholder="Enter a headline…"
+              autoFocus
+              disabled={creatingHierarchyNote}
+            />
+            <div className={styles.newNoteActions}>
+              <button type="button" className={styles.newNoteCancel} disabled={creatingHierarchyNote} onClick={() => setNewNoteDraft(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={styles.newNoteCreate}
+                disabled={!newNoteDraft.title.trim() || creatingHierarchyNote}
+                onClick={submitNewHierarchyNote}>
+                {creatingHierarchyNote ? 'Creating…' : 'Create note'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {confirmDialogNode}
     </div>
   )
 }

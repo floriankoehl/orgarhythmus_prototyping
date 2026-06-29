@@ -2514,7 +2514,7 @@ def duplicate_note(note_id: str, user: dict = Depends(current_user)):
     }
 
 @app.delete("/notes/{note_id}", status_code=204)
-def delete_note(note_id: str, user: dict = Depends(current_user)):
+def delete_note(note_id: str, cascade: bool = Query(default=False), user: dict = Depends(current_user)):
     with _db() as con:
         project_id = _project_id_for_note(con, note_id)
         assert_project_access(project_id, user)
@@ -2523,16 +2523,47 @@ def delete_note(note_id: str, user: dict = Depends(current_user)):
             raise HTTPException(422, {"message": "The project root note cannot be deleted", "type": "root_note_delete"})
         note = con.execute("SELECT parent_note_id FROM notes WHERE id = ?", (note_id,)).fetchone()
         root_note_id = _ensure_project_root_note(con, project_id)
-        fallback_parent_id = note["parent_note_id"] if note and note["parent_note_id"] else root_note_id
-        con.execute("UPDATE notes SET parent_note_id = ? WHERE parent_note_id = ?", (fallback_parent_id, note_id))
-        ms_rows = con.execute("SELECT id FROM time_slots WHERE note_id = ?", (note_id,)).fetchall()
+        note_ids = [note_id]
+        if cascade:
+            seen = {note_id}
+            pending = [note_id]
+            while pending:
+                parent_id = pending.pop()
+                child_rows = con.execute(
+                    "SELECT id FROM notes WHERE project_id = ? AND parent_note_id = ?",
+                    (project_id, parent_id),
+                ).fetchall()
+                for child_row in child_rows:
+                    child_id = child_row["id"]
+                    if child_id in seen:
+                        continue
+                    seen.add(child_id)
+                    note_ids.append(child_id)
+                    pending.append(child_id)
+        else:
+            fallback_parent_id = note["parent_note_id"] if note and note["parent_note_id"] else root_note_id
+            con.execute("UPDATE notes SET parent_note_id = ? WHERE parent_note_id = ?", (fallback_parent_id, note_id))
+
+        note_ph = ",".join("?" for _ in note_ids)
+        ms_rows = con.execute(
+            f"SELECT id FROM time_slots WHERE note_id IN ({note_ph})",
+            note_ids,
+        ).fetchall()
         ms_ids = [r["id"] for r in ms_rows]
         if ms_ids:
-            ph = ','.join('?' * len(ms_ids))
-            con.execute(f"DELETE FROM persona_time_slot_assignments WHERE time_slot_id IN ({ph})", ms_ids)
-        con.execute("DELETE FROM persona_note_assignments WHERE note_id = ?", (note_id,))
-        con.execute("DELETE FROM note_inheritance WHERE child_note_id = ? OR parent_note_id = ?", (note_id, note_id))
-        con.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+            ms_ph = ",".join("?" for _ in ms_ids)
+            con.execute(f"DELETE FROM dependencies WHERE from_id IN ({ms_ph}) OR to_id IN ({ms_ph})", ms_ids + ms_ids)
+            con.execute(f"DELETE FROM persona_time_slot_assignments WHERE time_slot_id IN ({ms_ph})", ms_ids)
+            con.execute(f"DELETE FROM time_slots WHERE id IN ({ms_ph})", ms_ids)
+        con.execute(f"DELETE FROM deadlines WHERE note_id IN ({note_ph})", note_ids)
+        con.execute(f"DELETE FROM earliest_starts WHERE note_id IN ({note_ph})", note_ids)
+        con.execute(f"DELETE FROM assignments WHERE note_id IN ({note_ph})", note_ids)
+        con.execute(f"DELETE FROM persona_note_assignments WHERE note_id IN ({note_ph})", note_ids)
+        con.execute(
+            f"DELETE FROM note_inheritance WHERE child_note_id IN ({note_ph}) OR parent_note_id IN ({note_ph})",
+            note_ids + note_ids,
+        )
+        con.execute(f"DELETE FROM notes WHERE id IN ({note_ph})", note_ids)
 
 @app.put("/notes/order")
 def reorder_notes(data: OrderIn, user: dict = Depends(current_user)):

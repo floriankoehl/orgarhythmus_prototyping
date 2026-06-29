@@ -36,26 +36,62 @@
   flex-shrink: 0;
 }
 
-.workspaceUpBtn {
-  min-height: 24px;
-  padding: 0 10px;
-  border: 1px solid #c7d2fe;
-  border-radius: 6px;
-  background: #eef2ff;
-  color: #1d4ed8;
-  font: inherit;
+.workspacePathLabel {
+  flex: 0 0 auto;
+  color: #9ca3af;
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.workspaceBreadcrumbs {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.workspaceBreadcrumbs::-webkit-scrollbar {
+  display: none;
+}
+
+.workspaceBreadcrumbSegment {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.workspaceBreadcrumbSeparator {
+  padding: 0 4px;
+  color: #9ca3af;
+  font-size: 16px;
+  font-weight: 400;
+}
+
+.workspaceBreadcrumb {
+  max-width: 220px;
+  padding: 3px 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #4b5563;
+  font: 600 12px Arial, sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   cursor: pointer;
 }
 
-.workspaceUpBtn:hover {
-  background: #e0e7ff;
+.workspaceBreadcrumb:hover:not(:disabled) {
+  background: #eef2ff;
+  color: #1d4ed8;
 }
 
-.workspaceTrailLabel {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.workspaceBreadcrumb:disabled {
+  background: #f1f5f9;
+  color: #111827;
+  cursor: default;
 }
 
 .loading {

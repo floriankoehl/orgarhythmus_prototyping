@@ -88,17 +88,28 @@
   background: #fff;
 }
 
-.hierarchyToggle {
-  padding: 4px 9px;
+.hierarchyDepthControl {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #64748b;
+  font: 600 11px Arial, sans-serif;
+}
+
+.hierarchyDepthControl select {
+  min-height: 27px;
+  padding: 3px 25px 3px 8px;
   border: 1px solid #c5d9f8;
   border-radius: 6px;
   background: #f4f8ff;
   color: #1d4ed8;
-  font: 600 11px Arial, sans-serif;
+  font: 700 11px Arial, sans-serif;
   cursor: pointer;
+  outline: none;
 }
 
-.hierarchyToggle:hover {
+.hierarchyDepthControl select:hover,
+.hierarchyDepthControl select:focus {
   border-color: #93b7ee;
   background: #e8f0fe;
 }
@@ -140,6 +151,7 @@
 
 .hierarchyNode {
   width: min(100%, 560px);
+  min-width: 0;
   min-height: 34px;
   padding: 6px 9px;
   display: flex;
@@ -154,21 +166,23 @@
   cursor: pointer;
 }
 
-.hierarchyNode:hover:not([aria-disabled="true"]) {
+.hierarchyNode:hover {
   border-color: #c5d9f8;
   background: #f4f8ff;
   color: #1d4ed8;
-}
-
-.hierarchyNode[aria-disabled="true"] {
-  opacity: 1;
-  cursor: default;
 }
 
 .hierarchyRowCurrent .hierarchyNode {
   border-color: #bfdbfe;
   background: #eff6ff;
   color: #1e40af;
+}
+
+.hierarchyRowSelected .hierarchyNode {
+  border-color: #2563eb;
+  background: #dbeafe;
+  color: #1e3a8a;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.14);
 }
 
 .hierarchyRowDropTarget .hierarchyNode {
@@ -268,6 +282,132 @@
 .hierarchyWarningClose:hover {
   background: #fef2f2;
   color: #991b1b;
+}
+
+.hierarchyContextMenu {
+  position: fixed;
+  z-index: 5100;
+  width: 210px;
+  padding: 5px;
+  box-sizing: border-box;
+  border: 1px solid #dbe0e7;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.22);
+}
+
+.hierarchyContextMenu button {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #374151;
+  font: 600 12px Arial, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hierarchyContextMenu button:hover,
+.hierarchyContextMenu button:focus-visible {
+  background: #f1f5f9;
+  outline: none;
+}
+
+.hierarchyContextDivider {
+  height: 1px;
+  margin: 4px 3px;
+  background: #e5e7eb;
+}
+
+.hierarchyContextMenu .hierarchyContextDanger {
+  color: #b91c1c;
+}
+
+.hierarchyContextMenu .hierarchyContextDanger:hover,
+.hierarchyContextMenu .hierarchyContextDanger:focus-visible {
+  background: #fef2f2;
+}
+
+.newNoteBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 5200;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.34);
+}
+
+.newNoteDialog {
+  width: min(420px, calc(100vw - 40px));
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  box-sizing: border-box;
+  border: 1px solid #dbe0e7;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.26);
+}
+
+.newNoteLabel {
+  color: #111827;
+  font: 800 15px Arial, sans-serif;
+}
+
+.newNoteInput {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  border: 1.5px solid #2563eb;
+  border-radius: 7px;
+  background: #fff;
+  color: #111827;
+  font: 600 14px Arial, sans-serif;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.11);
+}
+
+.newNoteInput::placeholder {
+  color: #9ca3af;
+  font-weight: 400;
+}
+
+.newNoteActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.newNoteCancel,
+.newNoteCreate {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font: 700 12px Arial, sans-serif;
+  cursor: pointer;
+}
+
+.newNoteCancel {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #374151;
+}
+
+.newNoteCreate {
+  border: 1px solid #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+
+.newNoteCancel:disabled,
+.newNoteCreate:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 /* ── Stats grid ────────────────────────────────────────────────────────────── */

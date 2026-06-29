@@ -131,6 +131,7 @@ export const api = {
   createNote:   (note)        => req('POST',   '/notes', note),
   updateNote:   (id, patch)   => req('PATCH',  `/notes/${id}`, patch),
   deleteNote:   (id)          => req('DELETE', `/notes/${id}`),
+  deleteNoteTree:(id)         => req('DELETE', `/notes/${id}?cascade=true`),
   duplicateNote:(id)          => req('POST',   `/notes/${id}/duplicate`),
   reorderNotes: (ids)         => req('PUT',    '/notes/order', { ids }),
 

@@ -91,10 +91,19 @@ export default function App() {
     }
     return notes.filter(note => visibleIds.has(note.id))
   }, [notes, activeWorkspaceRootId])
-  const workspaceParent = useMemo(() => {
-    if (!activeWorkspaceRoot?.parentNoteId) return null
-    return notes.find(note => note.id === activeWorkspaceRoot.parentNoteId) || null
-  }, [notes, activeWorkspaceRoot])
+  const workspacePath = useMemo(() => {
+    if (!activeWorkspaceRootId) return []
+    const notesById = new Map(notes.map(note => [note.id, note]))
+    const path = []
+    const seen = new Set()
+    let current = notesById.get(activeWorkspaceRootId)
+    while (current && !seen.has(current.id)) {
+      path.unshift(current)
+      seen.add(current.id)
+      current = current.parentNoteId ? notesById.get(current.parentNoteId) : null
+    }
+    return path
+  }, [activeWorkspaceRootId, notes])
 
   const openScheduleResolverFromCalendar = request => {
     setCalendarResolveRequest({ ...request, id: request?.id || crypto.randomUUID() })
@@ -264,14 +273,6 @@ export default function App() {
     setView(0)
   }
 
-  const openParentWorkspace = () => {
-    if (!workspaceParent) return
-    setWorkspaceRootNoteId(workspaceParent.id)
-    setPopupNoteId(null)
-    setToast(null)
-    setView(0)
-  }
-
   const handleNoteUpdated = (noteId, patch) => {
     setNotes(prev => prev.map(g => g.id === noteId ? { ...g, ...patch } : g))
   }
@@ -347,13 +348,31 @@ export default function App() {
         onApplyContext={applyProjectContext}
       />
 
-      {workspaceParent && (
-        <div className={styles.workspaceTrail}>
-          <button className={styles.workspaceUpBtn} onClick={openParentWorkspace}>
-            Up to {workspaceParent.title || activeProject.name}
-          </button>
-          <span className={styles.workspaceTrailLabel}>{activeWorkspaceRoot?.title || activeProject.name}</span>
-        </div>
+      {workspacePath.length > 0 && (
+        <nav className={styles.workspaceTrail} aria-label="Current project path">
+          <span className={styles.workspacePathLabel}>Path</span>
+          <div className={styles.workspaceBreadcrumbs}>
+            {workspacePath.map((note, index) => {
+              const isCurrent = index === workspacePath.length - 1
+              const title = note.id === activeProject.rootNoteId
+                ? activeProject.name
+                : note.title || 'Untitled'
+              return (
+                <span key={note.id} className={styles.workspaceBreadcrumbSegment}>
+                  {index > 0 && <span className={styles.workspaceBreadcrumbSeparator} aria-hidden="true">›</span>}
+                  <button
+                    type="button"
+                    className={`${styles.workspaceBreadcrumb} ${isCurrent ? styles.workspaceBreadcrumbCurrent : ''}`}
+                    aria-current={isCurrent ? 'page' : undefined}
+                    disabled={isCurrent}
+                    onClick={() => openNoteAsWorkspace(note.id)}>
+                    {title}
+                  </button>
+                </span>
+              )
+            })}
+          </div>
+        </nav>
       )}
 
       <div className={styles.views}>
@@ -366,7 +385,9 @@ export default function App() {
             onUpdate={handleProjectUpdate}
             onWorkspaceNoteUpdated={handleNoteUpdated}
             onWorkspaceOpen={openNoteAsWorkspace}
+            onNoteOpen={openNotePopup}
             onNotesChanged={handleNotesChanged}
+            onProjectDeleted={backToHome}
             isActive={view === 0}
           />
         </div>
