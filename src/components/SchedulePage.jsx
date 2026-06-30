@@ -2657,6 +2657,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const [timeSlotLabelMode, setTimeSlotLabelMode] = useState('date')
   const [collapsedTreeNoteIds, setCollapsedTreeNoteIds] = useState(() => new Set())
   const [treeDepthPreset, setTreeDepthPreset] = useState(1)
+  const [subtreeMoveArmedTimeSlotId, setSubtreeMoveArmedTimeSlotId] = useState(null)
   const initializedTreeRootRef = useRef(null)
   const timeSlotLabelWheelAtRef = useRef(0)
   const [reasonModal, setReasonModal] = useState(null)   // null | { depId }
@@ -3186,6 +3187,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const earliestStartsRef = useRef([])
   const modeRef         = useRef('timeSlot')
   const timeSlotScaleFilterRef = useRef(SCALE_VISIBILITY_MODES.ALL)
+  const subtreeMoveArmedTimeSlotIdRef = useRef(null)
 
   // Keep imperative refs in sync with state (assigned synchronously in render)
   spacingRef.current       = spacing
@@ -3198,12 +3200,16 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   modeRef.current            = mode
   nostalgiaModeRef.current   = nostalgiaMode
   timeSlotScaleFilterRef.current = normalizeScaleVisibilityMode(timeSlotScaleFilter)
+  subtreeMoveArmedTimeSlotIdRef.current = subtreeMoveArmedTimeSlotId
 
   useEffect(() => {
     const cancelCreateSizeMode = event => {
-      if (event.key !== 'Escape' || !createSizeDraftRef.current) return
-      createSizeDraftRef.current = null
-      setCreateDragPreview(null)
+      if (event.key !== 'Escape') return
+      if (createSizeDraftRef.current) {
+        createSizeDraftRef.current = null
+        setCreateDragPreview(null)
+      }
+      if (subtreeMoveArmedTimeSlotIdRef.current) setSubtreeMoveArmedTimeSlotId(null)
     }
     document.addEventListener('keydown', cancelCreateSizeMode)
     return () => document.removeEventListener('keydown', cancelCreateSizeMode)
@@ -4813,8 +4819,9 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     return null
   }, [canEditTimeSlotNow])
 
-  function startMoveDrag(startMouseX, originals) {
+  function startMoveDrag(startMouseX, originals, options = {}) {
     if (Object.keys(originals).length === 0) return
+    const carryDescendants = Boolean(options.carryDescendants)
     const directlyMovedIds = Object.keys(originals)
     const blockedTimeSlot = findScaleLockedTimeSlot(directlyMovedIds)
     if (blockedTimeSlot) {
@@ -4822,9 +4829,9 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       return
     }
 
-    // A project time slot carries every scheduled structural descendant with
-    // it. Parent windows are planning containers; they only become immovable
-    // when a real, explicit boundary on one of the moved notes says so.
+    // Normally a project time slot moves as its own planning container. When
+    // subtree mode is explicitly armed, it carries every scheduled descendant
+    // with it; explicit boundaries can then clamp descendants and bubble up.
     const moveLinks = []
     const seenMoveLinks = new Set()
     const addMoveLink = (childNoteId, parentNoteId) => {
@@ -4847,25 +4854,42 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       parentIdsByChild.get(link.childNoteId).push(link.parentNoteId)
     })
     const timeSlotByNote = new Map(timeSlotsRef.current.map(timeSlot => [timeSlot.noteId, timeSlot]))
+    const collectDescendantNoteIds = rootNoteId => {
+      const descendants = []
+      const pending = [...(childrenByParent.get(rootNoteId) || [])]
+      const seen = new Set()
+      while (pending.length) {
+        const childNoteId = pending.pop()
+        if (!childNoteId || seen.has(childNoteId)) continue
+        seen.add(childNoteId)
+        descendants.push(childNoteId)
+        ;(childrenByParent.get(childNoteId) || []).forEach(grandChildNoteId => {
+          if (!seen.has(grandChildNoteId)) pending.push(grandChildNoteId)
+        })
+      }
+      return descendants
+    }
     const pendingNoteIds = directlyMovedIds
       .map(id => timeSlotsRef.current.find(timeSlot => timeSlot.id === id)?.noteId)
       .filter(Boolean)
     const seenNoteIds = new Set(pendingNoteIds)
     const expandedOriginals = { ...originals }
-    while (pendingNoteIds.length) {
-      const parentNoteId = pendingNoteIds.pop()
-      ;(childrenByParent.get(parentNoteId) || []).forEach(childNoteId => {
-        if (seenNoteIds.has(childNoteId)) return
-        seenNoteIds.add(childNoteId)
-        pendingNoteIds.push(childNoteId)
-        const childTimeSlot = timeSlotByNote.get(childNoteId)
-        if (childTimeSlot) {
-          expandedOriginals[childTimeSlot.id] = {
-            startCol: childTimeSlot.startCol,
-            duration: childTimeSlot.duration,
+    if (carryDescendants) {
+      while (pendingNoteIds.length) {
+        const parentNoteId = pendingNoteIds.pop()
+        ;(childrenByParent.get(parentNoteId) || []).forEach(childNoteId => {
+          if (seenNoteIds.has(childNoteId)) return
+          seenNoteIds.add(childNoteId)
+          pendingNoteIds.push(childNoteId)
+          const childTimeSlot = timeSlotByNote.get(childNoteId)
+          if (childTimeSlot) {
+            expandedOriginals[childTimeSlot.id] = {
+              startCol: childTimeSlot.startCol,
+              duration: childTimeSlot.duration,
+            }
           }
-        }
-      })
+        })
+      }
     }
     originals = expandedOriginals
     const movingTimeSlotIds = new Set(Object.keys(originals))
@@ -4887,6 +4911,28 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     const movementBoundsByTimeSlotId = new Map(
       Object.keys(originals).map(id => [id, { min: -Infinity, max: Infinity }])
     )
+    const stationaryDescendantBoundsByTimeSlotId = new Map(
+      Object.keys(originals).map(id => [id, { min: -Infinity, max: Infinity }])
+    )
+    if (!carryDescendants) {
+      directlyMovedIds.forEach(timeSlotId => {
+        const ancestor = timeSlotsRef.current.find(timeSlot => timeSlot.id === timeSlotId)
+        const ancestorOriginal = ancestor ? originals[ancestor.id] : null
+        const bounds = movementBoundsByTimeSlotId.get(timeSlotId)
+        const containmentBounds = stationaryDescendantBoundsByTimeSlotId.get(timeSlotId)
+        if (!ancestor || !ancestorOriginal || !bounds || !containmentBounds) return
+        collectDescendantNoteIds(ancestor.noteId).forEach(descendantNoteId => {
+          const descendant = timeSlotByNote.get(descendantNoteId)
+          if (!descendant || movingTimeSlotIds.has(descendant.id)) return
+          const minDelta = descendant.startCol + descendant.duration - (ancestorOriginal.startCol + ancestorOriginal.duration)
+          const maxDelta = descendant.startCol - ancestorOriginal.startCol
+          bounds.min = Math.max(bounds.min, minDelta)
+          bounds.max = Math.min(bounds.max, maxDelta)
+          containmentBounds.min = Math.max(containmentBounds.min, minDelta)
+          containmentBounds.max = Math.min(containmentBounds.max, maxDelta)
+        })
+      })
+    }
     Object.keys(originals).forEach(descendantId => {
       const descendant = timeSlotsRef.current.find(timeSlot => timeSlot.id === descendantId)
       if (!descendant) return
@@ -4949,7 +4995,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     const sp = spacingRef.current
     const isMonthMove = normalizeTimeZoom(timeZoomRef.current) === 'months'
     const startScrollLeft = scrollLeftRef.current
-    dragRef.current = { type: 'move', hasMoved: false, originals, lastValidColDelta: 0, blockedOverlap: null, blockedBarrier: null, hitBoundary: false }
+    dragRef.current = { type: 'move', hasMoved: false, originals, lastValidColDelta: 0, blockedOverlap: null, blockedBarrier: null, hitBoundary: false, hitContainmentBoundary: false }
     document.body.style.cursor = 'grabbing'
     document.body.style.userSelect = 'none'
 
@@ -4970,16 +5016,25 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 	      let maxDelta = Infinity
 	      let minDeltaFromEarliest = -Infinity
 	      let minDeltaFromPast = -Infinity
+	      let containmentMinDelta = -Infinity
+	      let containmentMaxDelta = Infinity
 	      Object.entries(originals).forEach(([id, orig]) => {
         if (!directlyMovedIdSet.has(id)) return
         const movementBounds = movementBoundsByTimeSlotId.get(id) || { min: -Infinity, max: Infinity }
         const ownBoundaryBounds = ownBoundaryBoundsByTimeSlotId.get(id) || { min: -Infinity, max: Infinity }
+        const containmentBounds = stationaryDescendantBoundsByTimeSlotId.get(id) || { min: -Infinity, max: Infinity }
         const combinedBounds = {
           min: Math.max(movementBounds.min, ownBoundaryBounds.min),
           max: Math.min(movementBounds.max, ownBoundaryBounds.max),
         }
         if (isMonthMove) {
           const startVisual = minuteToZoomCol(orig.startCol, 'months')
+          if (containmentBounds.max < Infinity) {
+            containmentMaxDelta = Math.min(containmentMaxDelta, minuteToZoomCol(orig.startCol + containmentBounds.max, 'months') - startVisual)
+          }
+          if (containmentBounds.min > -Infinity) {
+            containmentMinDelta = Math.max(containmentMinDelta, minuteToZoomCol(Math.max(0, orig.startCol + containmentBounds.min), 'months') - startVisual)
+          }
           minDelta = Math.max(minDelta, -startVisual)
 	          if (!nostalgiaModeRef.current && todayMinuteRef.current > 0) {
 	            const todayMonthCol = minuteToZoomCol(todayMinuteRef.current, 'months')
@@ -4997,6 +5052,8 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
           }
           return
         }
+        containmentMinDelta = Math.max(containmentMinDelta, containmentBounds.min)
+        containmentMaxDelta = Math.min(containmentMaxDelta, containmentBounds.max)
         minDelta = Math.max(minDelta, -orig.startCol)
 	        if (!nostalgiaModeRef.current && todayMinuteRef.current > 0) {
 	          const todayD = todayMinuteRef.current - orig.startCol
@@ -5009,7 +5066,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
           minDeltaFromEarliest = Math.max(minDeltaFromEarliest, combinedBounds.min)
         }
       })
-	      return { minDelta, maxDelta, minDeltaFromEarliest, minDeltaFromPast }
+	      return { minDelta, maxDelta, minDeltaFromEarliest, minDeltaFromPast, containmentMinDelta, containmentMaxDelta }
     }
 
     const getSnappedColDelta = clientX => {
@@ -5021,14 +5078,17 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       let colDelta = isMonthMove
         ? requestedVisual - firstVisualStart
         : (requestedVisual - firstVisualStart) * getZoomUnit(timeZoomRef.current)
-	      const { minDelta, maxDelta, minDeltaFromEarliest, minDeltaFromPast } = getBounds()
+	      const { minDelta, maxDelta, minDeltaFromEarliest, minDeltaFromPast, containmentMinDelta, containmentMaxDelta } = getBounds()
       const clamped = Math.max(minDelta, Math.min(maxDelta, colDelta))
       if (dragRef.current) {
         dragRef.current.hitBoundary = false
         dragRef.current.hitEarliestBoundary = false
+        dragRef.current.hitContainmentBoundary = false
       }
       if (dragRef.current && clamped !== colDelta) {
-        if (colDelta > maxDelta) {
+        if ((colDelta > containmentMaxDelta && containmentMaxDelta < Infinity) || (colDelta < containmentMinDelta && containmentMinDelta > -Infinity)) {
+          dragRef.current.hitContainmentBoundary = true
+        } else if (colDelta > maxDelta) {
           dragRef.current.hitBoundary = true
 	        } else {
 	          // Left boundary hit — earliest start or today
@@ -5168,7 +5228,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       stopAutoScroll()
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
-	      const { hasMoved, hitBoundary, hitEarliestBoundary, hitPastBoundary } = dragRef.current || {}
+	      const { hasMoved, hitBoundary, hitEarliestBoundary, hitPastBoundary, hitContainmentBoundary } = dragRef.current || {}
       dragRef.current = null
       const resetToOriginal = () => {
         Object.entries(originals).forEach(([id, orig]) => {
@@ -5213,7 +5273,13 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
           return original.startCol > earliestStart.col && timeSlot.startCol <= earliestStart.col
         })
         .map(timeSlot => timeSlot.id)
-	      if (hitPastBoundary) showPastWorkWarning('This move would place the time slot before today. Enable nostalgia mode if you intentionally want to work in the past.')
+	      if (hitContainmentBoundary) {
+	        showWarningPrompt({
+	          title: 'Descendant outside parent',
+	          message: 'This parent time slot can only move while its existing descendants still fit inside it. Double-click the time slot first if you want to carry the whole subtree.',
+	          actions: 'close',
+	        })
+	      } else if (hitPastBoundary) showPastWorkWarning('This move would place the time slot before today. Enable nostalgia mode if you intentionally want to work in the past.')
 	      else if (hitBoundary) reportDeadlineViolation(movedTimeSlotIds)
       else if (deadlineContactIds.length) reportDeadlineViolation(deadlineContactIds)
       if (hitEarliestBoundary) reportEarliestStartViolation(movedTimeSlotIds)
@@ -6238,6 +6304,9 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       return
     }
 
+    const carryDescendants = subtreeMoveArmedTimeSlotIdRef.current === timeSlotId
+    if (subtreeMoveArmedTimeSlotIdRef.current) setSubtreeMoveArmedTimeSlotId(null)
+
     const alreadySelected = selectedIdsRef.current.has(timeSlotId)
     let idsToMove
     if (e.ctrlKey || e.metaKey) {
@@ -6255,7 +6324,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       const m = timeSlotsRef.current.find(m => m.id === id)
       if (m) originals[id] = { startCol: m.startCol, duration: m.duration }
     })
-    startMoveDrag(e.clientX, originals)
+    startMoveDrag(e.clientX, originals, { carryDescendants })
     setSelectedIds(new Set(idsToMove))
   }, []) // eslint-disable-line
 
@@ -6286,6 +6355,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     }
     if (e.button !== 0) return
     setContextMenu(null)
+    if (subtreeMoveArmedTimeSlotIdRef.current) setSubtreeMoveArmedTimeSlotId(null)
     if (createSizeDraftRef.current) {
       e.preventDefault()
       e.stopPropagation()
@@ -7030,6 +7100,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
               const isBlinking    = blinkingTimeSlotIds.has(m.id)
               const isDepMode     = mode === 'dependency'
               const isSource      = drawingState?.fromId === m.id
+	              const isSubtreeMoveArmed = subtreeMoveArmedTimeSlotId === m.id
 	              const msColor       = getTimeSlotColor(m)
 	              const isUnassigned  = msColor === null
 	              const isMinimumDuration = m.duration <= MIN_TIME_SLOT_DURATION
@@ -7051,6 +7122,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 	                    isMinimumDuration && styles.timeSlotMinimum,
 	                    proportionalTimeSlots && styles.timeSlotProportional,
 	                    isTinyProportional && styles.timeSlotTiny,
+	                    isSubtreeMoveArmed && styles.timeSlotSubtreeArmed,
 	                    !isScaleEditable && styles.timeSlotScaleLocked,
 	                  ].filter(Boolean).join(' ')}
 	                  style={{
@@ -7061,7 +7133,11 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                     height:     msH,
                     background: msColor ?? '#fff',
                   }}
-                  title={!isScaleEditable ? `Switch to ${scaleLabelForZoom(getTimeSlotLevel(m.duration, m.startCol))} view to edit this time slot.` : undefined}
+                  title={!isScaleEditable
+                    ? `Switch to ${scaleLabelForZoom(getTimeSlotLevel(m.duration, m.startCol))} view to edit this time slot.`
+                    : isSubtreeMoveArmed
+                      ? 'Subtree move armed — drag this time slot to carry descendants with it.'
+                      : 'Drag to move only this time slot. Double-click, then drag, to carry descendants.'}
                   onMouseDown={e => {
                     if (paintCat || paintPersonaId) {
                       e.preventDefault()
@@ -7093,7 +7169,10 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                     e.preventDefault()
                     e.stopPropagation()
                     if (paintCat || paintPersonaId) return
-                    onNoteOpen?.(m.noteId)
+                    if (modeRef.current === 'dependency') return
+                    setSelectedDepIds(new Set())
+                    setSelectedIds(new Set([m.id]))
+                    setSubtreeMoveArmedTimeSlotId(m.id)
                   }}
                   onContextMenu={e => {
                     e.preventDefault()

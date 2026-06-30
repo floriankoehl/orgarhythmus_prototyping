@@ -2491,6 +2491,11 @@
   box-shadow: inset 0 -3px 0 rgba(245, 158, 11, 0.9), 0 0 0 3px rgba(26,115,232,0.7), 0 1px 4px rgba(0,0,0,0.22);
 }
 
+.timeSlotSubtreeArmed {
+  outline: 2px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.76), 0 0 0 7px rgba(168, 85, 247, 0.18), 0 1px 4px rgba(0,0,0,0.22);
+}
+
 .timeSlotProportional {
   min-width: 0;
 }
