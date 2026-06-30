@@ -7,7 +7,7 @@
 
 /* ── Content ───────────────────────────────────────────────────────────────── */
 .content {
-  max-width: 680px;
+  max-width: 1120px;
   width: 100%;
   margin: 0 auto;
   padding: 40px 24px 60px;
@@ -117,7 +117,8 @@
 .hierarchyRow {
   --tree-depth: 0;
   position: relative;
-  min-width: max-content;
+  width: calc(100% - (var(--tree-depth) * 22px));
+  min-width: 0;
   margin-left: calc(var(--tree-depth) * 22px);
 }
 
@@ -150,7 +151,7 @@
 }
 
 .hierarchyNodeLine {
-  width: min(100%, 584px);
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 3px;
@@ -194,7 +195,8 @@
   min-width: 0;
   min-height: 34px;
   padding: 6px 9px;
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   border: 1px solid transparent;
@@ -263,19 +265,9 @@
 
 .hierarchyTitle {
   min-width: 0;
-  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.hierarchyKind {
-  flex: 0 0 auto;
-  color: #94a3b8;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .hierarchyWarning {

@@ -1,8 +1,12 @@
+import html
 import json
 import os
+import re
 import shutil
 import sqlite3
 import time
+import urllib.error
+import urllib.request
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -483,7 +487,7 @@ def _migrate():
         note_cols = [r[1] for r in con.execute("PRAGMA table_info(notes)").fetchall()]
         if 'created_at' not in note_cols:
             con.execute("ALTER TABLE notes ADD COLUMN created_at TEXT NOT NULL DEFAULT ''")
-            con.execute("UPDATE notes SET created_at = CURRENT_TIMESTAMP WHERE created_at = ''")
+        con.execute("UPDATE notes SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL OR created_at = ''")
 
         dim_cols = [r[1] for r in con.execute("PRAGMA table_info(dimensions)").fetchall()]
         if 'order_idx' not in dim_cols:
@@ -797,6 +801,12 @@ class NotePatch(BaseModel):
     title: Optional[str] = None
     collapsed: Optional[bool] = None
     parentNoteId: Optional[str] = None
+
+class HeadlineSuggestIn(BaseModel):
+    description: str
+    currentHeadline: Optional[str] = ''
+    style: Optional[str] = 'concise project note'
+    maxWords: int = Field(default=7, ge=2, le=14)
 
 class OrderIn(BaseModel):
     ids: list[str]
@@ -2375,6 +2385,102 @@ def restore_archived_note_tree(archive_id: str, user: dict = Depends(current_use
         }
         _push_history(con, project_id, transaction, transaction["before"], transaction["after"])
     return {"ok": True, "projectId": project_id, "rootNoteId": snapshot["rootNoteId"]}
+
+
+# ── AI helpers ────────────────────────────────────────────────────────────────
+def _clean_ai_text(text: str | None, limit: int = 6000) -> str:
+    text = html.unescape(text or "")
+    text = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", text)
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:limit]
+
+
+def _trim_headline(text: str, max_words: int) -> str:
+    text = re.sub(r"^[\"'“”‘’\s]+|[\"'“”‘’\s]+$", "", text or "")
+    text = re.sub(r"(?i)^(headline|title)\s*:\s*", "", text).strip()
+    text = re.sub(r"\s+", " ", text).rstrip(".")
+    words = text.split()
+    if len(words) > max_words:
+        text = " ".join(words[:max_words])
+    return text[:90].strip() or "Untitled Note"
+
+
+def _heuristic_headline(description: str, max_words: int) -> str:
+    text = _clean_ai_text(description)
+    if not text:
+        return "Untitled Note"
+    first_sentence = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0]
+    first_sentence = re.sub(r"(?i)^(todo|note|idea|task|project)\s*[:\-]\s*", "", first_sentence).strip()
+    words = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'_-]*", first_sentence)
+    if not words:
+        return "Untitled Note"
+    return _trim_headline(" ".join(words[:max_words]).title(), max_words)
+
+
+def _build_headline_prompt(description: str, current_headline: str, style: str, max_words: int) -> str:
+    current = f"\nCurrent headline: {current_headline.strip()}" if current_headline.strip() else ""
+    style_hint = f"\nStyle hint: {style.strip()}" if style.strip() else ""
+    return (
+        "You suggest concise, useful headlines for personal project notes.\n"
+        "Return exactly one headline and nothing else.\n"
+        f"Constraints: maximum {max_words} words, no quotation marks, no trailing period."
+        f"{current}{style_hint}\n\n"
+        f"Note description:\n{description.strip()}"
+    )
+
+
+def _suggest_headline_with_ollama(description: str, current_headline: str, style: str, max_words: int) -> str:
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+    model = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
+    timeout = float(os.environ.get("HEADLINE_TIMEOUT_SECONDS", "90"))
+    payload = {
+        "model": model,
+        "prompt": _build_headline_prompt(description, current_headline, style, max_words),
+        "stream": False,
+        "options": {"temperature": 0.2, "num_predict": 32},
+    }
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        f"{base_url}/api/generate",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    return _trim_headline(str(data.get("response", "")), max_words)
+
+
+def _suggest_headline(data: HeadlineSuggestIn) -> dict:
+    description = _clean_ai_text(data.description)
+    if not description:
+        raise HTTPException(400, "Description is empty")
+    current_headline = _clean_ai_text(data.currentHeadline, limit=500)
+    style = _clean_ai_text(data.style, limit=300)
+    provider = os.environ.get("HEADLINE_PROVIDER", "ollama").strip().lower()
+    provider_error = None
+    try:
+        if provider == "ollama":
+            headline = _suggest_headline_with_ollama(description, current_headline, style, data.maxWords)
+        elif provider == "heuristic":
+            headline = _heuristic_headline(description, data.maxWords)
+        else:
+            raise RuntimeError(f"Unsupported HEADLINE_PROVIDER={provider!r}")
+    except Exception as exc:
+        provider_error = str(exc)
+        provider = "heuristic-fallback"
+        headline = _heuristic_headline(description, data.maxWords)
+    return {
+        "headline": _trim_headline(headline, data.maxWords),
+        "provider": provider,
+        "providerError": provider_error,
+    }
+
+
+@app.post("/ai/headline")
+def suggest_headline(data: HeadlineSuggestIn, user: dict = Depends(current_user)):
+    return _suggest_headline(data)
 
 
 # ── Notes (notes) ─────────────────────────────────────────────────────────────
@@ -4171,12 +4277,16 @@ def export_database(project_id: str = Query(...), user: dict = Depends(current_u
             schedule_perspectives = con.execute(f"SELECT * FROM schedule_perspectives WHERE project_id IN ({project_ph})", project_ids).fetchall()
             classification_perspectives = con.execute(f"SELECT * FROM classification_perspectives WHERE project_id IN ({project_ph})", project_ids).fetchall()
             calendar_perspectives = con.execute(f"SELECT * FROM calendar_perspectives WHERE project_id IN ({project_ph})", project_ids).fetchall()
+            project_contexts = con.execute(f"SELECT * FROM project_contexts WHERE project_id IN ({project_ph})", project_ids).fetchall()
             transaction_history = con.execute(f"SELECT * FROM transaction_history WHERE project_id IN ({project_ph})", project_ids).fetchall()
+            note_archive = con.execute(f"SELECT * FROM note_archive WHERE project_id IN ({project_ph})", project_ids).fetchall()
+            personas = con.execute(f"SELECT * FROM personas WHERE project_id IN ({project_ph})", project_ids).fetchall()
         else:
-            notes = dimensions = saved_filters = schedule_perspectives = classification_perspectives = calendar_perspectives = transaction_history = []
+            notes = dimensions = saved_filters = schedule_perspectives = classification_perspectives = calendar_perspectives = project_contexts = transaction_history = note_archive = personas = []
 
         note_ids = [row["id"] for row in notes]
         dim_ids = [row["id"] for row in dimensions]
+        persona_ids = [row["id"] for row in personas]
 
         if dim_ids:
             dim_ph = ','.join('?' for _ in dim_ids)
@@ -4184,6 +4294,8 @@ def export_database(project_id: str = Query(...), user: dict = Depends(current_u
             assignments = con.execute(f"SELECT * FROM assignments WHERE dimension_id IN ({dim_ph})", dim_ids).fetchall()
         else:
             categories = assignments = []
+
+        category_ids = [row["id"] for row in categories]
 
         if note_ids:
             note_ph = ','.join('?' for _ in note_ids)
@@ -4207,25 +4319,61 @@ def export_database(project_id: str = Query(...), user: dict = Depends(current_u
         else:
             dependencies = []
 
+        if persona_ids:
+            persona_ph = ','.join('?' for _ in persona_ids)
+            persona_assignments = con.execute(f"SELECT * FROM persona_assignments WHERE persona_id IN ({persona_ph})", persona_ids).fetchall()
+            persona_note_assignments = con.execute(f"SELECT * FROM persona_note_assignments WHERE persona_id IN ({persona_ph})", persona_ids).fetchall()
+            persona_time_slot_assignments = con.execute(f"SELECT * FROM persona_time_slot_assignments WHERE persona_id IN ({persona_ph})", persona_ids).fetchall()
+            category_leaders_by_persona = con.execute(f"SELECT * FROM category_leaders WHERE persona_id IN ({persona_ph})", persona_ids).fetchall()
+        else:
+            persona_assignments = persona_note_assignments = persona_time_slot_assignments = category_leaders_by_persona = []
+
+        if category_ids:
+            category_ph = ','.join('?' for _ in category_ids)
+            category_leaders_by_category = con.execute(f"SELECT * FROM category_leaders WHERE category_id IN ({category_ph})", category_ids).fetchall()
+        else:
+            category_leaders_by_category = []
+
+        category_leaders_by_key = {
+            (row["persona_id"], row["category_id"]): row
+            for row in [*category_leaders_by_persona, *category_leaders_by_category]
+        }
+        category_leaders = list(category_leaders_by_key.values())
+
+        tables = {
+            "users":                       exported_users,
+            "projects":                    rows(projects),
+            "notes":                       rows(notes),
+            "dimensions":                  rows(dimensions),
+            "categories":                  rows(categories),
+            "assignments":                 rows(assignments),
+            "timeSlots":                   rows(time_slots),
+            "dependencies":                rows(dependencies),
+            "deadlines":                   rows(deadlines),
+            "earliest_starts":             rows(earliest_starts),
+            "note_inheritance":            rows(note_inheritance),
+            "saved_filters":               rows(saved_filters,               ("selections_json",)),
+            "schedule_perspectives":       rows(schedule_perspectives,       ("state_json",)),
+            "classification_perspectives": rows(classification_perspectives, ("state_json",)),
+            "calendar_perspectives":       rows(calendar_perspectives,       ("state_json",)),
+            "project_contexts":            rows(project_contexts,            ("state_json",)),
+            "transaction_history":         rows(transaction_history,         ("transaction_json", "before_json", "after_json")),
+            "note_archive":                rows(note_archive,                ("snapshot_json",)),
+            "personas":                    rows(personas),
+            "persona_assignments":         rows(persona_assignments),
+            "persona_note_assignments":    rows(persona_note_assignments),
+            "persona_time_slot_assignments": rows(persona_time_slot_assignments),
+            "category_leaders":            rows(category_leaders),
+        }
+
         return {
             "exported_at": con.execute("SELECT datetime('now')").fetchone()[0] + "Z",
-            "version": 1,
-            "tables": {
-                "users":                      exported_users,
-                "projects":                   rows(projects),
-                "notes":                      rows(notes),
-                "dimensions":                 rows(dimensions),
-                "categories":                 rows(categories),
-                "assignments":                rows(assignments),
-                "timeSlots":                  rows(time_slots),
-                "dependencies":               rows(dependencies),
-                "deadlines":                  rows(deadlines),
-                "earliest_starts":            rows(earliest_starts),
-                "note_inheritance":           rows(note_inheritance),
-                "saved_filters":              rows(saved_filters,              ("selections_json",)),
-                "schedule_perspectives":      rows(schedule_perspectives,      ("state_json",)),
-                "classification_perspectives": rows(classification_perspectives, ("state_json",)),
-                "calendar_perspectives":      rows(calendar_perspectives,      ("state_json",)),
-                "transaction_history":        rows(transaction_history,        ("transaction_json", "before_json", "after_json")),
+            "version": 2,
+            "scope": "complete_project",
+            "project_id": project_id,
+            "manifest": {
+                "description": "Complete project snapshot for development recovery. Includes project rows, notes, hierarchy, classifications, schedule data, perspectives, contexts, history, archive, and people/persona assignments.",
+                "table_counts": {name: len(items) for name, items in tables.items()},
             },
+            "tables": tables,
         }

@@ -137,6 +137,7 @@ export const api = {
   deleteNoteTree:(id)         => req('DELETE', `/notes/${id}?cascade=true`),
   duplicateNote:(id)          => req('POST',   `/notes/${id}/duplicate`),
   reorderNotes: (ids)         => req('PUT',    '/notes/order', { ids }),
+  suggestHeadline: (data)     => req('POST',   '/ai/headline', data),
 
   // Dimensions
   getDimensions:      ()         => req('GET',    '/dimensions'),

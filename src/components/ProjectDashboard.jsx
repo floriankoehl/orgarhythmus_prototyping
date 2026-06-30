@@ -57,6 +57,19 @@ function formatScheduleDuration(minutes) {
   return `${Number((value / MONTH_MINUTES).toFixed(value % MONTH_MINUTES === 0 ? 0 : 1))} mo`
 }
 
+function formatHierarchyCreatedAt(value) {
+  if (!value) return ''
+  const date = new Date(String(value).replace(' ', 'T'))
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 function descriptionText(html) {
   return String(html || '')
     .replace(/<br\s*\/?>/gi, '\n')
@@ -102,6 +115,20 @@ function collectAncestorNoteIds(notes, rootNoteId) {
     current = notesById.get(current.parentNoteId)
   }
   return ancestors
+}
+
+function collectDescendantIdsForNote(notes, noteId) {
+  const descendants = new Set()
+  const pending = [noteId]
+  while (pending.length) {
+    const currentId = pending.pop()
+    notes.forEach(note => {
+      if (note.parentNoteId !== currentId || descendants.has(note.id)) return
+      descendants.add(note.id)
+      pending.push(note.id)
+    })
+  }
+  return descendants
 }
 
 function buildAncestorPath(notes, noteId) {
@@ -238,23 +265,27 @@ function HierarchyTypeIcon({ hasChildren }) {
 export default function ProjectDashboard({ project, notes = [], workspaceRootNote = null, workspaceNote = null, onUpdate, onWorkspaceNoteUpdated, onWorkspaceOpen, onNoteOpen, onNotesChanged, onProjectDeleted, isActive }) {
   const isNoteWorkspace = Boolean(workspaceNote)
   const workspaceName = workspaceNote?.title || project.name
-  const workspaceDesc = workspaceNote?.html || project.description || ''
+  const workspaceDesc = isNoteWorkspace ? (workspaceNote?.html ?? '') : (project.description || '')
   const [name,        setName]        = useState(workspaceName)
   const [desc,        setDesc]        = useState(workspaceDesc)
   const [stats,       setStats]       = useState(null)
   const [timeSlots,   setTimeSlots]   = useState([])
+  const [overviewScopeData, setOverviewScopeData] = useState({
+    assignments: [],
+    dependencies: [],
+  })
   const [editingName, setEditingName] = useState(false)
   const [editingDesc, setEditingDesc] = useState(false)
-  const [draftDesc,   setDraftDesc]   = useState(workspaceDesc)
+  const [draftDesc,   setDraftDesc]   = useState(descriptionText(workspaceDesc))
   const [exporting,   setExporting]   = useState(false)
-  const [descendantDepth, setDescendantDepth] = useState(1)
+  const [descendantDepth, setDescendantDepth] = useState('all')
   const [expandedHierarchyNoteIds, setExpandedHierarchyNoteIds] = useState(() => new Set())
   const [collapsedHierarchyNoteIds, setCollapsedHierarchyNoteIds] = useState(() => new Set())
-  const [draggedHierarchyNoteId, setDraggedHierarchyNoteId] = useState(null)
+  const [draggedHierarchyNoteIds, setDraggedHierarchyNoteIds] = useState(() => new Set())
   const [hierarchyDropTargetId, setHierarchyDropTargetId] = useState(null)
   const [hierarchyWarning, setHierarchyWarning] = useState(null)
   const [hierarchyContextMenu, setHierarchyContextMenu] = useState(null)
-  const [selectedHierarchyNoteId, setSelectedHierarchyNoteId] = useState(null)
+  const [selectedHierarchyNoteIds, setSelectedHierarchyNoteIds] = useState(() => new Set())
   const [newNoteDraft, setNewNoteDraft] = useState(null)
   const [creatingHierarchyNote, setCreatingHierarchyNote] = useState(false)
   const nameInputRef = useRef()
@@ -262,6 +293,29 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
   const hierarchyWarningTimerRef = useRef(null)
   const { confirm: confirmDialog, dialog: confirmDialogNode } = useConfirmDialog()
   const workspaceRootNoteId = workspaceRootNote?.id || project.rootNoteId || null
+  const workspaceDescendantNoteIds = useMemo(
+    () => workspaceRootNoteId ? collectDescendantNoteIds(notes, workspaceRootNoteId) : new Set(),
+    [notes, workspaceRootNoteId],
+  )
+  const workspaceScopeNoteIds = useMemo(
+    () => new Set(workspaceRootNoteId ? [workspaceRootNoteId, ...workspaceDescendantNoteIds] : []),
+    [workspaceDescendantNoteIds, workspaceRootNoteId],
+  )
+  const scopedStats = useMemo(() => {
+    if (!isNoteWorkspace) return null
+    const scopedTimeSlots = timeSlots.filter(slot => workspaceScopeNoteIds.has(slot.noteId))
+    const scopedTimeSlotIds = new Set(scopedTimeSlots.map(slot => slot.id))
+    const scopedAssignments = overviewScopeData.assignments.filter(assignment => workspaceScopeNoteIds.has(assignment.noteId))
+    return {
+      notes: workspaceDescendantNoteIds.size,
+      timeSlots: scopedTimeSlots.length,
+      dimensions: new Set(scopedAssignments.map(assignment => assignment.dimensionId)).size,
+      categories: new Set(scopedAssignments.map(assignment => assignment.categoryId)).size,
+      dependencies: overviewScopeData.dependencies.filter(dep => scopedTimeSlotIds.has(dep.fromId) && scopedTimeSlotIds.has(dep.toId)).length,
+      perspectives: 0,
+    }
+  }, [isNoteWorkspace, overviewScopeData, timeSlots, workspaceDescendantNoteIds, workspaceScopeNoteIds])
+  const displayedStats = scopedStats || stats
   const scheduleWindow = useMemo(() => (
     deriveWorkspaceWindow({ project, notes, timeSlots, rootNoteId: workspaceRootNoteId })
   ), [project, notes, timeSlots, workspaceRootNoteId])
@@ -300,15 +354,23 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
   useEffect(() => {
     setName(workspaceName)
     setDesc(workspaceDesc)
-    setDraftDesc(workspaceDesc)
+    setDraftDesc(descriptionText(workspaceDesc))
   }, [project.id, workspaceNote?.id, workspaceName, workspaceDesc]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    setDescendantDepth(1)
+    setDescendantDepth('all')
     setExpandedHierarchyNoteIds(new Set())
     setCollapsedHierarchyNoteIds(new Set())
-    setSelectedHierarchyNoteId(null)
+    setSelectedHierarchyNoteIds(new Set())
   }, [project.id, workspaceRootNoteId])
+
+  useEffect(() => {
+    const visibleIds = new Set(visibleHierarchyRows.map(row => row.note.id))
+    setSelectedHierarchyNoteIds(previous => {
+      const next = new Set([...previous].filter(id => visibleIds.has(id)))
+      return next.size === previous.size ? previous : next
+    })
+  }, [visibleHierarchyRows])
 
   const changeDescendantDepth = useCallback(value => {
     setDescendantDepth(value)
@@ -359,29 +421,32 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     }, 4500)
   }, [])
 
-  const moveHierarchyNote = useCallback(async (noteId, parentNoteId) => {
-    if (!noteId || !parentNoteId || noteId === project.rootNoteId) return
-    const note = notes.find(item => item.id === noteId)
+  const moveHierarchyNotes = useCallback(async (noteIds, parentNoteId) => {
+    const requestedIds = Array.isArray(noteIds) ? noteIds : [noteIds]
+    const uniqueIds = [...new Set(requestedIds)].filter(noteId => noteId && noteId !== project.rootNoteId)
+    if (!uniqueIds.length || !parentNoteId) return
     const parent = notes.find(item => item.id === parentNoteId)
-    if (!note || !parent || note.parentNoteId === parentNoteId) return
+    if (!parent) return
 
-    const descendants = new Set()
-    const pending = [noteId]
-    while (pending.length) {
-      const currentId = pending.pop()
-      notes.forEach(item => {
-        if (item.parentNoteId !== currentId || descendants.has(item.id)) return
-        descendants.add(item.id)
-        pending.push(item.id)
-      })
-    }
-    if (noteId === parentNoteId || descendants.has(parentNoteId)) {
+    const topLevelIds = uniqueIds.filter(noteId => {
+      const note = notes.find(item => item.id === noteId)
+      if (!note) return false
+      return !uniqueIds.some(otherId => otherId !== noteId && collectDescendantIdsForNote(notes, otherId).has(noteId))
+    })
+    const movableIds = topLevelIds.filter(noteId => notes.find(item => item.id === noteId)?.parentNoteId !== parentNoteId)
+    if (!movableIds.length) return
+
+    const blockedByTarget = movableIds.some(noteId => {
+      const descendants = collectDescendantIdsForNote(notes, noteId)
+      return noteId === parentNoteId || descendants.has(parentNoteId)
+    })
+    if (blockedByTarget) {
       showHierarchyWarning('Note move blocked', 'A note cannot be moved into itself or one of its own descendants.')
       return
     }
 
     try {
-      await api.updateNote(noteId, { parentNoteId })
+      await Promise.all(movableIds.map(noteId => api.updateNote(noteId, { parentNoteId })))
     } catch (error) {
       console.error(error)
       const type = error?.detail?.type
@@ -392,7 +457,7 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
           : type === 'inheritance_window' || type === 'inheritance_scale_mismatch'
             ? 'Time slot conflict'
             : 'Note move blocked'
-      showHierarchyWarning(title, error?.message || 'This note cannot be moved to the selected project.')
+      showHierarchyWarning(title, error?.message || 'The selected notes cannot be moved to the selected project.')
       return
     }
 
@@ -516,15 +581,78 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
     })
-    setSelectedHierarchyNoteId(noteId)
+    setSelectedHierarchyNoteIds(previous => previous.has(noteId) ? previous : new Set([noteId]))
     playSound('projectMenuOpen')
   }, [])
 
+  const handleHierarchyNodeClick = useCallback((event, noteId) => {
+    event.stopPropagation()
+    if (event.ctrlKey || event.metaKey) {
+      setSelectedHierarchyNoteIds(previous => {
+        const next = new Set(previous)
+        if (next.has(noteId)) {
+          next.delete(noteId)
+          playSound('noteDeselect')
+        } else {
+          next.add(noteId)
+          playSound('noteSelect')
+        }
+        return next
+      })
+      return
+    }
+    setSelectedHierarchyNoteIds(new Set([noteId]))
+    playSound('noteSelect')
+  }, [])
+
+  const selectAllVisibleHierarchyRows = useCallback(() => {
+    const ids = visibleHierarchyRows.map(row => row.note.id)
+    setSelectedHierarchyNoteIds(new Set(ids))
+    if (ids.length > 0) playSound('noteMarqueeSelect')
+  }, [visibleHierarchyRows])
+
   useEffect(() => {
-    if (isActive) {
+    if (!isActive) return undefined
+    const onKeyDown = event => {
+      const target = event.target
+      const isEditable = target?.closest?.('input, textarea, select, [contenteditable="true"]')
+      if (isEditable) return
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+        event.preventDefault()
+        selectAllVisibleHierarchyRows()
+      }
+      if (event.key === 'Escape') {
+        setSelectedHierarchyNoteIds(new Set())
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [isActive, selectAllVisibleHierarchyRows])
+
+  useEffect(() => {
+    if (isActive && !isNoteWorkspace) {
       projectsApi.getProjectStats(project.id).then(setStats).catch(console.error)
     }
-  }, [project.id, isActive])
+    if (isActive && isNoteWorkspace) setStats(null)
+  }, [project.id, isActive, isNoteWorkspace])
+
+  useEffect(() => {
+    if (!isActive || !isNoteWorkspace) return undefined
+    let cancelled = false
+    Promise.all([
+      api.getAssignments(),
+      api.getDependencies(),
+    ])
+      .then(([assignments, dependencies]) => {
+        if (cancelled) return
+        setOverviewScopeData({
+          assignments,
+          dependencies,
+        })
+      })
+      .catch(console.error)
+    return () => { cancelled = true }
+  }, [isActive, isNoteWorkspace, project.id])
 
   useEffect(() => {
     let cancelled = false
@@ -574,9 +702,10 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
   }
 
   const handleDescCancel = () => {
-    setDraftDesc(desc)
+    setDraftDesc(descriptionText(desc))
     setEditingDesc(false)
   }
+  const displayedDesc = descriptionText(desc)
 
   const handleExport = async () => {
     setExporting(true)
@@ -587,7 +716,8 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
       const a = document.createElement('a')
       a.href = url
       const date = new Date().toISOString().split('T')[0]
-      a.download = `orgarythmus_${date}.json`
+      const safeName = String(project.name || 'project').trim().replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, '') || 'project'
+      a.download = `orgarythmus_project_${safeName}_${date}.json`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -643,9 +773,10 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
             <div
               className={styles.hierarchyTree}
               role="tree"
+              aria-multiselectable="true"
               aria-label="Project, ancestors, and child notes"
               onClick={event => {
-                if (event.target === event.currentTarget) setSelectedHierarchyNoteId(null)
+                if (event.target === event.currentTarget) setSelectedHierarchyNoteIds(new Set())
               }}
               onContextMenu={event => openHierarchyContextMenu(event, workspaceRootNoteId)}>
               {visibleHierarchyRows.map(({ note: hierarchyNote, depth, hasChildren }) => {
@@ -656,15 +787,21 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
                 const hoverDescription = descriptionText(isProjectRoot ? project.description : ancestor.html)
                 const displayDepth = Math.max(0, depth - localHierarchyBaseDepth)
                 const isExpanded = hasChildren && isHierarchyNodeExpanded(ancestor.id)
+                const isSelected = selectedHierarchyNoteIds.has(ancestor.id)
+                const createdLabel = formatHierarchyCreatedAt(ancestor.createdAt || (isProjectRoot ? project.createdAt : ''))
+                const hoverTitle = [
+                  createdLabel ? `Created ${createdLabel}` : '',
+                  hoverDescription || (isCurrent ? 'Current note' : `Double-click to open ${displayTitle || 'Untitled'}`),
+                ].filter(Boolean).join('\n')
                 return (
                   <div
                     key={ancestor.id}
                     className={[
                       styles.hierarchyRow,
                       isCurrent && styles.hierarchyRowCurrent,
-                      selectedHierarchyNoteId === ancestor.id && styles.hierarchyRowSelected,
-                      hierarchyDropTargetId === ancestor.id && draggedHierarchyNoteId !== ancestor.id && styles.hierarchyRowDropTarget,
-                      draggedHierarchyNoteId === ancestor.id && styles.hierarchyRowDragging,
+                      isSelected && styles.hierarchyRowSelected,
+                      hierarchyDropTargetId === ancestor.id && !draggedHierarchyNoteIds.has(ancestor.id) && styles.hierarchyRowDropTarget,
+                      draggedHierarchyNoteIds.has(ancestor.id) && styles.hierarchyRowDragging,
                     ].filter(Boolean).join(' ')}
                     style={{ '--tree-depth': displayDepth }}
                     role="treeitem"
@@ -674,12 +811,17 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
                     onContextMenu={event => openHierarchyContextMenu(event, ancestor.id)}
                     onDragStart={event => {
                       if (isProjectRoot) return
+                      const draggedIds = selectedHierarchyNoteIds.has(ancestor.id)
+                        ? [...selectedHierarchyNoteIds].filter(noteId => noteId !== project.rootNoteId)
+                        : [ancestor.id]
+                      event.dataTransfer.setData('project-hierarchy-note-ids', JSON.stringify(draggedIds))
                       event.dataTransfer.setData('project-hierarchy-note-id', ancestor.id)
                       event.dataTransfer.effectAllowed = 'move'
-                      setDraggedHierarchyNoteId(ancestor.id)
+                      setDraggedHierarchyNoteIds(new Set(draggedIds))
+                      if (!selectedHierarchyNoteIds.has(ancestor.id)) setSelectedHierarchyNoteIds(new Set([ancestor.id]))
                     }}
                     onDragOver={event => {
-                      if (!event.dataTransfer.types.includes('project-hierarchy-note-id')) return
+                      if (!event.dataTransfer.types.includes('project-hierarchy-note-ids') && !event.dataTransfer.types.includes('project-hierarchy-note-id')) return
                       event.preventDefault()
                       event.dataTransfer.dropEffect = 'move'
                       setHierarchyDropTargetId(ancestor.id)
@@ -691,14 +833,20 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
                     }}
                     onDrop={event => {
                       event.preventDefault()
-                      const movedNoteId = event.dataTransfer.getData('project-hierarchy-note-id')
+                      const rawMovedNoteIds = event.dataTransfer.getData('project-hierarchy-note-ids')
+                      const fallbackMovedNoteId = event.dataTransfer.getData('project-hierarchy-note-id')
+                      let movedNoteIds = fallbackMovedNoteId ? [fallbackMovedNoteId] : []
+                      try {
+                        const parsed = JSON.parse(rawMovedNoteIds)
+                        if (Array.isArray(parsed)) movedNoteIds = parsed
+                      } catch {}
                       setHierarchyDropTargetId(null)
-                      setDraggedHierarchyNoteId(null)
-                      moveHierarchyNote(movedNoteId, ancestor.id)
+                      setDraggedHierarchyNoteIds(new Set())
+                      moveHierarchyNotes(movedNoteIds, ancestor.id)
                     }}
                     onDragEnd={() => {
                       setHierarchyDropTargetId(null)
-                      setDraggedHierarchyNoteId(null)
+                      setDraggedHierarchyNoteIds(new Set())
                     }}>
                     <span className={styles.hierarchyBranch} aria-hidden="true" />
                     <div className={styles.hierarchyNodeLine}>
@@ -724,28 +872,21 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
                       <button
                         type="button"
                         className={styles.hierarchyNode}
-                        aria-selected={selectedHierarchyNoteId === ancestor.id}
-                        onClick={event => {
-                          event.stopPropagation()
-                          setSelectedHierarchyNoteId(ancestor.id)
-                          playSound('noteSelect')
-                        }}
+                        aria-selected={isSelected}
+                        onClick={event => handleHierarchyNodeClick(event, ancestor.id)}
                         onDoubleClick={event => {
                           event.stopPropagation()
                           if (isCurrent) return
                           playSound('viewChange')
                           onWorkspaceOpen?.(ancestor.id)
                         }}
-                        title={hoverDescription || (isCurrent ? `Current ${hasChildren ? 'project' : 'note'}` : `Double-click to open ${displayTitle || 'Untitled'}`)}>
+                        title={hoverTitle}>
                         <span
                           className={`${styles.hierarchyIcon} ${hasChildren ? styles.hierarchyProjectIcon : styles.hierarchyNoteIcon}`}
                           title={hasChildren ? 'Project · contains child notes' : 'Note · no child notes'}>
                           <HierarchyTypeIcon hasChildren={hasChildren} />
                         </span>
                         <span className={styles.hierarchyTitle}>{displayTitle || 'Untitled'}</span>
-                        <span className={styles.hierarchyKind}>
-                          {hasChildren ? 'Project' : 'Note'}
-                        </span>
                       </button>
                     </div>
                   </div>
@@ -760,7 +901,7 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
           <label className={styles.sectionLabel}>Overview</label>
           <div className={styles.statsGrid}>
             {Object.entries(STAT_LABELS).map(([key, label]) => (
-              <StatCard key={key} label={label} value={stats?.[key]} />
+              <StatCard key={key} label={label} value={displayedStats?.[key]} />
             ))}
           </div>
         </div>
@@ -800,7 +941,7 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
           <div className={styles.sectionHeader}>
             <label className={styles.sectionLabel}>Description</label>
             {!editingDesc && (
-              <button className={styles.editBtn} onClick={() => { setDraftDesc(desc); setEditingDesc(true) }}>
+              <button className={styles.editBtn} onClick={() => { setDraftDesc(descriptionText(desc)); setEditingDesc(true) }}>
                 Edit
               </button>
             )}
@@ -822,7 +963,7 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
             </div>
           ) : (
             <p className={styles.descText}>
-              {desc || <span className={styles.descPlaceholder}>No description yet.</span>}
+              {displayedDesc || <span className={styles.descPlaceholder}>No description yet.</span>}
             </p>
           )}
         </div>
@@ -833,9 +974,9 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
             className={styles.exportBtn}
             onClick={handleExport}
             disabled={exporting}
-            title="Download a JSON snapshot of this project"
+            title="Download a complete JSON snapshot of this project"
           >
-            {exporting ? 'Saving…' : 'Save snapshot'}
+            {exporting ? 'Saving…' : 'Save project'}
           </button>
         </div>
 

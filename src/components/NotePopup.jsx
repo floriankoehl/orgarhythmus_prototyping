@@ -112,6 +112,9 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
   const [editingTitle, setEditingTitle]   = useState(false)
   const [titleVal, setTitleVal]           = useState(note.title)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [aiHeadlineLoading, setAiHeadlineLoading] = useState(false)
+  const [aiHeadlineSuggestion, setAiHeadlineSuggestion] = useState(null)
+  const [aiHeadlineError, setAiHeadlineError] = useState('')
 
   // expanded data
   const [dimensions, setDimensions]   = useState([])
@@ -130,6 +133,8 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
 
   useEffect(() => {
     setCategoryPickerOpen(false)
+    setAiHeadlineSuggestion(null)
+    setAiHeadlineError('')
   }, [note.id])
 
   useEffect(() => {
@@ -217,6 +222,41 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
       await api.updateNote(note.id, { title: next })
       onNoteUpdated?.(note.id, { title: next })
     } catch (e) { console.error(e) }
+  }
+
+  const suggestAiHeadline = async () => {
+    const description = editorRef.current?.innerHTML || note.html || ''
+    if (!description.trim()) {
+      setAiHeadlineError('Add a description first, then I can suggest a headline.')
+      setAiHeadlineSuggestion(null)
+      return
+    }
+    setAiHeadlineLoading(true)
+    setAiHeadlineError('')
+    setAiHeadlineSuggestion(null)
+    try {
+      const result = await api.suggestHeadline({
+        description,
+        currentHeadline: titleVal,
+        style: 'concise project note',
+        maxWords: 7,
+      })
+      setAiHeadlineSuggestion(result)
+      playSound('message')
+    } catch (e) {
+      console.error(e)
+      setAiHeadlineError(e.message || 'AI headline suggestion failed.')
+      playSound('blocked')
+    } finally {
+      setAiHeadlineLoading(false)
+    }
+  }
+
+  const acceptAiHeadline = async () => {
+    if (!aiHeadlineSuggestion?.headline) return
+    await commitTitle(aiHeadlineSuggestion.headline)
+    setAiHeadlineSuggestion(null)
+    setAiHeadlineError('')
   }
 
   // ── Delete ────────────────────────────────────────────────────────────────
@@ -419,15 +459,39 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
         <div className={styles.descSection}>
           <div className={styles.descHeader}>
             <span className={styles.sectionLabel}>Description</span>
-            <button
-              className={`${styles.headlineBtn} ${headlineMode ? styles.headlineBtnActive : ''}`}
-              onClick={headlineMode ? () => { playSound('settingToggle'); setHeadlineMode(false) } : () => { playSound('settingToggle'); enterHeadlineMode() }}
-              title={headlineMode ? 'Exit headline mode (Esc)' : 'Pick headline words from description'}
-            >
-              <TagIcon />
-              {headlineMode ? 'Exit headline mode' : 'Headline mode'}
-            </button>
+            <div className={styles.descActions}>
+              <button
+                className={styles.aiHeadlineBtn}
+                onClick={suggestAiHeadline}
+                disabled={aiHeadlineLoading}
+                title="Let local AI suggest a headline from the description"
+              >
+                {aiHeadlineLoading ? 'Thinking…' : 'Let AI suggest headline'}
+              </button>
+              <button
+                className={`${styles.headlineBtn} ${headlineMode ? styles.headlineBtnActive : ''}`}
+                onClick={headlineMode ? () => { playSound('settingToggle'); setHeadlineMode(false) } : () => { playSound('settingToggle'); enterHeadlineMode() }}
+                title={headlineMode ? 'Exit headline mode (Esc)' : 'Pick headline words from description'}
+              >
+                <TagIcon />
+                {headlineMode ? 'Exit headline mode' : 'Headline mode'}
+              </button>
+            </div>
           </div>
+          {(aiHeadlineSuggestion || aiHeadlineError) && (
+            <div className={aiHeadlineError ? styles.aiHeadlineError : styles.aiHeadlineSuggestion}>
+              {aiHeadlineError ? (
+                <span>{aiHeadlineError}</span>
+              ) : (
+                <>
+                  <span className={styles.aiHeadlineText}>{aiHeadlineSuggestion.headline}</span>
+                  <span className={styles.aiHeadlineProvider}>{aiHeadlineSuggestion.provider}</span>
+                  <button className={styles.aiHeadlineAcceptBtn} onClick={acceptAiHeadline}>Accept</button>
+                  <button className={styles.aiHeadlineDismissBtn} onClick={() => setAiHeadlineSuggestion(null)}>Dismiss</button>
+                </>
+              )}
+            </div>
+          )}
           <div className={styles.editorWrap}>
             <div
               ref={el => {

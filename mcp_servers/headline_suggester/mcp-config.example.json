@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "orgarhythmus-headline": {
+      "command": "python3",
+      "args": [
+        "/home/florian/Desktop/personal/orgaryhthmus_prototypes/goals/mcp_servers/headline_suggester/server.py"
+      ],
+      "env": {
+        "HEADLINE_PROVIDER": "ollama",
+        "OLLAMA_MODEL": "qwen2.5:7b"
+      }
+    }
+  }
+}
