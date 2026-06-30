@@ -2998,6 +2998,26 @@
   z-index: 2;
 }
 
+/* Parent time-slot boundaries are movable planning bounds, deliberately
+   distinct from fixed earliest starts and hard deadlines. */
+.inheritedStartHatch,
+.inheritedDeadlineHatch {
+  position: absolute;
+  pointer-events: none;
+  background-color: rgba(59, 130, 246, 0.045);
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent,
+    transparent 7px,
+    rgba(59, 130, 246, 0.08) 7px,
+    rgba(59, 130, 246, 0.08) 9px
+  );
+  z-index: 1;
+}
+
+.inheritedStartHatch { border-right: 2px dashed #3b82f6; }
+.inheritedDeadlineHatch { border-left: 2px dashed #3b82f6; }
+
 /* ── Dependency-derived constraint markers ───────────────────────────────── */
 .dependencyConstraintHatch {
   position: absolute;

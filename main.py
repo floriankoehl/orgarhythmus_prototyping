@@ -192,7 +192,8 @@ def _init_db():
                 id      TEXT PRIMARY KEY,
                 note_id TEXT NOT NULL UNIQUE,
                 col     INTEGER NOT NULL,
-                scale   TEXT NOT NULL DEFAULT 'day'
+                scale   TEXT NOT NULL DEFAULT 'day',
+                reason  TEXT NOT NULL DEFAULT ''
             )
         """)
         con.execute("""
@@ -521,6 +522,10 @@ def _migrate():
         if 'reason' not in dep_cols:
             con.execute("ALTER TABLE dependencies ADD COLUMN reason TEXT NOT NULL DEFAULT ''")
 
+        deadline_cols = [r[1] for r in con.execute("PRAGMA table_info(deadlines)").fetchall()]
+        if 'reason' not in deadline_cols:
+            con.execute("ALTER TABLE deadlines ADD COLUMN reason TEXT NOT NULL DEFAULT ''")
+
         con.execute("""
             CREATE TABLE IF NOT EXISTS transaction_history (
                 id               TEXT PRIMARY KEY,
@@ -839,6 +844,7 @@ class DependencyPatchIn(BaseModel):
 class DeadlineColIn(BaseModel):
     col: int
     scale: Optional[str] = None
+    reason: Optional[str] = ''
 
 class NoteInheritanceIn(BaseModel):
     parentNoteId: str
@@ -1016,7 +1022,13 @@ def _dep(row) -> dict:
 
 def _dl(row) -> dict:
     d = dict(row)
-    return {"id": d["id"], "noteId": d["note_id"], "col": d["col"], "scale": _normalize_planning_scale(d.get("scale"), d["col"])}
+    return {
+        "id": d["id"],
+        "noteId": d["note_id"],
+        "col": d["col"],
+        "scale": _normalize_planning_scale(d.get("scale"), d["col"]),
+        "reason": d.get("reason", "") or "",
+    }
 
 def _es(row) -> dict:
     d = dict(row)
@@ -1758,7 +1770,7 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
         inherited_deadline = inherited_deadlines.get(time_slot["noteId"])
         if inherited_deadline is not None and time_slot["startCol"] + time_slot["duration"] > inherited_deadline:
             raise HTTPException(422, {
-                "message": "Time slot exceeds inherited hard deadline",
+                "message": "Time slot exceeds its inherited parent end boundary",
                 "type": "inheritance_deadline",
                 "id": time_slot["id"],
                 "noteId": time_slot["noteId"],
@@ -1775,7 +1787,7 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
             raise HTTPException(422, {"message": "Time slot violates earliest start date", "type": "earliest_start", "id": time_slot["id"]})
         if inherited_start is not None and time_slot["startCol"] < inherited_start:
             raise HTTPException(422, {
-                "message": "Time slot violates inherited earliest start date",
+                "message": "Time slot starts before its inherited parent start boundary",
                 "type": "inheritance_earliest_start",
                 "id": time_slot["id"],
                 "noteId": time_slot["noteId"],
@@ -2726,7 +2738,11 @@ def _restore_note_tree_snapshot(con, project_id: str, snapshot: dict):
         con.execute("UPDATE notes SET parent_note_id = ? WHERE id = ? AND project_id = ?", (child["parent_note_id"], child["id"], project_id))
     _insert_snapshot_rows(con, "time_slots", ("id", "note_id", "start_col", "duration", "title", "color"), snapshot.get("timeSlots") or [])
     _insert_snapshot_rows(con, "assignments", ("note_id", "dimension_id", "category_id", "order_idx"), snapshot.get("assignments") or [])
-    _insert_snapshot_rows(con, "deadlines", ("id", "note_id", "col", "scale"), snapshot.get("deadlines") or [])
+    archived_deadlines = [
+        {**row, "reason": row.get("reason") or ""}
+        for row in snapshot.get("deadlines") or []
+    ]
+    _insert_snapshot_rows(con, "deadlines", ("id", "note_id", "col", "scale", "reason"), archived_deadlines)
     _insert_snapshot_rows(con, "earliest_starts", ("id", "note_id", "col", "scale"), snapshot.get("earliestStarts") or [])
     _insert_snapshot_rows(con, "persona_note_assignments", ("persona_id", "note_id"), snapshot.get("personaNoteAssignments") or [])
     _insert_snapshot_rows(con, "persona_time_slot_assignments", ("persona_id", "time_slot_id"), snapshot.get("personaTimeSlotAssignments") or [])
@@ -4031,10 +4047,16 @@ def set_deadline(note_id: str, data: DeadlineColIn, user: dict = Depends(current
                 })
         existing = con.execute("SELECT id FROM deadlines WHERE note_id = ?", (note_id,)).fetchone()
         if existing:
-            con.execute("UPDATE deadlines SET col = ?, scale = ? WHERE note_id = ?", (data.col, scale, note_id))
+            con.execute(
+                "UPDATE deadlines SET col = ?, scale = ?, reason = ? WHERE note_id = ?",
+                (data.col, scale, data.reason or "", note_id),
+            )
         else:
             did = str(uuid.uuid4())
-            con.execute("INSERT INTO deadlines (id, note_id, col, scale) VALUES (?, ?, ?, ?)", (did, note_id, data.col, scale))
+            con.execute(
+                "INSERT INTO deadlines (id, note_id, col, scale, reason) VALUES (?, ?, ?, ?, ?)",
+                (did, note_id, data.col, scale, data.reason or ""),
+            )
         row = con.execute("SELECT * FROM deadlines WHERE note_id = ?", (note_id,)).fetchone()
     return _dl(row)
 

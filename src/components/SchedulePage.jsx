@@ -1185,7 +1185,7 @@ function WarningSystemPanel({
 
 // ── Context menu ──────────────────────────────────────────────────────────────
 function ContextMenu({
-  menu, onClose, onCreate, onInsertTimeUnit, onDeleteTimeUnit, onSetDeadline, onRemoveDeadline,
+  menu, onClose, onCreate, onInsertTimeUnit, onDeleteTimeUnit, onSetDeadline, onEditDeadline, onRemoveDeadline,
   onSetEarliestStart, onRemoveEarliestStart,
   onCreateNoteInLane, onCreateNodeInside,
   onCopyNote, onDuplicateNote, onStartInheritancePick, onSeeInheritance,
@@ -1235,10 +1235,16 @@ function ContextMenu({
             Add time slot — {menu.noteTitle}
           </button>
           {menu.hasDeadline
-            ? <button className={styles.ctxItem}
-                onClick={() => { onRemoveDeadline(menu.noteId); onClose() }}>
-                Remove hard deadline
-              </button>
+            ? <>
+                <button className={styles.ctxItem}
+                  onClick={() => { onEditDeadline(menu.noteId); onClose() }}>
+                  {menu.deadlineReason ? 'Edit hard deadline reason…' : 'Add hard deadline reason…'}
+                </button>
+                <button className={styles.ctxItem}
+                  onClick={() => { onRemoveDeadline(menu.noteId); onClose() }}>
+                  Remove hard deadline
+                </button>
+              </>
             : <button className={styles.ctxItem}
                 onClick={() => { onSetDeadline(menu.noteId, menu.col); onClose() }}>
                 Set hard deadline here
@@ -2677,6 +2683,9 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const [reasonModal, setReasonModal] = useState(null)   // null | { depId }
   const [reasonDraft, setReasonDraft] = useState('')
   const reasonInputRef = useRef()
+  const [deadlineReasonModal, setDeadlineReasonModal] = useState(null) // null | { noteId, col }
+  const [deadlineReasonDraft, setDeadlineReasonDraft] = useState('')
+  const deadlineReasonInputRef = useRef()
   const [colorDimId,        setColorDimId]        = useState('')
   const [activeFilterIds, setActiveFilterIds] = useState([])
   const [quickFilters, setQuickFilters] = useState([])
@@ -3327,8 +3336,8 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     let title = 'Hard deadline'
     let message = fallbackMessage || "This time slot cannot move before the project start or past its note's hard deadline."
     if (inheritedCount > 0) {
-      title = 'Inherited hard deadline'
-      message = fallbackMessage || 'This time slot is bounded by its parent time slot. Resolve shows both the child and parent time slots.'
+      title = 'Inherited parent boundary'
+      message = fallbackMessage || 'This time slot reached its parent project end. Move the parent project to carry its descendants, or resize the parent boundary.'
     } else if (explicitCount > 0 && projectStartCount === 0) {
       message = fallbackMessage || 'This time slot cannot move past its hard deadline. Resolve shows the affected time slot so you can adjust the deadline if needed.'
     }
@@ -3377,8 +3386,8 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     let title = 'Earliest start date'
     let message = fallbackMessage || "This time slot cannot start before the row's earliest start date."
     if (inheritedCount > 0) {
-      title = 'Inherited earliest start'
-      message = fallbackMessage || 'This time slot is bounded by its parent time slot. Resolve shows both the child and parent time slots.'
+      title = 'Inherited parent boundary'
+      message = fallbackMessage || 'This time slot reached its parent project start. Move the parent project to carry its descendants, or resize the parent boundary.'
     } else if (explicitCount > 0) {
       message = fallbackMessage || 'This time slot cannot move before its earliest start date. Resolve shows the affected time slot so you can adjust the start boundary if needed.'
     }
@@ -4643,14 +4652,15 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 	    }
 	    showProjectEndWarningIfNeeded({ startCol: cell.col })
 
-    const hasDeadline = deadlines.some(d => d.noteId === cell.noteId)
+    const deadline = deadlines.find(d => d.noteId === cell.noteId)
+    const hasDeadline = Boolean(deadline)
     const hasEarliestStart = earliestStarts.some(e => e.noteId === cell.noteId)
     const rowMs = timeSlotsRef.current.find(m => m.noteId === cell.noteId)
     const readOnly = !!rowMs && !isTimeSlotEditableAtZoom(rowMs.duration, timeZoomRef.current, rowMs.startCol)
     const readOnlyLabel = rowMs ? scaleLabelForZoom(getTimeSlotLevel(rowMs.duration, rowMs.startCol)) : null
     setClickedNoteId(cell.noteId)
     setContextMenu({ type: 'cell', x: e.clientX, y: e.clientY, col: cell.col,
-      noteId: cell.noteId, noteTitle: cell.noteTitle, color: cell.color, hasDeadline, hasEarliestStart,
+      noteId: cell.noteId, noteTitle: cell.noteTitle, color: cell.color, hasDeadline, deadlineReason: deadline?.reason || '', hasEarliestStart,
       isReadOnly: readOnly, readOnlyLabel, hasTimeSlot: !!rowMs })
 	  }, [deadlines, earliestStarts, getNoteCellFromPointer, showPastWorkWarning, showProjectEndWarningIfNeeded])
 
@@ -4682,7 +4692,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     if (es && startCol < es.col) {
       const parentTimeSlot = es.parentNoteId ? timeSlotsRef.current.find(m => m.noteId === es.parentNoteId) : null
       showWarningPrompt({
-        title: es.inherited ? 'Inherited earliest start' : 'Earliest start date',
+        title: es.inherited ? 'Inherited parent boundary' : 'Earliest start date',
         message: es.inherited
           ? 'This note is bounded by its parent project time slot. Place the time slot inside the visible inherited window.'
           : "This time slot cannot start before the row's earliest start date.",
@@ -4699,7 +4709,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     if (startCol < 0 || (dl && startCol + duration > dl.col)) {
       const parentTimeSlot = dl?.parentNoteId ? timeSlotsRef.current.find(m => m.noteId === dl.parentNoteId) : null
       showWarningPrompt({
-        title: dl?.inherited ? 'Inherited hard deadline' : 'Hard deadline',
+        title: dl?.inherited ? 'Inherited parent boundary' : 'Hard deadline',
         message: dl?.inherited
           ? 'This note is bounded by its parent project time slot. Place the time slot inside the visible inherited window.'
           : "This time slot cannot move before the project start or past its note's hard deadline.",
@@ -4832,11 +4842,61 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 
   function startMoveDrag(startMouseX, originals) {
     if (Object.keys(originals).length === 0) return
-    const blockedTimeSlot = findScaleLockedTimeSlot(Object.keys(originals))
+    const directlyMovedIds = Object.keys(originals)
+    const blockedTimeSlot = findScaleLockedTimeSlot(directlyMovedIds)
     if (blockedTimeSlot) {
       showScaleEditBlocked(blockedTimeSlot)
       return
     }
+
+    // A project time slot carries every scheduled structural descendant with
+    // it. Parent windows are planning containers; they only become immovable
+    // when a real, explicit boundary on one of the moved notes says so.
+    const childrenByParent = new Map()
+    allNotes.forEach(note => {
+      if (!note.parentNoteId) return
+      if (!childrenByParent.has(note.parentNoteId)) childrenByParent.set(note.parentNoteId, [])
+      childrenByParent.get(note.parentNoteId).push(note.id)
+    })
+    const timeSlotByNote = new Map(timeSlotsRef.current.map(timeSlot => [timeSlot.noteId, timeSlot]))
+    const pendingNoteIds = directlyMovedIds
+      .map(id => timeSlotsRef.current.find(timeSlot => timeSlot.id === id)?.noteId)
+      .filter(Boolean)
+    const seenNoteIds = new Set(pendingNoteIds)
+    const expandedOriginals = { ...originals }
+    while (pendingNoteIds.length) {
+      const parentNoteId = pendingNoteIds.pop()
+      ;(childrenByParent.get(parentNoteId) || []).forEach(childNoteId => {
+        if (seenNoteIds.has(childNoteId)) return
+        seenNoteIds.add(childNoteId)
+        pendingNoteIds.push(childNoteId)
+        const childTimeSlot = timeSlotByNote.get(childNoteId)
+        if (childTimeSlot) {
+          expandedOriginals[childTimeSlot.id] = {
+            startCol: childTimeSlot.startCol,
+            duration: childTimeSlot.duration,
+          }
+        }
+      })
+    }
+    originals = expandedOriginals
+    const movingTimeSlotIds = new Set(Object.keys(originals))
+    const findMoveDeadline = timeSlot => deadlinesRef.current
+      .filter(deadline => deadline.noteId === timeSlot?.noteId && deadlineAppliesToTimeSlot(deadline, timeSlot))
+      .filter(deadline => {
+        if (!deadline.inherited) return true
+        const parentTimeSlot = timeSlotsRef.current.find(candidate => candidate.noteId === deadline.parentNoteId)
+        return !parentTimeSlot || !movingTimeSlotIds.has(parentTimeSlot.id)
+      })
+      .sort((left, right) => left.col - right.col)[0] ?? null
+    const findMoveEarliestStart = timeSlot => earliestStartsRef.current
+      .filter(start => start.noteId === timeSlot?.noteId && earliestStartAppliesToTimeSlot(start, timeSlot))
+      .filter(start => {
+        if (!start.inherited) return true
+        const parentTimeSlot = timeSlotsRef.current.find(candidate => candidate.noteId === start.parentNoteId)
+        return !parentTimeSlot || !movingTimeSlotIds.has(parentTimeSlot.id)
+      })
+      .sort((left, right) => right.col - left.col)[0] ?? null
     clearWarningPrompt()
     const sp = spacingRef.current
     const isMonthMove = normalizeTimeZoom(timeZoomRef.current) === 'months'
@@ -4864,8 +4924,8 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 	      let minDeltaFromPast = -Infinity
 	      Object.entries(originals).forEach(([id, orig]) => {
         const ms = timeSlotsRef.current.find(m => m.id === id)
-        const dl = findApplicableDeadline(deadlinesRef.current, ms)
-        const es = findApplicableEarliestStart(earliestStartsRef.current, ms)
+	        const dl = findMoveDeadline(ms)
+	        const es = findMoveEarliestStart(ms)
         if (isMonthMove) {
           const startVisual = minuteToZoomCol(orig.startCol, 'months')
           const span = calendarMonthSpanForRange(orig.startCol, orig.duration)
@@ -4934,9 +4994,19 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       return clamped
     }
 
+    const directAnchorId = directlyMovedIds[0]
+    const directAnchorOriginal = originals[directAnchorId]
     const buildMovedTimeSlots = colDelta => timeSlotsRef.current.map(m => {
       if (!originals[m.id]) return m
       if (isMonthMove) {
+        const isDirectlyMoved = directlyMovedIds.includes(m.id)
+        if (!isDirectlyMoved && directAnchorOriginal) {
+          const movedAnchorStart = zoomColToMinute(
+            minuteToZoomCol(directAnchorOriginal.startCol, 'months') + colDelta,
+            'months'
+          )
+          return { ...m, startCol: originals[m.id].startCol + movedAnchorStart - directAnchorOriginal.startCol }
+        }
         const origVisualStart = minuteToZoomCol(originals[m.id].startCol, 'months')
         const startCol = zoomColToMinute(origVisualStart + colDelta, 'months')
         const duration = calendarMonthDurationFromStart(startCol, calendarMonthSpanForRange(originals[m.id].startCol, originals[m.id].duration))
@@ -4952,14 +5022,14 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         const origVisual = getVisualRange(orig, timeZoomRef.current)
         dx = Math.max(dx, -origVisual.startCol * sp.colW)
         const ms = timeSlotsRef.current.find(m => m.id === id)
-        const dl = findApplicableDeadline(deadlinesRef.current, ms)
+        const dl = findMoveDeadline(ms)
         if (dl) {
           const maxVisual = isMonthMove
             ? minuteToZoomCol(dl.col, 'months') - calendarMonthSpanForRange(orig.startCol, orig.duration)
             : minuteToZoomCol(Math.max(0, dl.col - orig.duration), timeZoomRef.current)
           dx = Math.min(dx, (maxVisual - origVisual.startCol) * sp.colW)
         }
-        const es = findApplicableEarliestStart(earliestStartsRef.current, ms)
+        const es = findMoveEarliestStart(ms)
         if (es) {
           const esMinVisual = isMonthMove
             ? minuteToZoomCol(es.col, 'months')
@@ -5059,8 +5129,18 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       const movedTimeSlotIds = Object.keys(originals)
       const movedTimeSlotIdSet = new Set(movedTimeSlotIds)
       const movedNextTimeSlots = buildMovedTimeSlots(colDelta).filter(candidate => movedTimeSlotIdSet.has(candidate.id))
-      const deadlineContactIds = getHardDeadlineContactIds(movedNextTimeSlots)
-      const earliestStartContactIds = getEarliestStartContactIds(movedNextTimeSlots)
+      const deadlineContactIds = movedNextTimeSlots
+        .filter(timeSlot => {
+          const deadline = findMoveDeadline(timeSlot)
+          return deadline && timeSlot.startCol + timeSlot.duration >= deadline.col
+        })
+        .map(timeSlot => timeSlot.id)
+      const earliestStartContactIds = movedNextTimeSlots
+        .filter(timeSlot => {
+          const earliestStart = findMoveEarliestStart(timeSlot)
+          return earliestStart && timeSlot.startCol <= earliestStart.col
+        })
+        .map(timeSlot => timeSlot.id)
 	      if (hitPastBoundary) showPastWorkWarning('This move would place the time slot before today. Enable nostalgia mode if you intentionally want to work in the past.')
 	      else if (hitBoundary) reportDeadlineViolation(movedTimeSlotIds)
       else if (deadlineContactIds.length) reportDeadlineViolation(deadlineContactIds)
@@ -5554,17 +5634,34 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 
   // ── Deadlines ──────────────────────────────────────────────────────────────
   const handleSetDeadline = useCallback(async (noteId, col) => {
+    const existing = deadlines.find(deadline => deadline.noteId === noteId)
+    setDeadlineReasonDraft(existing?.reason || '')
+    setDeadlineReasonModal({ noteId, col: existing?.col ?? col, scale: existing?.scale || null })
+  }, [deadlines])
+
+  const handleEditDeadline = useCallback(noteId => {
+    const existing = deadlines.find(deadline => deadline.noteId === noteId)
+    if (!existing) return
+    setDeadlineReasonDraft(existing.reason || '')
+    setDeadlineReasonModal({ noteId, col: existing.col, scale: existing.scale })
+  }, [deadlines])
+
+  const handleSaveDeadline = useCallback(async () => {
+    if (!deadlineReasonModal) return
     try {
-      const scale = planningScaleForZoom(timeZoomRef.current)
-      const alignedCol = zoomColToMinute(minuteToZoomCol(col, timeZoomRef.current), timeZoomRef.current)
-      const dl = await api.setDeadline(noteId, alignedCol, scale)
+      const scale = deadlineReasonModal.scale || planningScaleForZoom(timeZoomRef.current)
+      const alignedCol = deadlineReasonModal.scale
+        ? deadlineReasonModal.col
+        : zoomColToMinute(minuteToZoomCol(deadlineReasonModal.col, timeZoomRef.current), timeZoomRef.current)
+      const dl = await api.setDeadline(deadlineReasonModal.noteId, alignedCol, scale, deadlineReasonDraft.trim())
       playSound('deadlineSet')
-      setDeadlines(prev => { const next = prev.filter(d => d.noteId !== noteId); return [...next, dl] })
+      setDeadlines(prev => { const next = prev.filter(d => d.noteId !== deadlineReasonModal.noteId); return [...next, dl] })
+      setDeadlineReasonModal(null)
     } catch (err) {
       console.error(err)
       showWarningPrompt({ title: 'Hard deadline', message: err.message || 'Hard deadline could not be set for this planning scale.', actions: 'close' })
     }
-  }, [showWarningPrompt])
+  }, [deadlineReasonDraft, deadlineReasonModal, showWarningPrompt])
 
   const handleRemoveDeadline = useCallback(async noteId => {
     try {
@@ -5779,6 +5876,10 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   useEffect(() => {
     if (reasonModal) setTimeout(() => reasonInputRef.current?.focus(), 30)
   }, [reasonModal])
+
+  useEffect(() => {
+    if (deadlineReasonModal) setTimeout(() => deadlineReasonInputRef.current?.focus(), 30)
+  }, [deadlineReasonModal])
 
   // ── Left-panel resize ─────────────────────────────────────────────────────
   const [leftPanelWidth, setLeftPanelWidth] = useState(220)
@@ -6731,8 +6832,8 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
               return null
             })}
 
-            {/* Earliest start markers */}
-            {effectiveEarliestStarts.map(es => {
+            {/* Explicit earliest starts */}
+            {earliestStarts.map(es => {
               const row = noteRowMap[es.noteId]; if (!row) return null
               if (!isEarliestStartVisibleAtZoom(es, timeZoom, scaleVisibilityMode)) return null
               const visualCol = proportionalTimeSlots
@@ -6741,12 +6842,26 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
               const hatchWidth = Math.max(0, visualCol) * colW
               return hatchWidth > 0 ? (
                 <div key={es.id || `es-${es.noteId}-${es.col}`} className={styles.earliestStartHatch}
+                  title="Earliest start date"
                   style={{ left: 0, top: HEADER_H + row.top, width: hatchWidth, height: row.height }} />
               ) : null
             })}
 
-            {/* Hard deadline markers */}
-            {effectiveDeadlines.map(dl => {
+            {/* Inherited parent start boundaries */}
+            {inheritedWindows.starts.map(es => {
+              const row = noteRowMap[es.noteId]; if (!row) return null
+              if (!isEarliestStartVisibleAtZoom(es, timeZoom, scaleVisibilityMode)) return null
+              const visualCol = proportionalTimeSlots ? minuteToZoomColExact(es.col, timeZoom) : minuteToZoomCol(es.col, timeZoom)
+              const hatchWidth = Math.max(0, visualCol) * colW
+              return hatchWidth > 0 ? (
+                <div key={es.id} className={styles.inheritedStartHatch}
+                  title="Inherited parent start boundary — moves with the parent project"
+                  style={{ left: 0, top: HEADER_H + row.top, width: hatchWidth, height: row.height }} />
+              ) : null
+            })}
+
+            {/* Explicit hard deadlines */}
+            {deadlines.map(dl => {
               const row = noteRowMap[dl.noteId]; if (!row) return null
               if (!isDeadlineVisibleAtZoom(dl, timeZoom, scaleVisibilityMode)) return null
               const visualCol = proportionalTimeSlots
@@ -6756,6 +6871,21 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
               const hatchWidth = Math.max(0, totalCols - visualCol) * colW
               return hatchWidth > 0 ? (
                 <div key={dl.id || `dl-${dl.noteId}-${dl.col}`} className={styles.deadlineHatch}
+                  title={dl.reason ? `Hard deadline — ${dl.reason}` : 'Hard deadline'}
+                  style={{ left: hatchLeft, top: HEADER_H + row.top, width: hatchWidth, height: row.height }} />
+              ) : null
+            })}
+
+            {/* Inherited parent end boundaries */}
+            {inheritedWindows.deadlines.map(dl => {
+              const row = noteRowMap[dl.noteId]; if (!row) return null
+              if (!isDeadlineVisibleAtZoom(dl, timeZoom, scaleVisibilityMode)) return null
+              const visualCol = proportionalTimeSlots ? minuteToZoomColExact(dl.col, timeZoom) : minuteToZoomCol(dl.col, timeZoom)
+              const hatchLeft = visualCol * colW
+              const hatchWidth = Math.max(0, totalCols - visualCol) * colW
+              return hatchWidth > 0 ? (
+                <div key={dl.id} className={styles.inheritedDeadlineHatch}
+                  title="Inherited parent end boundary — moves with the parent project"
                   style={{ left: hatchLeft, top: HEADER_H + row.top, width: hatchWidth, height: row.height }} />
               ) : null
             })}
@@ -7103,6 +7233,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         onInsertTimeUnit={handleInsertTimeUnit}
         onDeleteTimeUnit={handleDeleteTimeUnit}
         onSetDeadline={handleSetDeadline}
+        onEditDeadline={handleEditDeadline}
         onRemoveDeadline={handleRemoveDeadline}
         onSetEarliestStart={handleSetEarliestStart}
         onRemoveEarliestStart={handleRemoveEarliestStart}
@@ -7275,6 +7406,32 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
           onDelete={deleteFilter}
           onClose={() => setEditingFilter(null)}
         />
+      )}
+
+      {deadlineReasonModal && createPortal(
+        <div className={styles.deleteModalBackdrop} onMouseDown={() => setDeadlineReasonModal(null)}>
+          <div className={styles.reasonModal} role="dialog" aria-modal="true" onMouseDown={e => e.stopPropagation()}>
+            <div className={styles.deleteModalTitle}>Hard deadline reason</div>
+            <div className={styles.reasonModalSub}>Explain why this fixed deadline exists (optional)</div>
+            <textarea
+              ref={deadlineReasonInputRef}
+              className={styles.reasonInput}
+              value={deadlineReasonDraft}
+              onChange={e => setDeadlineReasonDraft(e.target.value)}
+              placeholder="e.g. Contractual delivery date agreed with the client"
+              rows={3}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveDeadline() }
+                if (e.key === 'Escape') setDeadlineReasonModal(null)
+              }}
+            />
+            <div className={styles.deleteModalActions}>
+              <button className={styles.deleteCancelBtn} onClick={() => setDeadlineReasonModal(null)}>Cancel</button>
+              <button className={styles.deleteConfirmBtn} onClick={handleSaveDeadline}>Save hard deadline</button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
 
       {reasonModal && createPortal(
