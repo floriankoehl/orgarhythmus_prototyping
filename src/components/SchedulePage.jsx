@@ -1189,7 +1189,7 @@ function ContextMenu({
   menu, onClose, onCreate, onInsertTimeUnit, onDeleteTimeUnit, onSetDeadline, onEditDeadline, onRemoveDeadline,
   onSetEarliestStart, onEditEarliestStart, onRemoveEarliestStart, onLockTimeSlot, onUnlockTimeSlot,
   onCreateNoteInLane, onCreateNodeInside,
-  onCopyNote, onDuplicateNote, onStartInheritancePick, onSeeInheritance,
+  onCopyNote, onDuplicateNote, onStartInheritancePick, onSeeInheritance, onOpenAsProject,
   onDeleteTimeSlot, onToggleTimeSlotPin, pinnedTimeSlotId, onEditDepReason, onDeleteDep,
 }) {
   if (!menu) return null
@@ -1212,6 +1212,12 @@ function ContextMenu({
             onClick={() => { onDuplicateNote(menu.noteId); onClose() }}>
             Duplicate note
           </button>
+          {onOpenAsProject && (
+            <button className={styles.ctxItem}
+              onClick={() => { onOpenAsProject(menu.noteId); onClose() }}>
+              Open as project
+            </button>
+          )}
           <button className={styles.ctxItem}
             onClick={() => { onStartInheritancePick(menu.noteId, 'child'); onClose() }}>
             Inherit from...
@@ -1280,6 +1286,12 @@ function ContextMenu({
               onClick={() => { onDuplicateNote(menu.noteId); onClose() }}>
               Duplicate note
             </button>
+            {onOpenAsProject && (
+              <button className={styles.ctxItem}
+                onClick={() => { onOpenAsProject(menu.noteId); onClose() }}>
+                Open as project
+              </button>
+            )}
             <button className={styles.ctxItem}
               onClick={() => { onStartInheritancePick(menu.noteId, 'child'); onClose() }}>
               Inherit from...
@@ -2422,7 +2434,7 @@ function ScheduleColorLegendWidget({
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function SchedulePage({ notes = [], allNotes = notes, project = null, isActive = false, onNoteOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, externalResolveRequest = null, onExternalResolveReturn, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [], onSetContextDefaultPerspective, workspaceRootNoteId = null, workspaceRootNote = null }) {
+export default function SchedulePage({ notes = [], allNotes = notes, project = null, isActive = false, onNoteOpen, onWorkspaceOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, externalResolveRequest = null, onExternalResolveReturn, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [], onSetContextDefaultPerspective, workspaceRootNoteId = null, workspaceRootNote = null }) {
   // ── Timeline anchor ────────────────────────────────────────────────────────
   // Keep the module-level anchor in sync with the project's creation date so that
   // col 0 = project creation date (fixed, immutable left boundary of the timeline).
@@ -7451,6 +7463,10 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         onDuplicateNote={duplicateNoteInSchedule}
         onStartInheritancePick={startInheritancePick}
         onSeeInheritance={setInheritanceInspectorNoteId}
+        onOpenAsProject={noteId => {
+          playSound('viewChange')
+          onWorkspaceOpen?.(noteId)
+        }}
         onDeleteTimeSlot={handleDeleteTimeSlotRequest}
         onToggleTimeSlotPin={handleToggleTimeSlotPin}
         pinnedTimeSlotId={pinnedTimeSlotId}

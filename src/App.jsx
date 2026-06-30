@@ -273,11 +273,11 @@ export default function App() {
     setPopupEditTitle(false)
   }
 
-  const openNoteAsWorkspace = (noteId) => {
+  const openNoteAsWorkspace = (noteId, options = {}) => {
     setWorkspaceRootNoteId(noteId)
     setPopupNoteId(null)
     setToast(null)
-    setView(0)
+    setView(options?.view ?? 0)
   }
 
   const handleNoteUpdated = (noteId, patch) => {
@@ -372,7 +372,7 @@ export default function App() {
                     className={`${styles.workspaceBreadcrumb} ${isCurrent ? styles.workspaceBreadcrumbCurrent : ''}`}
                     aria-current={isCurrent ? 'page' : undefined}
                     disabled={isCurrent}
-                    onClick={() => openNoteAsWorkspace(note.id)}>
+                    onClick={() => openNoteAsWorkspace(note.id, { view })}>
                     {title}
                   </button>
                 </span>
@@ -453,6 +453,7 @@ export default function App() {
             onSetContextDefaultPerspective={setContextDefaultPerspective}
             workspaceRootNoteId={activeWorkspaceRootId}
             workspaceRootNote={activeWorkspaceRoot}
+            onWorkspaceOpen={noteId => openNoteAsWorkspace(noteId, { view: 3 })}
           />
         </div>
         <div className={styles.view} style={{ display: view === 4 ? 'flex' : 'none' }}>
