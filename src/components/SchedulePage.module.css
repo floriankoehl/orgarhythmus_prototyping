@@ -2273,6 +2273,7 @@
   top: 40px;
   height: 24px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   border-left: 1px solid #e8e8e8;
@@ -2284,14 +2285,32 @@
 .dayHeaderToday   { background: #e8f0fe; }
 .dayHeaderWeekend { background: #f5f5f5; }
 .dayHeaderHourCut { border-left: 1px solid rgba(60, 64, 67, 0.18); }
+.dayHeaderHourAnchor {
+  border-left: 2px solid rgba(126, 87, 194, 0.48);
+  background: rgba(126, 87, 194, 0.045);
+}
+.dayHeaderNoon .dayNum {
+  color: #6d28d9;
+  font-weight: 800;
+}
+.dayHeaderEvening {
+  background: rgba(245, 158, 11, 0.055);
+  border-left-color: rgba(217, 119, 6, 0.45);
+}
+.dayHeaderEvening .dayNum {
+  color: #b45309;
+  font-weight: 800;
+}
 .dayHeaderDayCut  { border-left: 2px solid rgba(26, 115, 232, 0.55); }
 .dayHeaderMonthCut { border-left: 3px solid rgba(32, 33, 36, 0.5); }
 
 .dayAbr {
   font-size: 9px;
-  color: #bbb;
+  color: #9aa0a6;
   line-height: 1;
   letter-spacing: 0.2px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .dayNum       { font-size: 13px; font-weight: 600; color: #555; line-height: 1; user-select: none; }
@@ -2322,8 +2341,29 @@
   position: absolute;
   top: 0; bottom: 0;
   pointer-events: none;
-  background: rgba(0, 0, 0, 0.018);
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgba(0, 0, 0, 0.025) 0,
+      rgba(0, 0, 0, 0.025) 8px,
+      rgba(0, 0, 0, 0.012) 8px,
+      rgba(0, 0, 0, 0.012) 16px
+    );
   z-index: 0;
+}
+
+.hourAnchorCol {
+  position: absolute;
+  top: 0; bottom: 0;
+  pointer-events: none;
+  z-index: 1;
+  border-left: 2px solid rgba(126, 87, 194, 0.24);
+  background: rgba(126, 87, 194, 0.028);
+}
+
+.eveningCol {
+  border-left-color: rgba(217, 119, 6, 0.25);
+  background: rgba(245, 158, 11, 0.032);
 }
 
 .pastOverlay {
@@ -2397,6 +2437,11 @@
   border-left: 1px solid rgba(60, 64, 67, 0.16);
 }
 
+.weekCut {
+  border-left: 2px solid rgba(15, 118, 110, 0.36);
+  box-shadow: -1px 0 0 rgba(255, 255, 255, 0.9);
+}
+
 .monthCut {
   border-left: 3px solid rgba(32, 33, 36, 0.45);
   box-shadow: -1px 0 0 rgba(255, 255, 255, 0.95);
@@ -2426,6 +2471,18 @@
   border-bottom: 1px solid #f0f0f0;
   pointer-events: none;
   box-sizing: border-box;
+}
+
+.gridNoteRowHierarchyChild {
+  border-top: 2px solid rgba(26, 115, 232, 0.44);
+  background:
+    linear-gradient(to bottom, rgba(26, 115, 232, 0.045), rgba(26, 115, 232, 0.012) 42%, transparent);
+}
+
+.gridNoteRowHierarchyGrandchild {
+  border-top: 1px solid rgba(26, 115, 232, 0.18);
+  background:
+    linear-gradient(to bottom, rgba(26, 115, 232, 0.02), transparent 45%);
 }
 
 .gridNoteRowHighlight {
@@ -2489,11 +2546,6 @@
 
 .timeSlotSelected.timeSlotMinimum {
   box-shadow: inset 0 -3px 0 rgba(245, 158, 11, 0.9), 0 0 0 3px rgba(26,115,232,0.7), 0 1px 4px rgba(0,0,0,0.22);
-}
-
-.timeSlotSubtreeArmed {
-  outline: 2px solid rgba(255, 255, 255, 0.95);
-  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.76), 0 0 0 7px rgba(168, 85, 247, 0.18), 0 1px 4px rgba(0,0,0,0.22);
 }
 
 .timeSlotProportional {

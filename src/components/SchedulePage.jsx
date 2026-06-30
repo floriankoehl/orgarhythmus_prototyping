@@ -31,18 +31,21 @@ const DEFAULT_SPACING = { colW: 110, rowH: 36, rowGap: 0, laneGap: 28 }
 const COL_WIDTH_MIN = 20
 const MINUTE_COL_WIDTH_MIN = 8
 const COL_WIDTH_MAX = 250
-const DEFAULT_COL_WIDTH_BY_ZOOM = { minutes: 40, days: 110, months: 110 }
+const DEFAULT_COL_WIDTH_BY_ZOOM = { minutes: 40, hours: 64, days: 110, weeks: 130, months: 110 }
 const INIT_TOTAL_COLS = 60    // initial column count; grows to cover viewport + buffer on mount
 const EDGE_COLS       = 5     // columns from right edge before extending
 
 const MONTH_ABR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+const WEEKDAY_ABR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
 const FILTER_DIMENSION_ID = '__filters__'
 const FILTER_CATEGORY_PREFIX = 'filter:'
 const NONE_PERSPECTIVE_ID = '__none__'
 
 const TIME_ZOOM_LEVELS = [
   { value: 'minutes', label: '10 min', short: '10m', unit: 10 },
+  { value: 'hours', label: 'Hours', short: 'h', unit: 60 },
   { value: 'days', label: 'Days', short: 'd', unit: 60 * 24 },
+  { value: 'weeks', label: 'Weeks', short: 'wk', unit: 60 * 24 * 7 },
   { value: 'months', label: 'Months', short: 'mo', unit: 60 * 24 * 30 },
 ]
 const TIME_ZOOM_BY_VALUE = Object.fromEntries(TIME_ZOOM_LEVELS.map(level => [level.value, level]))
@@ -65,10 +68,10 @@ const SCHEDULE_PERSPECTIVE_VERSION = 2
 let _timelineAnchor = null
 
 function normalizeTimeZoom(value) {
-  if (value === 'hours') return 'minutes'
-  if (value === 'weeks') return 'days'
   if (value === 'minute') return 'minutes'
+  if (value === 'hour') return 'hours'
   if (value === 'day') return 'days'
+  if (value === 'week') return 'weeks'
   if (value === 'month') return 'months'
   return TIME_ZOOM_BY_VALUE[value] ? value : DEFAULT_TIME_ZOOM
 }
@@ -81,7 +84,9 @@ function getTimeSlotLevel(duration, startCol = null) {
   const d = Math.max(0, Number(duration) || 0)
   if (startCol !== null && isCalendarMonthRange(startCol, d)) return 'months'
   if (d >= 60 * 24 * 30) return 'months'
+  if (d >= 60 * 24 * 7)  return 'weeks'
   if (d >= 60 * 24)      return 'days'
+  if (d >= 60)           return 'hours'
   return 'minutes'
 }
 
@@ -92,6 +97,7 @@ function normalizeScaleVisibilityMode() {
 function persistedPlanningScaleForZoom(timeZoom) {
   const zoom = normalizeTimeZoom(timeZoom)
   if (zoom === 'minutes') return 'minute'
+  if (zoom === 'hours') return 'minute'
   if (zoom === 'months') return 'month'
   return 'day'
 }
@@ -117,7 +123,9 @@ function normalizeAxisMode(value) {
 function normalizeColWidthByZoom(raw = {}) {
   return {
     minutes: Math.max(MINUTE_COL_WIDTH_MIN, Math.min(COL_WIDTH_MAX, Number(raw?.minutes) || DEFAULT_COL_WIDTH_BY_ZOOM.minutes)),
+    hours:   Math.max(COL_WIDTH_MIN,        Math.min(COL_WIDTH_MAX, Number(raw?.hours)   || DEFAULT_COL_WIDTH_BY_ZOOM.hours)),
     days:    Math.max(COL_WIDTH_MIN,        Math.min(COL_WIDTH_MAX, Number(raw?.days)    || DEFAULT_COL_WIDTH_BY_ZOOM.days)),
+    weeks:   Math.max(COL_WIDTH_MIN,        Math.min(COL_WIDTH_MAX, Number(raw?.weeks)   || DEFAULT_COL_WIDTH_BY_ZOOM.weeks)),
     months:  Math.max(COL_WIDTH_MIN,        Math.min(COL_WIDTH_MAX, Number(raw?.months)  || DEFAULT_COL_WIDTH_BY_ZOOM.months)),
   }
 }
@@ -182,14 +190,62 @@ function minColWidthForZoom(timeZoom) {
   return normalizeTimeZoom(timeZoom) === 'minutes' ? MINUTE_COL_WIDTH_MIN : COL_WIDTH_MIN
 }
 
+function adjacentTimeZoom(timeZoom, direction) {
+  const current = normalizeTimeZoom(timeZoom)
+  const index = ZOOM_ORDER.indexOf(current)
+  if (index < 0) return null
+  const nextIndex = direction === 'finer' ? index - 1 : index + 1
+  return ZOOM_ORDER[nextIndex] ?? null
+}
+
+function proportionalColWidthForZoomSwitch(width, fromZoom, toZoom) {
+  const fromUnit = getZoomUnit(fromZoom)
+  const toUnit = getZoomUnit(toZoom)
+  if (!fromUnit || !toUnit) return width
+  return width * (toUnit / fromUnit)
+}
+
+function autoZoomForColumnWidth(timeZoom, requestedColW) {
+  const currentZoom = normalizeTimeZoom(timeZoom)
+  const min = minColWidthForZoom(currentZoom)
+  if (requestedColW > COL_WIDTH_MAX) {
+    const nextZoom = adjacentTimeZoom(currentZoom, 'finer')
+    if (nextZoom) {
+      const nextWidth = proportionalColWidthForZoomSwitch(requestedColW, currentZoom, nextZoom)
+      return {
+        zoom: nextZoom,
+        colW: Math.max(minColWidthForZoom(nextZoom), Math.min(COL_WIDTH_MAX, Math.round(nextWidth))),
+      }
+    }
+  }
+  if (requestedColW < min) {
+    const nextZoom = adjacentTimeZoom(currentZoom, 'coarser')
+    if (nextZoom) {
+      const nextWidth = proportionalColWidthForZoomSwitch(requestedColW, currentZoom, nextZoom)
+      return {
+        zoom: nextZoom,
+        colW: Math.max(minColWidthForZoom(nextZoom), Math.min(COL_WIDTH_MAX, Math.round(nextWidth))),
+      }
+    }
+  }
+  return {
+    zoom: currentZoom,
+    colW: Math.max(min, Math.min(COL_WIDTH_MAX, Math.round(requestedColW))),
+  }
+}
+
 function getDeadlineLevel(deadline) {
   const scale = deadline?.scale
   if (scale === 'minute' || scale === 'minutes') return 'minutes'
+  if (scale === 'hour' || scale === 'hours') return 'hours'
   if (scale === 'day' || scale === 'days') return 'days'
+  if (scale === 'week' || scale === 'weeks') return 'weeks'
   if (scale === 'month' || scale === 'months') return 'months'
   const col = Number(deadline?.col) || 0
   if (col % (60 * 24 * 30) === 0) return 'months'
+  if (col % (60 * 24 * 7) === 0) return 'weeks'
   if (col % (60 * 24) === 0) return 'days'
+  if (col % 60 === 0) return 'hours'
   return 'minutes'
 }
 
@@ -208,11 +264,15 @@ function deadlineAppliesToTimeSlot(deadline, timeSlot) {
 function getEarliestStartLevel(es) {
   const scale = es?.scale
   if (scale === 'minute' || scale === 'minutes') return 'minutes'
+  if (scale === 'hour' || scale === 'hours') return 'hours'
   if (scale === 'day' || scale === 'days') return 'days'
+  if (scale === 'week' || scale === 'weeks') return 'weeks'
   if (scale === 'month' || scale === 'months') return 'months'
   const col = Number(es?.col) || 0
   if (col % (60 * 24 * 30) === 0) return 'months'
+  if (col % (60 * 24 * 7) === 0) return 'weeks'
   if (col % (60 * 24) === 0) return 'days'
+  if (col % 60 === 0) return 'hours'
   return 'minutes'
 }
 
@@ -421,6 +481,12 @@ function minuteToLabel(minute, timeZoom) {
   switch (normalizeTimeZoom(timeZoom)) {
     case 'minutes':
       return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+    case 'hours':
+      return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+    case 'weeks': {
+      const { week, year } = isoWeekInfo(date)
+      return `KW ${week} ${year}`
+    }
     case 'months':
       return `${MONTH_ABR[date.getMonth()]} ${date.getFullYear()}`
     default:
@@ -434,9 +500,15 @@ function zoomColToLabel(col, timeZoom) {
 
 function axisColumnLabel(col, timeZoom) {
   const date = minuteToDate(zoomColToMinute(col, timeZoom))
-  if (timeZoom === 'minutes') return date.getMinutes()
-  if (timeZoom === 'days') return date.getDate()
-  if (timeZoom === 'months') return MONTH_ABR[date.getMonth()]
+  const zoom = normalizeTimeZoom(timeZoom)
+  if (zoom === 'minutes') return String(date.getMinutes()).padStart(2, '0')
+  if (zoom === 'hours') {
+    const hour = date.getHours()
+    return hour === 0 || hour === 12 || hour === 18 ? `${hour}:00` : hour
+  }
+  if (zoom === 'days') return date.getDate()
+  if (zoom === 'weeks') return `KW ${isoWeekInfo(date).week}`
+  if (zoom === 'months') return MONTH_ABR[date.getMonth()]
   return zoomColToLabel(col, timeZoom)
 }
 
@@ -474,7 +546,9 @@ function durationScaleBucketIndex(bucket) {
 function zoomForConflictGap(minutes) {
   const gap = Math.abs(Number(minutes) || 0)
   if (gap >= 43200) return 'months'
+  if (gap >= 10080) return 'weeks'
   if (gap >= 1440) return 'days'
+  if (gap >= 60) return 'hours'
   return 'minutes'
 }
 
@@ -1861,16 +1935,16 @@ function GanttToolbar({
         Delete
       </button>
       <div className={styles.centerQuickControls}>
-        <div className={styles.scaleQuickSwitch} aria-label="Gantt planning scale">
-          <span className={styles.scaleQuickLabel}>Scale</span>
+        <div className={styles.scaleQuickSwitch} aria-label="Gantt visual metric">
+          <span className={styles.scaleQuickLabel}>Metric</span>
           <div className={styles.scaleQuickPills}>
             {TIME_ZOOM_LEVELS.map(level => (
               <button key={level.value}
                 type="button"
                 className={`${styles.scaleQuickPill} ${timeZoom === level.value ? styles.scaleQuickPillActive : ''}`}
-                title={`Switch to ${level.label} scale`}
+                title={`Switch to ${level.label} columns`}
                 onClick={() => onTimeZoomChange(level.value)}>
-                {level.value === 'minutes' ? level.short : level.label}
+                {level.short}
               </button>
             ))}
           </div>
@@ -2657,7 +2731,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const [timeSlotLabelMode, setTimeSlotLabelMode] = useState('date')
   const [collapsedTreeNoteIds, setCollapsedTreeNoteIds] = useState(() => new Set())
   const [treeDepthPreset, setTreeDepthPreset] = useState(1)
-  const [subtreeMoveArmedTimeSlotId, setSubtreeMoveArmedTimeSlotId] = useState(null)
   const initializedTreeRootRef = useRef(null)
   const timeSlotLabelWheelAtRef = useRef(0)
   const [reasonModal, setReasonModal] = useState(null)   // null | { depId }
@@ -3187,7 +3260,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const earliestStartsRef = useRef([])
   const modeRef         = useRef('timeSlot')
   const timeSlotScaleFilterRef = useRef(SCALE_VISIBILITY_MODES.ALL)
-  const subtreeMoveArmedTimeSlotIdRef = useRef(null)
 
   // Keep imperative refs in sync with state (assigned synchronously in render)
   spacingRef.current       = spacing
@@ -3200,7 +3272,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   modeRef.current            = mode
   nostalgiaModeRef.current   = nostalgiaMode
   timeSlotScaleFilterRef.current = normalizeScaleVisibilityMode(timeSlotScaleFilter)
-  subtreeMoveArmedTimeSlotIdRef.current = subtreeMoveArmedTimeSlotId
 
   useEffect(() => {
     const cancelCreateSizeMode = event => {
@@ -3209,7 +3280,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         createSizeDraftRef.current = null
         setCreateDragPreview(null)
       }
-      if (subtreeMoveArmedTimeSlotIdRef.current) setSubtreeMoveArmedTimeSlotId(null)
     }
     document.addEventListener('keydown', cancelCreateSizeMode)
     return () => document.removeEventListener('keydown', cancelCreateSizeMode)
@@ -3560,6 +3630,25 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const noteRowMapRef = useRef({})
   noteRowMapRef.current = noteRowMap
 
+  const gridHierarchyLineLevel = useCallback(item => {
+    if (!item || item.type !== 'note') return null
+    const tree = item.tree || {}
+    if (workspaceRootNoteId) {
+      if (item.note.id === workspaceRootNoteId) return null
+      const ancestorIds = tree.ancestorIds || []
+      const rootIndex = ancestorIds.indexOf(workspaceRootNoteId)
+      if (rootIndex >= 0) {
+        const relativeDepth = ancestorIds.length - rootIndex
+        if (relativeDepth === 1) return 'child'
+        if (relativeDepth === 2) return 'grandchild'
+        return null
+      }
+    }
+    if (tree.depth === 1) return 'child'
+    if (tree.depth === 2) return 'grandchild'
+    return null
+  }, [workspaceRootNoteId])
+
   const applyTreeDepthPreset = useCallback(depth => {
     setTreeDepthPreset(depth)
     setCollapsedTreeNoteIds(collapsedNoteIdsForTreeDepth(allNotes, workspaceRootNoteId, depth))
@@ -3585,6 +3674,76 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const timeSlotByNote = useMemo(() => new Map(timeSlots.map(m => [m.noteId, m])), [timeSlots])
   const timeSlotByNoteRef = useRef(new Map())
   timeSlotByNoteRef.current = timeSlotByNote
+
+  const timeSlotIdsForSubtree = useCallback(rootTimeSlotId => {
+    const rootTimeSlot = timeSlots.find(timeSlot => timeSlot.id === rootTimeSlotId)
+    if (!rootTimeSlot) return new Set()
+
+    const childrenByParent = new Map()
+    const addChildLink = (childNoteId, parentNoteId) => {
+      if (!childNoteId || !parentNoteId || childNoteId === parentNoteId) return
+      if (!childrenByParent.has(parentNoteId)) childrenByParent.set(parentNoteId, [])
+      childrenByParent.get(parentNoteId).push(childNoteId)
+    }
+    allNotes.forEach(note => addChildLink(note.id, note.parentNoteId))
+    noteInheritance.forEach(link => {
+      if (!link.structural) addChildLink(link.childNoteId, link.parentNoteId)
+    })
+
+    const ids = new Set([rootTimeSlot.id])
+    const pending = [...(childrenByParent.get(rootTimeSlot.noteId) || [])]
+    const seenNoteIds = new Set([rootTimeSlot.noteId])
+    while (pending.length) {
+      const noteId = pending.pop()
+      if (!noteId || seenNoteIds.has(noteId)) continue
+      seenNoteIds.add(noteId)
+      const descendantTimeSlot = timeSlotByNote.get(noteId)
+      if (descendantTimeSlot) ids.add(descendantTimeSlot.id)
+      ;(childrenByParent.get(noteId) || []).forEach(childNoteId => {
+        if (!seenNoteIds.has(childNoteId)) pending.push(childNoteId)
+      })
+    }
+    return ids
+  }, [allNotes, noteInheritance, timeSlotByNote, timeSlots])
+
+  const rootTimeSlotIdsForSelection = useCallback(timeSlotIds => {
+    const selectedTimeSlotIds = new Set(timeSlotIds)
+    const selectedNoteIds = new Set(
+      timeSlotIds
+        .map(id => timeSlots.find(timeSlot => timeSlot.id === id)?.noteId)
+        .filter(Boolean)
+    )
+    const parentIdsByChild = new Map()
+    const addParentLink = (childNoteId, parentNoteId) => {
+      if (!childNoteId || !parentNoteId || childNoteId === parentNoteId) return
+      if (!parentIdsByChild.has(childNoteId)) parentIdsByChild.set(childNoteId, [])
+      parentIdsByChild.get(childNoteId).push(parentNoteId)
+    }
+    allNotes.forEach(note => addParentLink(note.id, note.parentNoteId))
+    noteInheritance.forEach(link => {
+      if (!link.structural) addParentLink(link.childNoteId, link.parentNoteId)
+    })
+    const hasSelectedAncestor = noteId => {
+      const pending = [...(parentIdsByChild.get(noteId) || [])]
+      const seen = new Set()
+      while (pending.length) {
+        const parentNoteId = pending.pop()
+        if (!parentNoteId || seen.has(parentNoteId)) continue
+        seen.add(parentNoteId)
+        if (selectedNoteIds.has(parentNoteId)) return true
+        ;(parentIdsByChild.get(parentNoteId) || []).forEach(grandParentNoteId => {
+          if (!seen.has(grandParentNoteId)) pending.push(grandParentNoteId)
+        })
+      }
+      return false
+    }
+    const roots = timeSlotIds.filter(id => {
+      if (!selectedTimeSlotIds.has(id)) return false
+      const timeSlot = timeSlots.find(candidate => candidate.id === id)
+      return timeSlot && !hasSelectedAncestor(timeSlot.noteId)
+    })
+    return roots.length ? roots : timeSlotIds
+  }, [allNotes, noteInheritance, timeSlots])
 
   useEffect(() => {
     if (selectedIds.size === 0) return
@@ -3951,7 +4110,10 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       }
       const zoom = externalResolveRequest.timeScale === 'month'
         ? 'months'
-        : externalResolveRequest.timeScale === 'day' ? 'days' : 'minutes'
+        : externalResolveRequest.timeScale === 'week' ? 'weeks'
+          : externalResolveRequest.timeScale === 'day' ? 'days'
+            : externalResolveRequest.timeScale === 'hour' ? 'hours'
+              : 'minutes'
       restoringPerspectiveRef.current = nextDimId !== activeDimId || activeLaneFilterId !== ''
       restoringColorRef.current = nextColorDimId !== colorDimId
       timeZoomRef.current = zoom
@@ -4467,11 +4629,11 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     const factor = Math.exp(-e.deltaY * 0.002)
     const rawNextColW = Math.round(prev.colW * factor)
     const currentZoom = normalizeTimeZoom(timeZoomRef.current)
-    const nextColW = Math.max(minColWidthForZoom(currentZoom), Math.min(COL_WIDTH_MAX, rawNextColW))
-    if (nextColW === prev.colW) return
-
     const anchorMinute = zoomColToMinute(scrollLeftRef.current / prev.colW, currentZoom)
-    const nextScrollLeft = Math.max(0, Math.round(minuteToZoomColExact(anchorMinute, currentZoom) * nextColW))
+    const { zoom: nextZoom, colW: nextColW } = autoZoomForColumnWidth(currentZoom, rawNextColW)
+    if (nextZoom === currentZoom && nextColW === prev.colW) return
+
+    const nextScrollLeft = Math.max(0, Math.round(minuteToZoomColExact(anchorMinute, nextZoom) * nextColW))
     const needed = Math.ceil((nextScrollLeft + vpRef.current.w) / nextColW) + COL_BUF + EDGE_COLS + 1
     if (needed > totalColsRef.current) {
       totalColsRef.current = needed
@@ -4484,8 +4646,12 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     el.scrollLeft = nextScrollLeft
     scrollLeftRef.current = el.scrollLeft
     setScrollLeft(scrollLeftRef.current)
+    if (nextZoom !== currentZoom) {
+      timeZoomRef.current = nextZoom
+      setTimeZoom(nextZoom)
+    }
     setSpacing({ ...prev, colW: nextColW })
-    setColWidthByZoom(prev => ({ ...prev, [currentZoom]: nextColW }))
+    setColWidthByZoom(prev => ({ ...prev, [nextZoom]: nextColW }))
   }, [])
 
   const handleColWidthByZoomChange = useCallback((zoom, width) => {
@@ -4821,17 +4987,19 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 
   function startMoveDrag(startMouseX, originals, options = {}) {
     if (Object.keys(originals).length === 0) return
-    const carryDescendants = Boolean(options.carryDescendants)
-    const directlyMovedIds = Object.keys(originals)
-    const blockedTimeSlot = findScaleLockedTimeSlot(directlyMovedIds)
+    const movingIds = Object.keys(originals)
+    const directlyMovedIds = (Array.isArray(options.directIds) ? options.directIds : movingIds)
+      .filter(id => originals[id])
+    if (directlyMovedIds.length === 0) directlyMovedIds.push(...movingIds)
+    const blockedTimeSlot = findScaleLockedTimeSlot(movingIds)
     if (blockedTimeSlot) {
       showScaleEditBlocked(blockedTimeSlot)
       return
     }
 
-    // Normally a project time slot moves as its own planning container. When
-    // subtree mode is explicitly armed, it carries every scheduled descendant
-    // with it; explicit boundaries can then clamp descendants and bubble up.
+    // The active selection is the move group. Selected descendants move with
+    // their selected parents; unselected descendants remain stationary and
+    // constrain their ancestors so they still fit inside the parent window.
     const moveLinks = []
     const seenMoveLinks = new Set()
     const addMoveLink = (childNoteId, parentNoteId) => {
@@ -4869,29 +5037,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       }
       return descendants
     }
-    const pendingNoteIds = directlyMovedIds
-      .map(id => timeSlotsRef.current.find(timeSlot => timeSlot.id === id)?.noteId)
-      .filter(Boolean)
-    const seenNoteIds = new Set(pendingNoteIds)
-    const expandedOriginals = { ...originals }
-    if (carryDescendants) {
-      while (pendingNoteIds.length) {
-        const parentNoteId = pendingNoteIds.pop()
-        ;(childrenByParent.get(parentNoteId) || []).forEach(childNoteId => {
-          if (seenNoteIds.has(childNoteId)) return
-          seenNoteIds.add(childNoteId)
-          pendingNoteIds.push(childNoteId)
-          const childTimeSlot = timeSlotByNote.get(childNoteId)
-          if (childTimeSlot) {
-            expandedOriginals[childTimeSlot.id] = {
-              startCol: childTimeSlot.startCol,
-              duration: childTimeSlot.duration,
-            }
-          }
-        })
-      }
-    }
-    originals = expandedOriginals
     const movingTimeSlotIds = new Set(Object.keys(originals))
     const directlyMovedIdSet = new Set(directlyMovedIds)
     const findExplicitDeadline = timeSlot => deadlines
@@ -4914,25 +5059,23 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     const stationaryDescendantBoundsByTimeSlotId = new Map(
       Object.keys(originals).map(id => [id, { min: -Infinity, max: Infinity }])
     )
-    if (!carryDescendants) {
-      directlyMovedIds.forEach(timeSlotId => {
-        const ancestor = timeSlotsRef.current.find(timeSlot => timeSlot.id === timeSlotId)
-        const ancestorOriginal = ancestor ? originals[ancestor.id] : null
-        const bounds = movementBoundsByTimeSlotId.get(timeSlotId)
-        const containmentBounds = stationaryDescendantBoundsByTimeSlotId.get(timeSlotId)
-        if (!ancestor || !ancestorOriginal || !bounds || !containmentBounds) return
-        collectDescendantNoteIds(ancestor.noteId).forEach(descendantNoteId => {
-          const descendant = timeSlotByNote.get(descendantNoteId)
-          if (!descendant || movingTimeSlotIds.has(descendant.id)) return
-          const minDelta = descendant.startCol + descendant.duration - (ancestorOriginal.startCol + ancestorOriginal.duration)
-          const maxDelta = descendant.startCol - ancestorOriginal.startCol
-          bounds.min = Math.max(bounds.min, minDelta)
-          bounds.max = Math.min(bounds.max, maxDelta)
-          containmentBounds.min = Math.max(containmentBounds.min, minDelta)
-          containmentBounds.max = Math.min(containmentBounds.max, maxDelta)
-        })
+    directlyMovedIds.forEach(timeSlotId => {
+      const ancestor = timeSlotsRef.current.find(timeSlot => timeSlot.id === timeSlotId)
+      const ancestorOriginal = ancestor ? originals[ancestor.id] : null
+      const bounds = movementBoundsByTimeSlotId.get(timeSlotId)
+      const containmentBounds = stationaryDescendantBoundsByTimeSlotId.get(timeSlotId)
+      if (!ancestor || !ancestorOriginal || !bounds || !containmentBounds) return
+      collectDescendantNoteIds(ancestor.noteId).forEach(descendantNoteId => {
+        const descendant = timeSlotByNote.get(descendantNoteId)
+        if (!descendant || movingTimeSlotIds.has(descendant.id)) return
+        const minDelta = descendant.startCol + descendant.duration - (ancestorOriginal.startCol + ancestorOriginal.duration)
+        const maxDelta = descendant.startCol - ancestorOriginal.startCol
+        bounds.min = Math.max(bounds.min, minDelta)
+        bounds.max = Math.min(bounds.max, maxDelta)
+        containmentBounds.min = Math.max(containmentBounds.min, minDelta)
+        containmentBounds.max = Math.min(containmentBounds.max, maxDelta)
       })
-    }
+    })
     Object.keys(originals).forEach(descendantId => {
       const descendant = timeSlotsRef.current.find(timeSlot => timeSlot.id === descendantId)
       if (!descendant) return
@@ -5276,7 +5419,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 	      if (hitContainmentBoundary) {
 	        showWarningPrompt({
 	          title: 'Descendant outside parent',
-	          message: 'This parent time slot can only move while its existing descendants still fit inside it. Double-click the time slot first if you want to carry the whole subtree.',
+	          message: 'This parent time slot can only move while its unselected descendants still fit inside it. Select the subtree first if you want to carry those descendants too.',
 	          actions: 'close',
 	        })
 	      } else if (hitPastBoundary) showPastWorkWarning('This move would place the time slot before today. Enable nostalgia mode if you intentionally want to work in the past.')
@@ -6304,9 +6447,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       return
     }
 
-    const carryDescendants = subtreeMoveArmedTimeSlotIdRef.current === timeSlotId
-    if (subtreeMoveArmedTimeSlotIdRef.current) setSubtreeMoveArmedTimeSlotId(null)
-
     const alreadySelected = selectedIdsRef.current.has(timeSlotId)
     let idsToMove
     if (e.ctrlKey || e.metaKey) {
@@ -6324,9 +6464,9 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       const m = timeSlotsRef.current.find(m => m.id === id)
       if (m) originals[id] = { startCol: m.startCol, duration: m.duration }
     })
-    startMoveDrag(e.clientX, originals, { carryDescendants })
+    startMoveDrag(e.clientX, originals, { directIds: rootTimeSlotIdsForSelection(idsToMove) })
     setSelectedIds(new Set(idsToMove))
-  }, []) // eslint-disable-line
+  }, [rootTimeSlotIdsForSelection]) // eslint-disable-line
 
   // ── Grid mouse-down (marquee / deselect) ──────────────────────────────────
   const handleGridMouseDown = useCallback(e => {
@@ -6355,7 +6495,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     }
     if (e.button !== 0) return
     setContextMenu(null)
-    if (subtreeMoveArmedTimeSlotIdRef.current) setSubtreeMoveArmedTimeSlotId(null)
     if (createSizeDraftRef.current) {
       e.preventDefault()
       e.stopPropagation()
@@ -6404,7 +6543,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const startCol = Math.max(0,         Math.floor(scrollLeft / colW) - COL_BUF)
   const endCol   = Math.min(totalCols, Math.ceil((scrollLeft + vpSize.w) / colW) + COL_BUF)
   const visCols  = Array.from({ length: Math.max(0, endCol - startCol) }, (_, i) => startCol + i)
-  const visibleMonthSegments = timeZoom === 'minutes' ? buildAxisSegments(
+  const visibleMonthSegments = ['minutes', 'hours'].includes(timeZoom) ? buildAxisSegments(
     visCols,
     col => minuteToDate(zoomColToMinute(col, timeZoom)),
     date => `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`,
@@ -6419,13 +6558,18 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     col => minuteToDate(zoomColToMinute(col, timeZoom)),
     date => `${date.getFullYear()}-${date.getMonth()}`,
     date => `${MONTH_ABR[date.getMonth()]} ${date.getFullYear()}`
+  ) : timeZoom === 'weeks' ? buildAxisSegments(
+    visCols,
+    col => minuteToDate(zoomColToMinute(col, timeZoom)),
+    date => `${date.getFullYear()}-${date.getMonth()}`,
+    date => `${MONTH_ABR[date.getMonth()]} ${date.getFullYear()}`
   ) : null
   const visibleWeekSegments = timeZoom === 'minutes' ? buildAxisSegments(
     visCols,
     col => minuteToDate(zoomColToMinute(col, timeZoom)),
     date => `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}-${date.getHours()}`,
     hourBandLabel
-  ) : timeZoom === 'days' ? buildAxisSegments(
+  ) : ['hours', 'days'].includes(timeZoom) ? buildAxisSegments(
     visCols,
     col => minuteToDate(zoomColToMinute(col, timeZoom)),
     date => {
@@ -6434,7 +6578,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     },
     date => `KW ${isoWeekInfo(date).week}`
   ) : null
-  const visibleDayCuts = timeZoom === 'minutes'
+  const visibleDayCuts = ['minutes', 'hours'].includes(timeZoom)
     ? visCols.filter(col => col > 0 && zoomColToMinute(col, timeZoom) % (60 * 24) === 0)
     : []
   const visibleHourCuts = timeZoom === 'minutes'
@@ -6444,7 +6588,17 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         return minute % 60 === 0 && minute % (60 * 24) !== 0
       })
     : []
-  const visibleMonthCuts = timeZoom === 'days'
+  const visibleWeekCuts = ['hours', 'days'].includes(timeZoom)
+    ? visCols.filter(col => {
+        if (col <= 0) return false
+        const date = minuteToDate(zoomColToMinute(col, timeZoom))
+        const prev = minuteToDate(zoomColToMinute(col - 1, timeZoom))
+        const currentWeek = isoWeekInfo(date)
+        const previousWeek = isoWeekInfo(prev)
+        return currentWeek.week !== previousWeek.week || currentWeek.year !== previousWeek.year
+      })
+    : []
+  const visibleMonthCuts = ['days', 'weeks'].includes(timeZoom)
     ? visCols.filter(col => {
         if (col <= 0) return false
         const date = minuteToDate(zoomColToMinute(col, timeZoom))
@@ -6865,10 +7019,14 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                   const isToday = ci === effectiveTodayZoomCol
                   const isPast  = ci < effectiveTodayZoomCol
                   const date = minuteToDate(zoomColToMinute(ci, timeZoom))
-                  const isWeekend = timeZoom === 'days' && (() => { const dow = date.getDay(); return dow === 0 || dow === 6 })()
-                  const isDayCut = timeZoom === 'minutes' && ci > 0 && zoomColToMinute(ci, timeZoom) % (60 * 24) === 0
+                  const hour = date.getHours()
+                  const isWeekend = ['hours', 'days'].includes(timeZoom) && (() => { const dow = date.getDay(); return dow === 0 || dow === 6 })()
+                  const isDayCut = ['minutes', 'hours'].includes(timeZoom) && ci > 0 && zoomColToMinute(ci, timeZoom) % (60 * 24) === 0
                   const isHourCut = timeZoom === 'minutes' && ci > 0 && zoomColToMinute(ci, timeZoom) % 60 === 0
-                  const isMonthCut = timeZoom === 'days' && ci > 0 && (() => {
+                  const isHourAnchor = timeZoom === 'hours' && (hour === 12 || hour === 18)
+                  const isNoon = timeZoom === 'hours' && hour === 12
+                  const isEvening = timeZoom === 'hours' && hour === 18
+                  const isMonthCut = ['days', 'weeks'].includes(timeZoom) && ci > 0 && (() => {
                     const prev = minuteToDate(zoomColToMinute(ci - 1, timeZoom))
                     return date.getMonth() !== prev.getMonth() || date.getFullYear() !== prev.getFullYear()
                   })()
@@ -6880,10 +7038,16 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                         isPast && !isToday && styles.dayHeaderPast,
                         isWeekend && !isToday && styles.dayHeaderWeekend,
                         isHourCut && !isDayCut && styles.dayHeaderHourCut,
+                        isHourAnchor && styles.dayHeaderHourAnchor,
+                        isNoon && styles.dayHeaderNoon,
+                        isEvening && styles.dayHeaderEvening,
                         isDayCut && styles.dayHeaderDayCut,
                         isMonthCut && styles.dayHeaderMonthCut,
                       ].filter(Boolean).join(' ')}
                       style={{ left: ci * colW, width: colW }}>
+                      {timeZoom === 'days' && (
+                        <span className={styles.dayAbr}>{WEEKDAY_ABR[date.getDay()]}</span>
+                      )}
                       <span className={[styles.dayNum, axisLabelVertical && styles.dayNumVertical, isToday && styles.dayNumToday].filter(Boolean).join(' ')}>
                         {axisColumnLabel(ci, timeZoom)}
                       </span>
@@ -6915,10 +7079,24 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
             {visibleHourCuts.map(ci => (
               <div key={`hour-cut-${ci}`} className={`${styles.scaleCut} ${styles.hourCut}`} style={{ left: ci * colW }} />
             ))}
+            {visibleWeekCuts.map(ci => (
+              <div key={`week-cut-${ci}`} className={`${styles.scaleCut} ${styles.weekCut}`} style={{ left: ci * colW }} />
+            ))}
             {visibleMonthCuts.map(ci => (
               <div key={`month-cut-${ci}`} className={`${styles.scaleCut} ${styles.monthCut}`} style={{ left: ci * colW }} />
             ))}
-            {timeZoom === 'days' && visCols.map(ci => {
+            {timeZoom === 'hours' && visCols.map(ci => {
+              const hour = minuteToDate(zoomColToMinute(ci, timeZoom)).getHours()
+              if (hour !== 12 && hour !== 18) return null
+              return (
+                <div
+                  key={`hour-anchor-${ci}`}
+                  className={`${styles.hourAnchorCol} ${hour === 12 ? styles.noonCol : styles.eveningCol}`}
+                  style={{ left: ci * colW, width: colW }}
+                />
+              )
+            })}
+            {['hours', 'days'].includes(timeZoom) && visCols.map(ci => {
               const dow = minuteToDate(zoomColToMinute(ci, timeZoom)).getDay()
               return (dow === 0 || dow === 6)
                 ? <div key={`wk-${ci}`} className={styles.weekendCol} style={{ left: ci * colW, width: colW }} />
@@ -6949,13 +7127,17 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                     height: item.height,
                     background: item.cat ? `${item.cat.color}24` : 'rgba(0,0,0,0.05)',
                   }} />
-              if (item.type === 'note')
+              if (item.type === 'note') {
+                const hierarchyLineLevel = gridHierarchyLineLevel(item)
                 return <div key={`gr-${item.note.id}`}
                   className={[
                     styles.gridNoteRow,
+                    hierarchyLineLevel === 'child' && styles.gridNoteRowHierarchyChild,
+                    hierarchyLineLevel === 'grandchild' && styles.gridNoteRowHierarchyGrandchild,
                     isNoteHighlighted(item.note.id) && styles.gridNoteRowHighlight,
                   ].filter(Boolean).join(' ')}
                   style={{ top: HEADER_H + item.top, height: item.height }} />
+              }
               return null
             })}
 
@@ -7100,7 +7282,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
               const isBlinking    = blinkingTimeSlotIds.has(m.id)
               const isDepMode     = mode === 'dependency'
               const isSource      = drawingState?.fromId === m.id
-	              const isSubtreeMoveArmed = subtreeMoveArmedTimeSlotId === m.id
 	              const msColor       = getTimeSlotColor(m)
 	              const isUnassigned  = msColor === null
 	              const isMinimumDuration = m.duration <= MIN_TIME_SLOT_DURATION
@@ -7122,7 +7303,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 	                    isMinimumDuration && styles.timeSlotMinimum,
 	                    proportionalTimeSlots && styles.timeSlotProportional,
 	                    isTinyProportional && styles.timeSlotTiny,
-	                    isSubtreeMoveArmed && styles.timeSlotSubtreeArmed,
 	                    !isScaleEditable && styles.timeSlotScaleLocked,
 	                  ].filter(Boolean).join(' ')}
 	                  style={{
@@ -7135,9 +7315,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                   }}
                   title={!isScaleEditable
                     ? `Switch to ${scaleLabelForZoom(getTimeSlotLevel(m.duration, m.startCol))} view to edit this time slot.`
-                    : isSubtreeMoveArmed
-                      ? 'Subtree move armed — drag this time slot to carry descendants with it.'
-                      : 'Drag to move only this time slot. Double-click, then drag, to carry descendants.'}
+                    : 'Drag selected time slots together. Double-click to select this time slot and all scheduled descendants.'}
                   onMouseDown={e => {
                     if (paintCat || paintPersonaId) {
                       e.preventDefault()
@@ -7171,8 +7349,8 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                     if (paintCat || paintPersonaId) return
                     if (modeRef.current === 'dependency') return
                     setSelectedDepIds(new Set())
-                    setSelectedIds(new Set([m.id]))
-                    setSubtreeMoveArmedTimeSlotId(m.id)
+                    setClickedNoteId(m.noteId)
+                    setSelectedIds(timeSlotIdsForSubtree(m.id))
                   }}
                   onContextMenu={e => {
                     e.preventDefault()
