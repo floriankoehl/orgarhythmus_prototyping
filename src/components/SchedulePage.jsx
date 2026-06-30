@@ -1766,16 +1766,15 @@ function ScheduleGroupScroller({
   return (
     <div className={styles.groupScroller}>
       <div className={styles.groupScrollerUnit} onWheel={onWheel}>
-        <span className={styles.groupScrollerLabel}>Dimension</span>
+        <span className={styles.groupScrollerLabel}>Rows</span>
         <div ref={pickerRef} className={styles.groupScrollerRow}>
-          <button className={styles.groupScrollerArrow} onClick={prevDimension} disabled={!canCycleDimension} title="Previous dimension">
+          <button className={styles.groupScrollerArrow} onClick={prevDimension} disabled={!canCycleDimension} title="Previous dimension lane layout">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M15 18l-6-6 6-6"/></svg>
           </button>
           <button
             className={styles.groupScrollerName}
             onClick={() => setDimensionMenuOpen(open => !open)}
-            disabled={!canCycleDimension}
-            title="Pick dimension"
+            title="Pick row layout"
           >
             <span className={styles.groupScrollerSwatches}>
               {(currentDim ? dimensionSwatches(currentDim) : []).map(cat => (
@@ -1783,10 +1782,10 @@ function ScheduleGroupScroller({
               ))}
               {(!currentDim || dimensionSwatches(currentDim).length === 0) && <b style={{ background: '#9ca3af' }} />}
             </span>
-            <span className={styles.groupScrollerText}>{currentDim?.name ?? currentFilter?.name ?? 'None'}</span>
+            <span className={styles.groupScrollerText}>{currentDim?.name ?? currentFilter?.name ?? 'Hierarchy'}</span>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
           </button>
-          <button className={styles.groupScrollerArrow} onClick={nextDimension} disabled={!canCycleDimension} title="Next dimension">
+          <button className={styles.groupScrollerArrow} onClick={nextDimension} disabled={!canCycleDimension} title="Next dimension lane layout">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M9 18l6-6-6-6"/></svg>
           </button>
           {dimensionMenuOpen && (
@@ -1801,7 +1800,7 @@ function ScheduleGroupScroller({
                 <span className={styles.groupScrollerSingleSwatch}>
                   <b style={{ background: '#9ca3af' }} />
                 </span>
-                <strong>None</strong>
+                <strong>Hierarchy</strong>
               </button>
               {dimensions.map(dim => (
                 <button
@@ -3681,13 +3680,33 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         .filter(Boolean)
       const hasActiveFiltering = activeSavedFilters.length > 0 || quickFilters.length > 0
       if (!hasActiveFiltering) return notes
-      return notes.filter(note =>
-        revealedConflictNoteIds.has(note.id) ||
-        activeSavedFilters.some(filter => filterMatchesNote(filter, note.id, assignments, note)) ||
-        quickFilterMatchesNote(quickFilters, note, (id, dimensionId) => assignments[id]?.[dimensionId])
-      )
+      const directMatches = new Set()
+      notes.forEach(note => {
+        if (
+          revealedConflictNoteIds.has(note.id) ||
+          activeSavedFilters.some(filter => filterMatchesNote(filter, note.id, assignments, note)) ||
+          quickFilterMatchesNote(quickFilters, note, (id, dimensionId) => assignments[id]?.[dimensionId])
+        ) {
+          directMatches.add(note.id)
+        }
+      })
+
+      const scopedNoteIds = new Set(notes.map(note => note.id))
+      const noteById = new Map(allNotes.map(note => [note.id, note]))
+      const visibleIds = new Set(directMatches)
+      directMatches.forEach(noteId => {
+        let current = noteById.get(noteId)
+        const seen = new Set([noteId])
+        while (current?.parentNoteId && !seen.has(current.parentNoteId)) {
+          seen.add(current.parentNoteId)
+          if (!scopedNoteIds.has(current.parentNoteId)) break
+          visibleIds.add(current.parentNoteId)
+          current = noteById.get(current.parentNoteId)
+        }
+      })
+      return notes.filter(note => visibleIds.has(note.id))
     },
-    [activeFilterIds, assignments, notes, quickFilters, revealedConflictNoteIds, savedFilters, visibleNoteFilterIds]
+    [activeFilterIds, allNotes, assignments, notes, quickFilters, revealedConflictNoteIds, savedFilters, visibleNoteFilterIds]
   )
 
   // ── Row model ──────────────────────────────────────────────────────────────
@@ -7071,47 +7090,51 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                         onNoteOpen?.(item.note.id)
                       }}
                       style={{ top: item.top, height: item.height, borderLeftColor: item.cat?.color ?? 'transparent' }}>
-                      <button
-                        type="button"
-                        className={[
-                          styles.noteOrderHandle,
-                          !rowOrderHandleEnabled && styles.noteOrderHandleDisabled,
-                        ].filter(Boolean).join(' ')}
-                        draggable={rowOrderHandleEnabled}
-                        title={rowOrderHandleEnabled
-                          ? 'Drag to reorder this note inside its current parent project'
-                          : 'Project-order dragging is available in the plain hierarchy view'}
-                        aria-label="Reorder note"
-                        onMouseDown={e => {
-                          e.stopPropagation()
-                          if (!rowOrderHandleEnabled) e.preventDefault()
-                        }}
-                        onClick={e => e.stopPropagation()}
-                        onDragStart={e => {
-                          if (!rowOrderHandleEnabled) {
-                            e.preventDefault()
-                            return
-                          }
-                          e.stopPropagation()
-                          e.dataTransfer.setData('schedule-note-reorder-id', item.note.id)
-                          e.dataTransfer.effectAllowed = 'move'
-                          setDraggingNoteReorderId(item.note.id)
-                        }}
-                        onDragEnd={e => {
-                          e.stopPropagation()
-                          setDraggingNoteReorderId(null)
-                          setDragOverNoteReorder(null)
-                        }}>
-                        <span aria-hidden="true">⋮⋮</span>
-                      </button>
-                      <TreeGutter
-                        tree={item.tree}
-                        collapsed={collapsedTreeNoteIds.has(item.note.id)}
-                        onToggle={e => {
-                          e.stopPropagation()
-                          toggleTreeNoteCollapse(item.note.id)
-                        }}
-                      />
+                      {!inLaneMode && (
+                        <button
+                          type="button"
+                          className={[
+                            styles.noteOrderHandle,
+                            !rowOrderHandleEnabled && styles.noteOrderHandleDisabled,
+                          ].filter(Boolean).join(' ')}
+                          draggable={rowOrderHandleEnabled}
+                          title={rowOrderHandleEnabled
+                            ? 'Drag to reorder this note inside its current parent project'
+                            : 'Project-order dragging is available in the plain hierarchy view'}
+                          aria-label="Reorder note"
+                          onMouseDown={e => {
+                            e.stopPropagation()
+                            if (!rowOrderHandleEnabled) e.preventDefault()
+                          }}
+                          onClick={e => e.stopPropagation()}
+                          onDragStart={e => {
+                            if (!rowOrderHandleEnabled) {
+                              e.preventDefault()
+                              return
+                            }
+                            e.stopPropagation()
+                            e.dataTransfer.setData('schedule-note-reorder-id', item.note.id)
+                            e.dataTransfer.effectAllowed = 'move'
+                            setDraggingNoteReorderId(item.note.id)
+                          }}
+                          onDragEnd={e => {
+                            e.stopPropagation()
+                            setDraggingNoteReorderId(null)
+                            setDragOverNoteReorder(null)
+                          }}>
+                          <span aria-hidden="true">⋮⋮</span>
+                        </button>
+                      )}
+                      {!inLaneMode && (
+                        <TreeGutter
+                          tree={item.tree}
+                          collapsed={collapsedTreeNoteIds.has(item.note.id)}
+                          onToggle={e => {
+                            e.stopPropagation()
+                            toggleTreeNoteCollapse(item.note.id)
+                          }}
+                        />
+                      )}
                       {showRowScheduleMarker && noteTimeSlot && (
                         <span className={styles.noteScheduleDot} title="Scheduled" aria-hidden="true" />
                       )}
