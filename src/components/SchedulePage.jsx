@@ -56,6 +56,7 @@ const TIME_SLOT_LABEL_MODES = [
   { value: 'people', label: 'People' },
   { value: 'date', label: 'Date' },
   { value: 'headline', label: 'Headline' },
+  { value: 'duration', label: 'Duration' },
 ]
 const SCHEDULE_PERSPECTIVE_VERSION = 2
 
@@ -4910,6 +4911,57 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     }
     originals = expandedOriginals
     const movingTimeSlotIds = new Set(Object.keys(originals))
+    const directlyMovedIdSet = new Set(directlyMovedIds)
+    const noteById = new Map(allNotes.map(note => [note.id, note]))
+    const findExplicitDeadline = timeSlot => deadlines
+      .filter(deadline => deadline.noteId === timeSlot?.noteId && deadlineAppliesToTimeSlot(deadline, timeSlot))
+      .sort((left, right) => left.col - right.col)[0] ?? null
+    const findExplicitEarliestStart = timeSlot => earliestStarts
+      .filter(start => start.noteId === timeSlot?.noteId && earliestStartAppliesToTimeSlot(start, timeSlot))
+      .sort((left, right) => right.col - left.col)[0] ?? null
+
+    // Each scheduled node receives the delta range in which its complete
+    // constrained subtree can still fit. A locked descendant therefore limits
+    // how far an ancestor window may travel, but does not force the ancestor to
+    // use the descendant's zero movement delta.
+    const movementBoundsByTimeSlotId = new Map(
+      Object.keys(originals).map(id => [id, { min: -Infinity, max: Infinity }])
+    )
+    Object.keys(originals).forEach(descendantId => {
+      const descendant = timeSlotsRef.current.find(timeSlot => timeSlot.id === descendantId)
+      if (!descendant) return
+      const earliestStart = findExplicitEarliestStart(descendant)
+      const deadline = findExplicitDeadline(descendant)
+      if (!earliestStart && !deadline) return
+      let currentNoteId = descendant.noteId
+      const visited = new Set()
+      while (currentNoteId && !visited.has(currentNoteId)) {
+        visited.add(currentNoteId)
+        const ancestor = timeSlotByNote.get(currentNoteId)
+        if (ancestor && movingTimeSlotIds.has(ancestor.id)) {
+          const ancestorOriginal = originals[ancestor.id]
+          const bounds = movementBoundsByTimeSlotId.get(ancestor.id)
+          if (ancestor.id === descendant.id) {
+            if (earliestStart) bounds.min = Math.max(bounds.min, earliestStart.col - ancestorOriginal.startCol)
+            if (deadline) bounds.max = Math.min(bounds.max, deadline.col - ancestorOriginal.duration - ancestorOriginal.startCol)
+          } else {
+            if (earliestStart) {
+              bounds.min = Math.max(
+                bounds.min,
+                earliestStart.col + descendant.duration - (ancestorOriginal.startCol + ancestorOriginal.duration)
+              )
+            }
+            if (deadline) {
+              bounds.max = Math.min(
+                bounds.max,
+                deadline.col - descendant.duration - ancestorOriginal.startCol
+              )
+            }
+          }
+        }
+        currentNoteId = noteById.get(currentNoteId)?.parentNoteId || null
+      }
+    })
     const findMoveDeadline = timeSlot => deadlinesRef.current
       .filter(deadline => deadline.noteId === timeSlot?.noteId && deadlineAppliesToTimeSlot(deadline, timeSlot))
       .filter(deadline => {
@@ -4952,12 +5004,10 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 	      let minDeltaFromEarliest = -Infinity
 	      let minDeltaFromPast = -Infinity
 	      Object.entries(originals).forEach(([id, orig]) => {
-        const ms = timeSlotsRef.current.find(m => m.id === id)
-	        const dl = findMoveDeadline(ms)
-	        const es = findMoveEarliestStart(ms)
+        if (!directlyMovedIdSet.has(id)) return
+        const movementBounds = movementBoundsByTimeSlotId.get(id) || { min: -Infinity, max: Infinity }
         if (isMonthMove) {
           const startVisual = minuteToZoomCol(orig.startCol, 'months')
-          const span = calendarMonthSpanForRange(orig.startCol, orig.duration)
           minDelta = Math.max(minDelta, -startVisual)
 	          if (!nostalgiaModeRef.current && todayMinuteRef.current > 0) {
 	            const todayMonthCol = minuteToZoomCol(todayMinuteRef.current, 'months')
@@ -4965,13 +5015,13 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 	            minDelta = Math.max(minDelta, todayD)
 	            minDeltaFromPast = Math.max(minDeltaFromPast, todayD)
 	          }
-          if (dl) {
-            maxDelta = Math.min(maxDelta, minuteToZoomCol(dl.col, 'months') - span - startVisual)
+          if (movementBounds.max < Infinity) {
+            maxDelta = Math.min(maxDelta, minuteToZoomCol(orig.startCol + movementBounds.max, 'months') - startVisual)
           }
-          if (es) {
-            const esD = minuteToZoomCol(es.col, 'months') - startVisual
-            minDelta = Math.max(minDelta, esD)
-            minDeltaFromEarliest = Math.max(minDeltaFromEarliest, esD)
+          if (movementBounds.min > -Infinity) {
+            const minD = minuteToZoomCol(Math.max(0, orig.startCol + movementBounds.min), 'months') - startVisual
+            minDelta = Math.max(minDelta, minD)
+            minDeltaFromEarliest = Math.max(minDeltaFromEarliest, minD)
           }
           return
         }
@@ -4981,11 +5031,10 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 	          minDelta = Math.max(minDelta, todayD)
 	          minDeltaFromPast = Math.max(minDeltaFromPast, todayD)
 	        }
-        if (dl) maxDelta = Math.min(maxDelta, dl.col - orig.duration - orig.startCol)
-        if (es) {
-          const esD = es.col - orig.startCol
-          minDelta = Math.max(minDelta, esD)
-          minDeltaFromEarliest = Math.max(minDeltaFromEarliest, esD)
+        if (movementBounds.max < Infinity) maxDelta = Math.min(maxDelta, movementBounds.max)
+        if (movementBounds.min > -Infinity) {
+          minDelta = Math.max(minDelta, movementBounds.min)
+          minDeltaFromEarliest = Math.max(minDeltaFromEarliest, movementBounds.min)
         }
       })
 	      return { minDelta, maxDelta, minDeltaFromEarliest, minDeltaFromPast }
@@ -5025,61 +5074,65 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 
     const directAnchorId = directlyMovedIds[0]
     const directAnchorOriginal = originals[directAnchorId]
-    const buildMovedTimeSlots = colDelta => timeSlotsRef.current.map(m => {
-      if (!originals[m.id]) return m
-      if (isMonthMove) {
-        const isDirectlyMoved = directlyMovedIds.includes(m.id)
-        if (!isDirectlyMoved && directAnchorOriginal) {
-          const movedAnchorStart = zoomColToMinute(
-            minuteToZoomCol(directAnchorOriginal.startCol, 'months') + colDelta,
-            'months'
-          )
-          return { ...m, startCol: originals[m.id].startCol + movedAnchorStart - directAnchorOriginal.startCol }
+    const buildMovedTimeSlots = colDelta => {
+      const anchorMinuteDelta = isMonthMove && directAnchorOriginal
+        ? zoomColToMinute(minuteToZoomCol(directAnchorOriginal.startCol, 'months') + colDelta, 'months') - directAnchorOriginal.startCol
+        : colDelta
+      const movedById = new Map()
+      const structuralDepth = noteId => {
+        let depth = 0
+        let current = noteById.get(noteId)
+        const visited = new Set()
+        while (current?.parentNoteId && !visited.has(current.parentNoteId)) {
+          visited.add(current.parentNoteId)
+          depth += 1
+          current = noteById.get(current.parentNoteId)
         }
-        const origVisualStart = minuteToZoomCol(originals[m.id].startCol, 'months')
-        const startCol = zoomColToMinute(origVisualStart + colDelta, 'months')
-        const duration = calendarMonthDurationFromStart(startCol, calendarMonthSpanForRange(originals[m.id].startCol, originals[m.id].duration))
-        return { ...m, startCol, duration }
+        return depth
       }
-      return { ...m, startCol: originals[m.id].startCol + colDelta }
-    })
-
-    const getLiveDx = clientX => {
-      const rawDx = getScrollAdjustedDx(clientX)
-      let dx = rawDx
-      Object.entries(originals).forEach(([id, orig]) => {
-        const origVisual = getVisualRange(orig, timeZoomRef.current)
-        dx = Math.max(dx, -origVisual.startCol * sp.colW)
-        const ms = timeSlotsRef.current.find(m => m.id === id)
-        const dl = findMoveDeadline(ms)
-        if (dl) {
-          const maxVisual = isMonthMove
-            ? minuteToZoomCol(dl.col, 'months') - calendarMonthSpanForRange(orig.startCol, orig.duration)
-            : minuteToZoomCol(Math.max(0, dl.col - orig.duration), timeZoomRef.current)
-          dx = Math.min(dx, (maxVisual - origVisual.startCol) * sp.colW)
+      const moving = timeSlotsRef.current
+        .filter(timeSlot => originals[timeSlot.id])
+        .sort((left, right) => structuralDepth(left.noteId) - structuralDepth(right.noteId))
+      moving.forEach(timeSlot => {
+        const original = originals[timeSlot.id]
+        const bounds = movementBoundsByTimeSlotId.get(timeSlot.id) || { min: -Infinity, max: Infinity }
+        const ownDelta = Math.max(bounds.min, Math.min(bounds.max, anchorMinuteDelta))
+        let startCol = original.startCol + ownDelta
+        let duration = original.duration
+        if (isMonthMove && directlyMovedIdSet.has(timeSlot.id)) {
+          const origVisualStart = minuteToZoomCol(original.startCol, 'months')
+          startCol = zoomColToMinute(origVisualStart + colDelta, 'months')
+          duration = calendarMonthDurationFromStart(startCol, calendarMonthSpanForRange(original.startCol, original.duration))
         }
-        const es = findMoveEarliestStart(ms)
-        if (es) {
-          const esMinVisual = isMonthMove
-            ? minuteToZoomCol(es.col, 'months')
-            : minuteToZoomCol(es.col, timeZoomRef.current)
-          dx = Math.max(dx, (esMinVisual - origVisual.startCol) * sp.colW)
+        const structuralParentId = noteById.get(timeSlot.noteId)?.parentNoteId
+        const structuralParent = structuralParentId ? timeSlotByNote.get(structuralParentId) : null
+        const movedParent = structuralParent ? movedById.get(structuralParent.id) : null
+        if (movedParent) {
+          const lower = Math.max(movedParent.startCol, original.startCol + bounds.min)
+          const upper = Math.min(movedParent.startCol + movedParent.duration - duration, original.startCol + bounds.max)
+          if (lower <= upper) startCol = Math.max(lower, Math.min(upper, startCol))
         }
+        movedById.set(timeSlot.id, { ...timeSlot, startCol, duration })
       })
-      return dx
+      return timeSlotsRef.current.map(timeSlot => movedById.get(timeSlot.id) ?? timeSlot)
     }
 
     const renderMoveAt = clientX => {
-      const dx = getLiveDx(clientX)
-      if (Math.abs(dx) > 2) dragRef.current.hasMoved = true
+      const colDelta = getSnappedColDelta(clientX)
+      const movedTimeSlots = new Map(buildMovedTimeSlots(colDelta).map(timeSlot => [timeSlot.id, timeSlot]))
+      if (Math.abs(getScrollAdjustedDx(clientX)) > 2) dragRef.current.hasMoved = true
       const overrides = {}
       Object.entries(originals).forEach(([id, orig]) => {
         const ms = timeSlotsRef.current.find(m => m.id === id)
-        const origVisual = getVisualRange(orig, timeZoomRef.current)
-        const leftPx = origVisual.startCol * sp.colW + dx
-        if (ms) overrides[id] = { ...ms, leftPx, widthPx: origVisual.duration * sp.colW }
+        const moved = movedTimeSlots.get(id)
+        const visual = getVisualRange(moved ?? orig, timeZoomRef.current)
+        const leftPx = visual.startCol * sp.colW
+        if (ms) overrides[id] = { ...ms, leftPx, widthPx: visual.duration * sp.colW }
         const el = timeSlotElsRef.current.get(id)
-        if (el) el.style.left = `${leftPx}px`
+        if (el) {
+          el.style.left = `${leftPx}px`
+          el.style.width = `${visual.duration * sp.colW}px`
+        }
       })
       updateDependencyPaths(overrides)
     }
@@ -5158,16 +5211,28 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       const movedTimeSlotIds = Object.keys(originals)
       const movedTimeSlotIdSet = new Set(movedTimeSlotIds)
       const movedNextTimeSlots = buildMovedTimeSlots(colDelta).filter(candidate => movedTimeSlotIdSet.has(candidate.id))
+      const didTimeSlotActuallyMove = timeSlot => {
+        const original = originals[timeSlot.id]
+        return original && (timeSlot.startCol !== original.startCol || timeSlot.duration !== original.duration)
+      }
       const deadlineContactIds = movedNextTimeSlots
         .filter(timeSlot => {
+          if (!didTimeSlotActuallyMove(timeSlot)) return false
+          const original = originals[timeSlot.id]
           const deadline = findMoveDeadline(timeSlot)
-          return deadline && timeSlot.startCol + timeSlot.duration >= deadline.col
+          if (!deadline) return false
+          const originalEndCol = original.startCol + original.duration
+          const nextEndCol = timeSlot.startCol + timeSlot.duration
+          return originalEndCol < deadline.col && nextEndCol >= deadline.col
         })
         .map(timeSlot => timeSlot.id)
       const earliestStartContactIds = movedNextTimeSlots
         .filter(timeSlot => {
+          if (!didTimeSlotActuallyMove(timeSlot)) return false
+          const original = originals[timeSlot.id]
           const earliestStart = findMoveEarliestStart(timeSlot)
-          return earliestStart && timeSlot.startCol <= earliestStart.col
+          if (!earliestStart) return false
+          return original.startCol > earliestStart.col && timeSlot.startCol <= earliestStart.col
         })
         .map(timeSlot => timeSlot.id)
 	      if (hitPastBoundary) showPastWorkWarning('This move would place the time slot before today. Enable nostalgia mode if you intentionally want to work in the past.')
@@ -7116,7 +7181,18 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                   onClick={(paintCat || paintPersonaId) ? e => {
                     e.stopPropagation()
                     paintNote(m.noteId)
-                  } : undefined}
+                  } : e => {
+                    e.stopPropagation()
+                    if (modeRef.current !== 'dependency') return
+                    setSelectedDepIds(new Set())
+                    setSelectedIds(previous => {
+                      if (!(e.ctrlKey || e.metaKey)) return new Set([m.id])
+                      const next = new Set(previous)
+                      if (next.has(m.id)) next.delete(m.id)
+                      else next.add(m.id)
+                      return next
+                    })
+                  }}
                   onDoubleClick={e => {
                     e.preventDefault()
                     e.stopPropagation()
@@ -7127,6 +7203,8 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                     e.preventDefault()
                     e.stopPropagation()
                     if (paintCat || paintPersonaId) return
+                    setSelectedDepIds(new Set())
+                    setSelectedIds(new Set([m.id]))
                     const note = notes.find(g => g.id === m.noteId)
                     const label = `${note?.title ?? 'Time slot'} · ${m.title || minuteToLabel(m.startCol, timeZoom)}`
                     const explicitDeadline = deadlines.find(item => item.noteId === m.noteId)
@@ -7157,7 +7235,9 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                       <span className={styles.msLabel}>
                         {timeSlotLabelMode === 'headline'
                           ? (row.note?.title || 'Untitled')
-                          : (m.title || minuteToLabel(m.startCol, timeZoom))}
+                          : timeSlotLabelMode === 'duration'
+                            ? formatMinutesDuration(m.duration)
+                            : (m.title || minuteToLabel(m.startCol, timeZoom))}
                       </span>
                     )}
                     {isMinimumDuration && !isTinyProportional && <span className={styles.msMinBadge}>10m</span>}
