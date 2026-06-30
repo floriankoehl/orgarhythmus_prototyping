@@ -85,12 +85,8 @@ function getTimeSlotLevel(duration, startCol = null) {
   return 'minutes'
 }
 
-function normalizeScaleVisibilityMode(value) {
-  if (value === undefined || value === null || value === '') return SCALE_VISIBILITY_MODES.ALL
-  if (value === SCALE_VISIBILITY_MODES.ALL || value === 'everything' || value === 'showAll' || value === 'show-all' || value === 'show_all') {
-    return SCALE_VISIBILITY_MODES.ALL
-  }
-  return SCALE_VISIBILITY_MODES.HIERARCHY
+function normalizeScaleVisibilityMode() {
+  return SCALE_VISIBILITY_MODES.ALL
 }
 
 function persistedPlanningScaleForZoom(timeZoom) {
@@ -167,14 +163,11 @@ function normalizeSchedulePerspectiveState(rawState = {}) {
 }
 
 function isTimeSlotVisibleAtZoom(duration, timeZoom, scaleMode = SCALE_VISIBILITY_MODES.HIERARCHY, startCol = null) {
-  if (normalizeScaleVisibilityMode(scaleMode) === SCALE_VISIBILITY_MODES.ALL) return true
-  const msIdx      = ZOOM_ORDER.indexOf(getTimeSlotLevel(duration, startCol))
-  const currentIdx = ZOOM_ORDER.indexOf(timeZoom)
-  return msIdx >= currentIdx
+  return true
 }
 
 function isTimeSlotEditableAtZoom(duration, timeZoom, startCol = null) {
-  return getTimeSlotLevel(duration, startCol) === normalizeTimeZoom(timeZoom)
+  return true
 }
 
 function scaleLabelForZoom(timeZoom) {
@@ -205,14 +198,11 @@ function deadlineScaleBucket(deadline) {
 }
 
 function isDeadlineVisibleAtZoom(deadline, timeZoom, scaleMode = SCALE_VISIBILITY_MODES.HIERARCHY) {
-  if (normalizeScaleVisibilityMode(scaleMode) === SCALE_VISIBILITY_MODES.ALL) return true
-  const deadlineIdx = ZOOM_ORDER.indexOf(getDeadlineLevel(deadline))
-  const currentIdx = ZOOM_ORDER.indexOf(normalizeTimeZoom(timeZoom))
-  return deadlineIdx >= currentIdx
+  return true
 }
 
 function deadlineAppliesToTimeSlot(deadline, timeSlot) {
-  return deadline && timeSlot && deadlineScaleBucket(deadline) === timeSlotScaleBucket(timeSlot)
+  return Boolean(deadline && timeSlot)
 }
 
 function getEarliestStartLevel(es) {
@@ -231,14 +221,11 @@ function earliestStartScaleBucket(es) {
 }
 
 function isEarliestStartVisibleAtZoom(es, timeZoom, scaleMode = SCALE_VISIBILITY_MODES.HIERARCHY) {
-  if (normalizeScaleVisibilityMode(scaleMode) === SCALE_VISIBILITY_MODES.ALL) return true
-  const esIdx = ZOOM_ORDER.indexOf(getEarliestStartLevel(es))
-  const currentIdx = ZOOM_ORDER.indexOf(normalizeTimeZoom(timeZoom))
-  return esIdx >= currentIdx
+  return true
 }
 
 function earliestStartAppliesToTimeSlot(es, timeSlot) {
-  return es && timeSlot && earliestStartScaleBucket(es) === timeSlotScaleBucket(timeSlot)
+  return Boolean(es && timeSlot)
 }
 
 function findApplicableDeadline(deadlines, timeSlot) {
@@ -265,11 +252,6 @@ function findApplicableEarliestStartForPlacement(earliestStarts, timeSlot) {
     es.noteId === timeSlot.noteId
     && (earliestStartAppliesToTimeSlot(es, timeSlot) || es.inherited)
   )) ?? null
-}
-
-function noteTimeSlotScaleConflict(timeSlots, noteId, duration, startCol = null) {
-  const newScale = durationScaleBucket(duration, startCol)
-  return timeSlots.find(m => m.noteId === noteId && timeSlotScaleBucket(m) !== newScale) ?? null
 }
 
 const MIN_TIME_SLOT_DURATION = 10
@@ -417,7 +399,7 @@ function minuteToZoomColExact(minute, timeZoom) {
   return Math.max(0, Number(minute) || 0) / getZoomUnit(timeZoom)
 }
 
-function getVisualRange(item, timeZoom, proportional = false) {
+function getVisualRange(item, timeZoom, proportional = true) {
   const start = Math.max(0, Number(item.startCol) || 0)
   const end = start + Math.max(MIN_TIME_SLOT_DURATION, Number(item.duration) || MIN_TIME_SLOT_DURATION)
   if (proportional) {
@@ -431,7 +413,7 @@ function getVisualRange(item, timeZoom, proportional = false) {
 }
 
 function getRenderedVisualRange(item, timeZoom, scaleMode) {
-  return getVisualRange(item, timeZoom, normalizeScaleVisibilityMode(scaleMode) === SCALE_VISIBILITY_MODES.ALL)
+  return getVisualRange(item, timeZoom, true)
 }
 
 function minuteToLabel(minute, timeZoom) {
@@ -487,10 +469,6 @@ function timeSlotScaleBucket(timeSlot) {
 
 function durationScaleBucketIndex(bucket) {
   return ['minute', 'day', 'month'].indexOf(bucket)
-}
-
-function areTimeSlotScalesCompatible(timeSlotA, timeSlotB) {
-  return timeSlotScaleBucket(timeSlotA) === timeSlotScaleBucket(timeSlotB)
 }
 
 function zoomForConflictGap(minutes) {
@@ -588,11 +566,6 @@ function computeViolations(msList, deps) {
   deps.forEach(dep => {
     const from = msMap[dep.fromId]; const to = msMap[dep.toId]
     if (!from || !to) return
-    if (!areTimeSlotScalesCompatible(from, to)) {
-      violations.add(from.id)
-      violations.add(to.id)
-      return
-    }
     if (from.startCol + from.duration > to.startCol) violations.add(to.id)
   })
   // Cascade: if B violates, check if B also causes downstream violations
@@ -616,7 +589,6 @@ function getDependencyViolations(msList, deps) {
       const from = msMap[dep.fromId]
       const to = msMap[dep.toId]
       if (!from || !to) return null
-      if (!areTimeSlotScalesCompatible(from, to)) return { dep, from, to, type: 'scale_mismatch' }
       if (from.startCol + from.duration <= to.startCol) return null
       return { dep, from, to, type: 'dependency' }
     })
@@ -650,14 +622,7 @@ function getCascadingDependencyConflict(msList, deps, initialViolations = null) 
     queue.push(violation.to.id)
   }
 
-  seedViolations.filter(v => v.type !== 'scale_mismatch').forEach(addViolation)
-  seedViolations.filter(v => v.type === 'scale_mismatch').forEach(violation => {
-    if (!violation || violationIds.has(violation.dep.id)) return
-    violationIds.add(violation.dep.id)
-    violations.push(violation)
-    timeSlotIds.add(violation.from.id)
-    timeSlotIds.add(violation.to.id)
-  })
+  seedViolations.forEach(addViolation)
 
   while (queue.length) {
     const fromId = queue.shift()
@@ -1036,26 +1001,6 @@ function SpacingPanel({
               className={`${styles.axisModePill} ${timeZoom === level.value ? styles.axisModePillActive : ''}`}
               onClick={() => onTimeZoomChange(level.value)}>
               {level.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className={styles.axisModeRow}>
-        <span className={`${styles.spacingLabel} ${styles.scaleHelpAnchor}`} tabIndex={0}>
-          Scale
-          <span className={styles.scaleHelpPopover}>
-            <strong>Focused</strong> keeps the view readable by showing the current planning scale and broader time slots only: minute view shows all, day view shows day and month, and month view shows month time slots. <strong>Everything</strong> shows every time slot and dependency. In that mode, time slots use their true proportional position and duration instead of being rounded up to a full visible column, so a 10 minute time slot in month view may become only a tiny mark.
-          </span>
-        </span>
-        <div className={styles.axisModePills}>
-          {[
-            [SCALE_VISIBILITY_MODES.HIERARCHY, 'Focused'],
-            [SCALE_VISIBILITY_MODES.ALL, 'Everything'],
-          ].map(([val, label]) => (
-            <button key={val}
-              className={`${styles.axisModePill} ${normalizeScaleVisibilityMode(timeSlotScaleFilter) === val ? styles.axisModePillActive : ''}`}
-              onClick={() => onTimeSlotScaleFilterChange(val)}>
-              {label}
             </button>
           ))}
         </div>
@@ -2753,7 +2698,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const [dependencyResolveSnapshot, setDependencyResolveSnapshot] = useState(null)
   const [deleteDraft, setDeleteDraft] = useState(null)
   const [resizeConfirmDraft, setResizeConfirmDraft] = useState(null)
-  const [metricResizeDraft,  setMetricResizeDraft]  = useState(null)
   const warningPromptTimerRef = useRef(null)
   const nostalgiaModeRef = useRef(false)
   const capturePerspectiveStateRef = useRef(null)
@@ -4323,11 +4267,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     window.setTimeout(() => setBlinkingTimeSlotIds(new Set()), 3000)
     showWarningPrompt({
       title: 'Dependency violation',
-      message: conflict.violations.some(v => v.type === 'scale_mismatch')
-        ? conflict.violations.length === 1
-          ? 'Dependency scale mismatch. Dependencies can only link time slots on the same planning scale.'
-          : `${conflict.violations.length} dependency constraints were violated, including scale mismatch.`
-        : conflict.violations.length === 1
+      message: conflict.violations.length === 1
           ? 'A predecessor time slot must finish before its successor starts.'
           : `${conflict.violations.length} dependency constraints were violated.`,
       actions: 'dependency',
@@ -4720,15 +4660,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       })
       return
     }
-    const scaleConflict = noteTimeSlotScaleConflict(timeSlotsRef.current, noteId, duration, startCol)
-    if (scaleConflict) {
-      showWarningPrompt({
-        title: 'Planning scale locked',
-        message: `This note already contains ${timeSlotScaleBucket(scaleConflict)}-scale time slots. New time slots in the same note must use that same planning scale.`,
-        actions: 'close',
-      })
-      return
-    }
     const dl = findApplicableDeadlineForPlacement(deadlinesRef.current, ms)
     const es = findApplicableEarliestStartForPlacement(earliestStartsRef.current, ms)
     if (es && startCol < es.col) {
@@ -4894,11 +4825,26 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     // A project time slot carries every scheduled structural descendant with
     // it. Parent windows are planning containers; they only become immovable
     // when a real, explicit boundary on one of the moved notes says so.
+    const moveLinks = []
+    const seenMoveLinks = new Set()
+    const addMoveLink = (childNoteId, parentNoteId) => {
+      if (!childNoteId || !parentNoteId || childNoteId === parentNoteId) return
+      const key = `${childNoteId}:${parentNoteId}`
+      if (seenMoveLinks.has(key)) return
+      seenMoveLinks.add(key)
+      moveLinks.push({ childNoteId, parentNoteId })
+    }
+    allNotes.forEach(note => addMoveLink(note.id, note.parentNoteId))
+    noteInheritance.forEach(link => {
+      if (!link.structural) addMoveLink(link.childNoteId, link.parentNoteId)
+    })
     const childrenByParent = new Map()
-    allNotes.forEach(note => {
-      if (!note.parentNoteId) return
-      if (!childrenByParent.has(note.parentNoteId)) childrenByParent.set(note.parentNoteId, [])
-      childrenByParent.get(note.parentNoteId).push(note.id)
+    const parentIdsByChild = new Map()
+    moveLinks.forEach(link => {
+      if (!childrenByParent.has(link.parentNoteId)) childrenByParent.set(link.parentNoteId, [])
+      childrenByParent.get(link.parentNoteId).push(link.childNoteId)
+      if (!parentIdsByChild.has(link.childNoteId)) parentIdsByChild.set(link.childNoteId, [])
+      parentIdsByChild.get(link.childNoteId).push(link.parentNoteId)
     })
     const timeSlotByNote = new Map(timeSlotsRef.current.map(timeSlot => [timeSlot.noteId, timeSlot]))
     const pendingNoteIds = directlyMovedIds
@@ -4924,7 +4870,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     originals = expandedOriginals
     const movingTimeSlotIds = new Set(Object.keys(originals))
     const directlyMovedIdSet = new Set(directlyMovedIds)
-    const noteById = new Map(allNotes.map(note => [note.id, note]))
     const findExplicitDeadline = timeSlot => deadlines
       .filter(deadline => deadline.noteId === timeSlot?.noteId && deadlineAppliesToTimeSlot(deadline, timeSlot))
       .sort((left, right) => left.col - right.col)[0] ?? null
@@ -4945,9 +4890,11 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       const earliestStart = findExplicitEarliestStart(descendant)
       const deadline = findExplicitDeadline(descendant)
       if (!earliestStart && !deadline) return
-      let currentNoteId = descendant.noteId
+      const pendingAncestorNoteIds = [descendant.noteId]
       const visited = new Set()
-      while (currentNoteId && !visited.has(currentNoteId)) {
+      while (pendingAncestorNoteIds.length) {
+        const currentNoteId = pendingAncestorNoteIds.pop()
+        if (!currentNoteId || visited.has(currentNoteId)) continue
         visited.add(currentNoteId)
         const ancestor = timeSlotByNote.get(currentNoteId)
         if (ancestor && movingTimeSlotIds.has(ancestor.id)) {
@@ -4971,7 +4918,9 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
             }
           }
         }
-        currentNoteId = noteById.get(currentNoteId)?.parentNoteId || null
+        ;(parentIdsByChild.get(currentNoteId) || []).forEach(parentNoteId => {
+          if (!visited.has(parentNoteId)) pendingAncestorNoteIds.push(parentNoteId)
+        })
       }
     })
     const findMoveDeadline = timeSlot => deadlinesRef.current
@@ -5091,16 +5040,12 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         ? zoomColToMinute(minuteToZoomCol(directAnchorOriginal.startCol, 'months') + colDelta, 'months') - directAnchorOriginal.startCol
         : colDelta
       const movedById = new Map()
-      const structuralDepth = noteId => {
-        let depth = 0
-        let current = noteById.get(noteId)
-        const visited = new Set()
-        while (current?.parentNoteId && !visited.has(current.parentNoteId)) {
-          visited.add(current.parentNoteId)
-          depth += 1
-          current = noteById.get(current.parentNoteId)
-        }
-        return depth
+      const structuralDepth = (noteId, visited = new Set()) => {
+        if (!noteId || visited.has(noteId)) return 0
+        visited.add(noteId)
+        const parents = parentIdsByChild.get(noteId) || []
+        if (!parents.length) return 0
+        return 1 + Math.max(...parents.map(parentNoteId => structuralDepth(parentNoteId, new Set(visited))))
       }
       const moving = timeSlotsRef.current
         .filter(timeSlot => originals[timeSlot.id])
@@ -5116,12 +5061,16 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
           startCol = zoomColToMinute(origVisualStart + colDelta, 'months')
           duration = calendarMonthDurationFromStart(startCol, calendarMonthSpanForRange(original.startCol, original.duration))
         }
-        const structuralParentId = noteById.get(timeSlot.noteId)?.parentNoteId
-        const structuralParent = structuralParentId ? timeSlotByNote.get(structuralParentId) : null
-        const movedParent = structuralParent ? movedById.get(structuralParent.id) : null
-        if (movedParent) {
-          const lower = Math.max(movedParent.startCol, original.startCol + bounds.min)
-          const upper = Math.min(movedParent.startCol + movedParent.duration - duration, original.startCol + bounds.max)
+        const movedParents = (parentIdsByChild.get(timeSlot.noteId) || [])
+          .map(parentNoteId => timeSlotByNote.get(parentNoteId))
+          .filter(Boolean)
+          .map(parentTimeSlot => movedById.get(parentTimeSlot.id))
+          .filter(Boolean)
+        if (movedParents.length) {
+          const parentLower = Math.max(...movedParents.map(parent => parent.startCol))
+          const parentUpper = Math.min(...movedParents.map(parent => parent.startCol + parent.duration - duration))
+          const lower = Math.max(parentLower, original.startCol + bounds.min)
+          const upper = Math.min(parentUpper, original.startCol + bounds.max)
           if (lower <= upper) startCol = Math.max(lower, Math.min(upper, startCol))
         }
         movedById.set(timeSlot.id, { ...timeSlot, startCol, duration })
@@ -5446,27 +5395,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
           }
           try { await applyResize() } catch (err) { console.error(err) }
         }
-        if (durationScaleBucket(origDur, origStart) !== durationScaleBucket(newDur, newStart)) {
-          const crossMetricDeps = dependenciesRef.current.filter(dep => {
-            if (dep.fromId === timeSlotId) {
-              const to = timeSlotsRef.current.find(m => m.id === dep.toId)
-              return to && durationScaleBucket(newDur, newStart) !== timeSlotScaleBucket(to)
-            }
-            if (dep.toId === timeSlotId) {
-              const from = timeSlotsRef.current.find(m => m.id === dep.fromId)
-              return from && timeSlotScaleBucket(from) !== durationScaleBucket(newDur, newStart)
-            }
-            return false
-          })
-          if (crossMetricDeps.length > 0) {
-            resetToOriginal()
-            const origBucket = durationScaleBucket(origDur, origStart)
-            const newBucket  = durationScaleBucket(newDur, newStart)
-            const direction  = durationScaleBucketIndex(newBucket) > durationScaleBucketIndex(origBucket) ? 'UP' : 'DOWN'
-            setMetricResizeDraft({ timeSlotId, newStart, newDur, origDur, origBucket, newBucket, direction, crossMetricDeps, applyResizeIfValid })
-            return
-          }
-        }
         const magnitude = durationOrderMagnitudeChange(origDur, newDur)
         const warnThreshold = warningSettings.resizeWarnOrderThreshold
         const extraConfirmThreshold = warningSettings.resizeBlockOrderThreshold
@@ -5575,21 +5503,14 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     if (dependenciesRef.current.some(d => d.fromId === fromId && d.toId === toId)) return
     const fromMs = timeSlotsRef.current.find(m => m.id === fromId)
     const toMs   = timeSlotsRef.current.find(m => m.id === toId)
-    const scaleLocked = [fromMs, toMs].find(m => m && !canEditTimeSlotNow(m))
-    if (scaleLocked) {
-      showScaleEditBlocked(scaleLocked)
-      return
-    }
-    if (fromMs && toMs && timeSlotScaleBucket(fromMs) !== timeSlotScaleBucket(toMs)) {
-      showWarningPrompt({
-        title: 'Scale mismatch',
-        message: `Dependencies can only link time slots on the same planning scale. ${timeSlotScaleBucket(fromMs)}-scale and ${timeSlotScaleBucket(toMs)}-scale time slots cannot be linked.`,
-        actions: 'close',
-      })
-      return
-    }
+    if (!fromMs || !toMs) return
     const pendingDep = { id: newClientId('dep'), fromId, toId, reason: '' }
     const nextDependencies = [...dependenciesRef.current, pendingDep]
+    const pendingViolations = getDependencyViolations(timeSlotsRef.current, [pendingDep])
+    if (pendingViolations.length) {
+      reportDependencyViolations(pendingViolations, timeSlotsRef.current, nextDependencies)
+      return
+    }
     const applyDependency = async () => {
       await commitTransaction({
         id: newClientId('tx'),
@@ -5599,63 +5520,8 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         after: { timeSlots: [], dependencies: [pendingDep] },
       })
     }
-    const blocked = maybeBlockDependencyWarning(timeSlotsRef.current, nextDependencies)
-    if (blocked) return
     try { await applyDependency() } catch (err) { console.error(err) }
-  }, [canEditTimeSlotNow, clearWarningPrompt, commitTransaction, maybeBlockDependencyWarning, showScaleEditBlocked, showWarningPrompt])
-
-  const handleMetricResizeAccept = useCallback(async () => {
-    const draft = metricResizeDraft
-    setMetricResizeDraft(null)
-    if (!draft) return
-    if (draft.crossMetricDeps.length > 0) {
-      try {
-        await commitTransaction({
-          id: newClientId('tx'),
-          type: 'dependency.delete-many',
-          label: `Delete ${draft.crossMetricDeps.length} incompatible dependenc${draft.crossMetricDeps.length === 1 ? 'y' : 'ies'}`,
-          before: { timeSlots: [], dependencies: draft.crossMetricDeps },
-          after:  { timeSlots: [], dependencies: [] },
-        })
-      } catch (err) { console.error(err) }
-    }
-    try { await draft.applyResizeIfValid() } catch (err) { console.error(err) }
-  }, [commitTransaction, metricResizeDraft])
-
-  const handleMetricResizeClone = useCallback(async () => {
-    const draft = metricResizeDraft
-    setMetricResizeDraft(null)
-    if (!draft) return
-    const originalMs = timeSlotsRef.current.find(m => m.id === draft.timeSlotId)
-    if (!originalMs) return
-    const originalNote = notes.find(n => n.id === originalMs.noteId)
-    if (!originalNote) return
-    try {
-      const clonedNote = await api.createNote({
-        id: newClientId('note'),
-        title: `${originalNote.title} (Resized ${draft.direction})`,
-        html: originalNote.html ?? '',
-        collapsed: false,
-        parentNoteId: workspaceRootNoteId,
-      })
-      onNoteCreated?.(clonedNote)
-      const noteAssignments = assignments[originalNote.id] ?? {}
-      await Promise.all(
-        Object.entries(noteAssignments).map(([dimId, catId]) =>
-          api.assign(clonedNote.id, dimId, catId).catch(console.error)
-        )
-      )
-      const clonedMs = await api.createTimeSlot({
-        id: newClientId('ms'),
-        noteId: clonedNote.id,
-        startCol: draft.newStart,
-        duration: draft.newDur,
-        title: originalMs.title ?? '',
-        color: originalMs.color ?? '#1a73e8',
-      })
-      setTimeSlots(prev => [...prev, clonedMs])
-    } catch (err) { console.error('Clone note failed', err) }
-  }, [assignments, metricResizeDraft, notes, onNoteCreated, workspaceRootNoteId])
+  }, [clearWarningPrompt, commitTransaction, reportDependencyViolations])
 
   const updatePreviewArrow = useCallback((sourceId, clientX, clientY) => {
     const rect = gridBodyRef.current?.getBoundingClientRect()
@@ -5699,8 +5565,9 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       return x >= (sourceVisual.startCol + sourceVisual.duration / 2) * sp.colW ? 'right' : 'left'
     }
 
-    drawingRef.current = { fromId: sourceId }
-    setDrawingState({ fromId: sourceId })
+    const sourceSideAtStart = getSide(e.clientX)
+    drawingRef.current = { fromId: sourceId, sourceSide: sourceSideAtStart }
+    setDrawingState({ fromId: sourceId, sourceSide: sourceSideAtStart })
     updatePreviewArrow(sourceId, e.clientX, e.clientY)
 
     const onMove = moveEvent => {
@@ -5714,7 +5581,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       setDrawingState(null)
       if (previewArrowRef.current) previewArrowRef.current.style.display = 'none'
 
-      const sourceSide = getSide(upEvent.clientX)
+      const sourceSide = sourceSideAtStart
       const hit = document.elementFromPoint(upEvent.clientX, upEvent.clientY)
       const portEl = hit?.closest('[data-dep-port="true"]')
       let targetId, targetSide
@@ -7543,30 +7410,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                 await action?.()
               }}>
                 Apply resize anyway
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {metricResizeDraft && createPortal(
-        <div className={styles.deleteModalBackdrop} onMouseDown={() => setMetricResizeDraft(null)}>
-          <div className={styles.deleteModal} role="dialog" aria-modal="true" onMouseDown={e => e.stopPropagation()}>
-            <div className={styles.deleteModalTitle}>Time scale change</div>
-            <div className={styles.deleteModalText}>
-              This resize moves the time slot from <strong>{metricResizeDraft.origBucket}</strong>-level to <strong>{metricResizeDraft.newBucket}</strong>-level.{' '}
-              {metricResizeDraft.crossMetricDeps.length} existing dependenc{metricResizeDraft.crossMetricDeps.length === 1 ? 'y' : 'ies'} would become incompatible across time scales.
-            </div>
-            <div className={styles.deleteModalActions}>
-              <button className={styles.modalSafePrimaryBtn} autoFocus onClick={() => setMetricResizeDraft(null)}>
-                Cancel
-              </button>
-              <button className={styles.modalDangerMutedBtn} onClick={handleMetricResizeAccept}>
-                Resize & remove {metricResizeDraft.crossMetricDeps.length === 1 ? 'dep' : `${metricResizeDraft.crossMetricDeps.length} deps`}
-              </button>
-              <button className={styles.modalDangerMutedBtn} onClick={handleMetricResizeClone}>
-                Clone note (Resized {metricResizeDraft.direction})
               </button>
             </div>
           </div>

@@ -1475,66 +1475,13 @@ def _schedule_fields_changed(before: dict, after: dict) -> bool:
     )
 
 def _assert_time_slot_scale_edit_allowed(before: dict | None, after: dict):
-    after_scale = _planning_scale_for_time_slot(after)
-    if before is not None:
-        before_scale = _planning_scale_for_time_slot(before)
-        if before_scale != after_scale:
-            raise HTTPException(422, {
-                "message": "Time slot planning scale cannot be changed by moving or resizing",
-                "type": "time_slot_scale_mismatch",
-                "timeSlotIds": [after["id"]],
-                "fromScale": before_scale,
-                "toScale": after_scale,
-            })
-
-    if after_scale == "month":
-        return
-
-    unit = _planning_scale_unit_minutes(after_scale)
-    if int(after["startCol"]) % unit != 0 or int(after["duration"]) % unit != 0:
-        raise HTTPException(422, {
-            "message": "Time slot can only be moved or resized on its own planning scale",
-            "type": "time_slot_scale_alignment",
-            "timeSlotIds": [after["id"]],
-            "scale": after_scale,
-            "unitMinutes": unit,
-        })
+    return
 
 def _assert_note_time_slot_scales_match(time_slots: list[dict], note_ids: set[str] | None = None):
-    scales_by_note: dict[str, dict[str, str]] = {}
-    for time_slot in time_slots:
-        note_id = time_slot["noteId"]
-        if note_ids is not None and note_id not in note_ids:
-            continue
-        scale = _planning_scale_for_time_slot(time_slot)
-        scales_by_note.setdefault(note_id, {})[scale] = time_slot["id"]
-    for note_id, scale_ids in scales_by_note.items():
-        if len(scale_ids) > 1:
-            raise HTTPException(422, {
-                "message": "A note row can only contain time slots on one planning scale",
-                "type": "note_scale_mismatch",
-                "noteId": note_id,
-                "scales": sorted(scale_ids.keys()),
-                "timeSlotIds": list(scale_ids.values()),
-            })
+    return
 
 def _dependency_scale_mismatch(dep: dict, time_slots: dict[str, dict]) -> dict | None:
-    from_ms = time_slots.get(dep["fromId"])
-    to_ms = time_slots.get(dep["toId"])
-    if not from_ms or not to_ms:
-        return None
-    from_scale = _planning_scale_for_time_slot(from_ms)
-    to_scale = _planning_scale_for_time_slot(to_ms)
-    if from_scale == to_scale:
-        return None
-    return {
-        "message": "Dependency scale mismatch",
-        "type": "scale_mismatch",
-        "dependencyIds": [dep["id"]],
-        "timeSlotIds": [dep["fromId"], dep["toId"]],
-        "fromScale": from_scale,
-        "toScale": to_scale,
-    }
+    return None
 
 def _time_slot_from_api(data: dict) -> dict:
     return {
@@ -2072,14 +2019,6 @@ def _dependency_violations_for_project(con, project_id: str) -> list[dict]:
                 "scale": to_scale,
             },
         }
-        if from_scale != to_scale:
-            violations.append({
-                **base,
-                "type": "scale_mismatch",
-                "message": "Dependency scale mismatch",
-                "fromScale": from_scale,
-                "toScale": to_scale,
-            })
         if from_end > to_start:
             violations.append({
                 **base,
