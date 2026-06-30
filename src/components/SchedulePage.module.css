@@ -2337,6 +2337,35 @@
   z-index: 2;
 }
 
+.nowLine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  pointer-events: none;
+  border-left: 3px solid #dc2626;
+  z-index: 5;
+  filter: drop-shadow(0 0 3px rgba(220, 38, 38, 0.32));
+}
+
+.nowLine span {
+  position: sticky;
+  top: 42px;
+  left: 6px;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  margin-left: 5px;
+  padding: 0 6px;
+  color: #7f1d1d;
+  background: #fee2e2;
+  border: 1px solid rgba(220, 38, 38, 0.45);
+  border-radius: 999px;
+  box-shadow: 0 2px 7px rgba(127, 29, 29, 0.14);
+  font: 800 10px Arial, sans-serif;
+  white-space: nowrap;
+}
+
 .weekendCol {
   position: absolute;
   top: 0; bottom: 0;

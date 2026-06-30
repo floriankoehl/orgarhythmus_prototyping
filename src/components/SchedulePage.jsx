@@ -159,6 +159,7 @@ function normalizeSchedulePerspectiveState(rawState = {}) {
     colorDependencyDirection: typeof state.colorDependencyDirection === 'boolean' ? state.colorDependencyDirection : false,
     showRowScheduleMarker: typeof state.showRowScheduleMarker === 'boolean' ? state.showRowScheduleMarker : true,
     showRowTimeSlotMeta: typeof state.showRowTimeSlotMeta === 'boolean' ? state.showRowTimeSlotMeta : true,
+    showHierarchyGuides: typeof state.showHierarchyGuides === 'boolean' ? state.showHierarchyGuides : true,
     timeSlotLabelMode: normalizeTimeSlotLabelMode(state.timeSlotLabelMode),
     timeSlotScaleFilter: visibilityMode,
     scaleVisibilityMode: visibilityMode,
@@ -290,28 +291,36 @@ function earliestStartAppliesToTimeSlot(es, timeSlot) {
 
 function findApplicableDeadline(deadlines, timeSlot) {
   if (!timeSlot) return null
-  return deadlines.find(d => d.noteId === timeSlot.noteId && deadlineAppliesToTimeSlot(d, timeSlot)) ?? null
+  return deadlines
+    .filter(d => d.noteId === timeSlot.noteId && deadlineAppliesToTimeSlot(d, timeSlot))
+    .sort((left, right) => left.col - right.col)[0] ?? null
 }
 
 function findApplicableDeadlineForPlacement(deadlines, timeSlot) {
   if (!timeSlot) return null
-  return deadlines.find(d => (
-    d.noteId === timeSlot.noteId
-    && (deadlineAppliesToTimeSlot(d, timeSlot) || d.inherited)
-  )) ?? null
+  return deadlines
+    .filter(d => (
+      d.noteId === timeSlot.noteId
+      && (deadlineAppliesToTimeSlot(d, timeSlot) || d.inherited)
+    ))
+    .sort((left, right) => left.col - right.col)[0] ?? null
 }
 
 function findApplicableEarliestStart(earliestStarts, timeSlot) {
   if (!timeSlot) return null
-  return earliestStarts.find(es => es.noteId === timeSlot.noteId && earliestStartAppliesToTimeSlot(es, timeSlot)) ?? null
+  return earliestStarts
+    .filter(es => es.noteId === timeSlot.noteId && earliestStartAppliesToTimeSlot(es, timeSlot))
+    .sort((left, right) => right.col - left.col)[0] ?? null
 }
 
 function findApplicableEarliestStartForPlacement(earliestStarts, timeSlot) {
   if (!timeSlot) return null
-  return earliestStarts.find(es => (
-    es.noteId === timeSlot.noteId
-    && (earliestStartAppliesToTimeSlot(es, timeSlot) || es.inherited)
-  )) ?? null
+  return earliestStarts
+    .filter(es => (
+      es.noteId === timeSlot.noteId
+      && (earliestStartAppliesToTimeSlot(es, timeSlot) || es.inherited)
+    ))
+    .sort((left, right) => right.col - left.col)[0] ?? null
 }
 
 const MIN_TIME_SLOT_DURATION = 10
@@ -1017,6 +1026,7 @@ function SpacingPanel({
   colorDependencyDirection, onColorDependencyDirectionChange,
   showRowScheduleMarker, onShowRowScheduleMarkerChange,
   showRowTimeSlotMeta, onShowRowTimeSlotMetaChange,
+  showHierarchyGuides, onShowHierarchyGuidesChange,
   timeSlotLabelMode, onTimeSlotLabelModeChange,
   timeSlotScaleFilter, onTimeSlotScaleFilterChange,
   canFilterToSelection, onFilterToSelectedNotes, onExpandEverything,
@@ -1126,6 +1136,10 @@ function SpacingPanel({
           <label className={styles.depToggle} title="Show each note row's time slot duration and planning scale">
             <input type="checkbox" checked={showRowTimeSlotMeta} onChange={e => onShowRowTimeSlotMetaChange(e.target.checked)} />
             <span>Duration scale</span>
+          </label>
+          <label className={styles.depToggle} title="Show hierarchy guide lines across the Gantt grid">
+            <input type="checkbox" checked={showHierarchyGuides} onChange={e => onShowHierarchyGuidesChange(e.target.checked)} />
+            <span>Hierarchy guides</span>
           </label>
         </div>
       </div>
@@ -1912,6 +1926,7 @@ function GanttToolbar({
   colorDependencyDirection, onColorDependencyDirectionChange,
   showRowScheduleMarker, onShowRowScheduleMarkerChange,
   showRowTimeSlotMeta, onShowRowTimeSlotMetaChange,
+  showHierarchyGuides, onShowHierarchyGuidesChange,
   timeSlotLabelMode, onTimeSlotLabelModeChange,
 	  timeSlotScaleFilter, onTimeSlotScaleFilterChange,
 	  nostalgiaMode, onToggleNostalgia,
@@ -2024,6 +2039,7 @@ function GanttToolbar({
             colorDependencyDirection={colorDependencyDirection} onColorDependencyDirectionChange={onColorDependencyDirectionChange}
             showRowScheduleMarker={showRowScheduleMarker} onShowRowScheduleMarkerChange={onShowRowScheduleMarkerChange}
             showRowTimeSlotMeta={showRowTimeSlotMeta} onShowRowTimeSlotMetaChange={onShowRowTimeSlotMetaChange}
+            showHierarchyGuides={showHierarchyGuides} onShowHierarchyGuidesChange={onShowHierarchyGuidesChange}
             timeSlotLabelMode={timeSlotLabelMode} onTimeSlotLabelModeChange={onTimeSlotLabelModeChange}
             timeSlotScaleFilter={timeSlotScaleFilter} onTimeSlotScaleFilterChange={onTimeSlotScaleFilterChange}
             canFilterToSelection={canFilterToSelection}
@@ -2468,13 +2484,18 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   }, [project?.createdAt])
   _timelineAnchor = _anchor
 
-  // Compute today's position in minutes relative to the project creation date.
-  // Result is 0 when there's no anchor (today IS col 0, legacy behaviour).
+  const [nowTick, setNowTick] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowTick(Date.now()), 30000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  // Compute the current clock time in minutes relative to the project creation date.
+  // Without an anchor, col 0 is today at midnight, so this becomes "minutes since midnight".
   const todayMinute = useMemo(() => {
-    if (!_anchor) return 0
-    const realToday = new Date(); realToday.setHours(0, 0, 0, 0)
-    return Math.round((realToday.getTime() - _anchor.getTime()) / 60000)
-  }, [_anchor])
+    const anchor = _anchor || (() => { const d = new Date(nowTick); d.setHours(0, 0, 0, 0); return d })()
+    return Math.round((nowTick - anchor.getTime()) / 60000)
+  }, [_anchor, nowTick])
   const todayMinuteRef = useRef(todayMinute)
   todayMinuteRef.current = todayMinute
 
@@ -2606,7 +2627,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const effectiveNoteInheritance = useMemo(() => {
     const links = []
     const seen = new Set()
-    notes.forEach(note => {
+    allNotes.forEach(note => {
       if (!note.parentNoteId) return
       const key = `${note.id}:${note.parentNoteId}`
       seen.add(key)
@@ -2623,36 +2644,64 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       links.push(link)
     })
     return links
-  }, [notes, noteInheritance])
+  }, [allNotes, noteInheritance])
 
   const inheritedWindows = useMemo(() => {
     const timeSlotByNote = new Map(timeSlots.map(ms => [ms.noteId, ms]))
+    const noteIds = new Set([
+      ...allNotes.map(note => note.id),
+      ...timeSlots.map(timeSlot => timeSlot.noteId),
+      ...effectiveNoteInheritance.flatMap(link => [link.childNoteId, link.parentNoteId]),
+    ].filter(Boolean))
+    const parentIdsByChild = new Map()
+    effectiveNoteInheritance.forEach(link => {
+      if (!link.childNoteId || !link.parentNoteId || link.childNoteId === link.parentNoteId) return
+      if (!parentIdsByChild.has(link.childNoteId)) parentIdsByChild.set(link.childNoteId, [])
+      parentIdsByChild.get(link.childNoteId).push(link.parentNoteId)
+    })
+    const ancestorIdsForNote = noteId => {
+      const ancestors = []
+      const pending = [...(parentIdsByChild.get(noteId) || [])]
+      const seen = new Set()
+      while (pending.length) {
+        const parentNoteId = pending.pop()
+        if (!parentNoteId || seen.has(parentNoteId)) continue
+        seen.add(parentNoteId)
+        ancestors.push(parentNoteId)
+        ;(parentIdsByChild.get(parentNoteId) || []).forEach(grandParentNoteId => {
+          if (!seen.has(grandParentNoteId)) pending.push(grandParentNoteId)
+        })
+      }
+      return ancestors
+    }
     const starts = []
     const ends = []
-    effectiveNoteInheritance.forEach(link => {
-      const child = timeSlotByNote.get(link.childNoteId)
-      const parent = timeSlotByNote.get(link.parentNoteId)
-      if (!parent) return
-      const inheritedScale = child ? timeSlotScaleBucket(child) : timeSlotScaleBucket(parent)
-      starts.push({
-        id: `inh-start:${link.childNoteId}:${link.parentNoteId}`,
-        noteId: link.childNoteId,
-        col: parent.startCol,
-        scale: inheritedScale,
-        inherited: true,
-        parentNoteId: link.parentNoteId,
-      })
-      ends.push({
-        id: `inh-deadline:${link.childNoteId}:${link.parentNoteId}`,
-        noteId: link.childNoteId,
-        col: parent.startCol + parent.duration,
-        scale: inheritedScale,
-        inherited: true,
-        parentNoteId: link.parentNoteId,
+    noteIds.forEach(noteId => {
+      ancestorIdsForNote(noteId).forEach(parentNoteId => {
+        const child = timeSlotByNote.get(noteId)
+        const parent = timeSlotByNote.get(parentNoteId)
+        if (!parent) return
+        const inheritedScale = child ? timeSlotScaleBucket(child) : timeSlotScaleBucket(parent)
+        starts.push({
+          id: `inh-start:${noteId}:${parentNoteId}`,
+          noteId,
+          col: parent.startCol,
+          scale: inheritedScale,
+          inherited: true,
+          parentNoteId,
+        })
+        ends.push({
+          id: `inh-deadline:${noteId}:${parentNoteId}`,
+          noteId,
+          col: parent.startCol + parent.duration,
+          scale: inheritedScale,
+          inherited: true,
+          parentNoteId,
+        })
       })
     })
     return { starts, deadlines: ends }
-  }, [timeSlots, effectiveNoteInheritance])
+  }, [allNotes, timeSlots, effectiveNoteInheritance])
 
   const effectiveDeadlines = useMemo(() => {
     const byKey = new Map()
@@ -2731,6 +2780,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const [timeSlotLabelMode, setTimeSlotLabelMode] = useState('date')
   const [collapsedTreeNoteIds, setCollapsedTreeNoteIds] = useState(() => new Set())
   const [treeDepthPreset, setTreeDepthPreset] = useState(1)
+  const [showHierarchyGuides, setShowHierarchyGuides] = useState(true)
   const initializedTreeRootRef = useRef(null)
   const timeSlotLabelWheelAtRef = useRef(0)
   const [reasonModal, setReasonModal] = useState(null)   // null | { depId }
@@ -2914,6 +2964,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         scaleVisibilityMode: SCALE_VISIBILITY_MODES.ALL,
         showRowScheduleMarker: true,
         showRowTimeSlotMeta: true,
+        showHierarchyGuides: true,
         timeSlotLabelMode: 'date',
         leftPanelWidth: 220,
         group: { activeDimId: '', activeLaneFilterId: '' },
@@ -3287,8 +3338,11 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 
   // Derived today/end-date columns at the current zoom level (re-evaluated every render)
   const todayZoomCol        = minuteToZoomCol(todayMinute, timeZoom)
+  const nowZoomColExact     = minuteToZoomColExact(todayMinute, timeZoom)
   const endDateZoomCol      = endDateMinute != null ? minuteToZoomCol(endDateMinute, timeZoom) : null
   const effectiveTodayZoomCol = Math.max(0, todayZoomCol)
+  const effectiveNowZoomCol = Math.max(0, nowZoomColExact)
+  const nowLabel = minuteToDate(todayMinute).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 
 	  const visualRangeFor = useCallback(item => getRenderedVisualRange(item, timeZoomRef.current, timeSlotScaleFilterRef.current), [])
 	  const visualColToMinute = useCallback(col => zoomColToMinute(col, timeZoomRef.current), [])
@@ -6170,6 +6224,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     scaleVisibilityMode: normalizeScaleVisibilityMode(timeSlotScaleFilter),
     showRowScheduleMarker,
     showRowTimeSlotMeta,
+    showHierarchyGuides,
     timeSlotLabelMode,
     leftPanelWidth: leftPanelWidthRef.current,
     group: {
@@ -6197,7 +6252,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     activeDimId, activeFilterIds, activeLaneFilterId, activePerspectiveId, axisMode, colorDimId,
     colorDependencyDirection, hiddenCatIds, hiddenNotesByLane, hideCrossCatDeps,
     mode, timeSlotScaleFilter, quickFilters, showCrucialDepsOnly, showDepLabels, showDeps,
-	    project?.createdAt, showRowScheduleMarker, showRowTimeSlotMeta, spacing, timeSlotLabelMode, timeZoom, visibleNoteFilterIds,
+	    project?.createdAt, showHierarchyGuides, showRowScheduleMarker, showRowTimeSlotMeta, spacing, timeSlotLabelMode, timeZoom, visibleNoteFilterIds,
 	  ])
 	  capturePerspectiveStateRef.current = capturePerspectiveState
 	
@@ -6228,6 +6283,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     setColorDependencyDirection(state.colorDependencyDirection)
     setShowRowScheduleMarker(state.showRowScheduleMarker)
     setShowRowTimeSlotMeta(state.showRowTimeSlotMeta)
+    setShowHierarchyGuides(state.showHierarchyGuides)
     setTimeSlotLabelMode(state.timeSlotLabelMode)
     leftPanelWidthRef.current = state.leftPanelWidth
     setLeftPanelWidth(state.leftPanelWidth)
@@ -6289,6 +6345,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     setColorDependencyDirection(state.colorDependencyDirection)
     setShowRowScheduleMarker(state.showRowScheduleMarker)
     setShowRowTimeSlotMeta(state.showRowTimeSlotMeta)
+    setShowHierarchyGuides(state.showHierarchyGuides)
     setTimeSlotLabelMode(state.timeSlotLabelMode)
     leftPanelWidthRef.current = state.leftPanelWidth
     setLeftPanelWidth(state.leftPanelWidth)
@@ -6668,6 +6725,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         timeSlotScaleFilter={timeSlotScaleFilter} onTimeSlotScaleFilterChange={setTimeSlotScaleFilter}
         showRowScheduleMarker={showRowScheduleMarker} onShowRowScheduleMarkerChange={setShowRowScheduleMarker}
         showRowTimeSlotMeta={showRowTimeSlotMeta} onShowRowTimeSlotMetaChange={setShowRowTimeSlotMeta}
+        showHierarchyGuides={showHierarchyGuides} onShowHierarchyGuidesChange={setShowHierarchyGuides}
         timeSlotLabelMode={timeSlotLabelMode} onTimeSlotLabelModeChange={setTimeSlotLabelMode}
 	        nostalgiaMode={nostalgiaMode}
 	        onToggleNostalgia={toggleNostalgiaMode}
@@ -7068,11 +7126,14 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
               )}
             </div>
 
-            {/* Today + past region + weekend column tints */}
-            {todayZoomCol > 0 && (
-              <div className={styles.pastOverlay} style={{ left: 0, width: todayZoomCol * colW }} />
+            {/* Now + past region + weekend column tints */}
+            {effectiveNowZoomCol > 0 && (
+              <div className={styles.pastOverlay} style={{ left: 0, width: effectiveNowZoomCol * colW }} />
             )}
             <div className={styles.todayCol} style={{ left: effectiveTodayZoomCol * colW, width: colW }} />
+            <div className={styles.nowLine} style={{ left: effectiveNowZoomCol * colW }}>
+              <span>{nowLabel}</span>
+            </div>
             {visibleDayCuts.map(ci => (
               <div key={`day-cut-${ci}`} className={`${styles.scaleCut} ${styles.dayCut}`} style={{ left: ci * colW }} />
             ))}
@@ -7128,7 +7189,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                     background: item.cat ? `${item.cat.color}24` : 'rgba(0,0,0,0.05)',
                   }} />
               if (item.type === 'note') {
-                const hierarchyLineLevel = gridHierarchyLineLevel(item)
+                const hierarchyLineLevel = showHierarchyGuides ? gridHierarchyLineLevel(item) : null
                 return <div key={`gr-${item.note.id}`}
                   className={[
                     styles.gridNoteRow,

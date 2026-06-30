@@ -1707,25 +1707,38 @@ def _assert_final_state_valid(con, project_id: str, before: dict, after: dict):
     for time_slot in final_ms.values():
         time_slot_by_note[time_slot["noteId"]] = time_slot
 
+    parent_ids_by_child = {}
+    for item in inheritance_rows:
+        child_note_id = item["childNoteId"]
+        parent_note_id = item["parentNoteId"]
+        if not child_note_id or not parent_note_id or child_note_id == parent_note_id:
+            continue
+        parent_ids_by_child.setdefault(child_note_id, []).append(parent_note_id)
+
+    def ancestor_note_ids(note_id: str) -> list[str]:
+        ancestors = []
+        stack = list(parent_ids_by_child.get(note_id, []))
+        seen = set()
+        while stack:
+            parent_note_id = stack.pop()
+            if not parent_note_id or parent_note_id in seen:
+                continue
+            seen.add(parent_note_id)
+            ancestors.append(parent_note_id)
+            stack.extend(parent_ids_by_child.get(parent_note_id, []))
+        return ancestors
+
     inherited_starts = {}
     inherited_deadlines = {}
-    for item in inheritance_rows:
-        child_ms = time_slot_by_note.get(item["childNoteId"])
-        parent_ms = time_slot_by_note.get(item["parentNoteId"])
-        if not child_ms or not parent_ms:
-            continue
-        child_scale = _planning_scale_for_time_slot(child_ms)
-        parent_scale = _planning_scale_for_time_slot(parent_ms)
-        if not _is_parent_scale_for_child(parent_scale, child_scale):
-            raise HTTPException(422, {
-                "message": "Inherited parent note must be on the same planning scale or exactly one planning scale broader than the child note",
-                "type": "inheritance_scale_mismatch",
-                "noteId": item["childNoteId"],
-                "parentNoteId": item["parentNoteId"],
-            })
-        inherited_starts[item["childNoteId"]] = max(inherited_starts.get(item["childNoteId"], 0), parent_ms["startCol"])
-        inherited_deadline = parent_ms["startCol"] + parent_ms["duration"]
-        inherited_deadlines[item["childNoteId"]] = min(inherited_deadlines.get(item["childNoteId"], inherited_deadline), inherited_deadline)
+    for time_slot in final_ms.values():
+        child_note_id = time_slot["noteId"]
+        for parent_note_id in ancestor_note_ids(child_note_id):
+            parent_ms = time_slot_by_note.get(parent_note_id)
+            if not parent_ms:
+                continue
+            inherited_starts[child_note_id] = max(inherited_starts.get(child_note_id, 0), parent_ms["startCol"])
+            inherited_deadline = parent_ms["startCol"] + parent_ms["duration"]
+            inherited_deadlines[child_note_id] = min(inherited_deadlines.get(child_note_id, inherited_deadline), inherited_deadline)
 
     for time_slot in final_ms.values():
         inherited_deadline = inherited_deadlines.get(time_slot["noteId"])
