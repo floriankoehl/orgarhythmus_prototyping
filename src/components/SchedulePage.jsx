@@ -827,11 +827,13 @@ function compareNoteOrder(a, b) {
   return String(a.title || '').localeCompare(String(b.title || ''))
 }
 
-function buildNoteTreeMeta(notes) {
+function buildNoteTreeMeta(notes, rootNoteId = null) {
   const noteById = new Map(notes.map(note => [note.id, note]))
   const childrenByParent = new Map()
   notes.forEach(note => {
-    const parentId = noteById.has(note.parentNoteId) ? note.parentNoteId : ''
+    const parentId = note.id === rootNoteId
+      ? ''
+      : noteById.has(note.parentNoteId) ? note.parentNoteId : ''
     if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, [])
     childrenByParent.get(parentId).push(note)
   })
@@ -862,7 +864,9 @@ function buildNoteTreeMeta(notes) {
     ))
   }
 
-  const roots = childrenByParent.get('') || []
+  const roots = rootNoteId && noteById.has(rootNoteId)
+    ? [noteById.get(rootNoteId)]
+    : childrenByParent.get('') || []
   roots.forEach((note, index) => visit(note, 0, [], [], index === roots.length - 1))
   notes.forEach(note => {
     if (!meta.has(note.id)) visit(note, 0, [], [], true)
@@ -910,11 +914,33 @@ function withTreeMeta(note, treeMeta) {
 
 function TreeGutter({ tree, collapsed, onToggle }) {
   const depth = Math.max(0, tree?.depth ?? 0)
+  const ancestorFlags = Array.isArray(tree?.ancestorLastFlags) ? tree.ancestorLastFlags : []
   return (
     <span
       className={styles.noteTreeGutter}
       style={{ width: 22 + depth * 18 }}
       title={`Level ${depth}${tree?.hasChildren ? ' · has subnotes' : ''}`}>
+      <span className={styles.noteTreeLines} aria-hidden="true">
+        {ancestorFlags.map((ancestorIsLast, index) => (
+          <span
+            key={`rail-${index}`}
+            className={[
+              styles.noteTreeRail,
+              ancestorIsLast && styles.noteTreeRailEnded,
+            ].filter(Boolean).join(' ')}
+            style={{ left: 8 + index * 18 }}
+          />
+        ))}
+        {depth > 0 && (
+          <span
+            className={[
+              styles.noteTreeElbow,
+              tree?.isLast && styles.noteTreeElbowLast,
+            ].filter(Boolean).join(' ')}
+            style={{ left: 8 + (depth - 1) * 18 }}
+          />
+        )}
+      </span>
       {tree?.hasChildren ? (
         <button
           type="button"
@@ -935,10 +961,10 @@ function TreeGutter({ tree, collapsed, onToggle }) {
   )
 }
 
-function buildRowItems(notes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds = new Set(), hiddenNotesByLane = {}, filterAsLane = null, collapsedTreeNoteIds = new Set(), treeContextNotes = notes) {
+function buildRowItems(notes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds = new Set(), hiddenNotesByLane = {}, filterAsLane = null, collapsedTreeNoteIds = new Set(), treeContextNotes = notes, treeRootNoteId = null) {
   const { rowH, rowGap, laneGap } = spacing
   const slotH = rowH + rowGap
-  const tree = buildNoteTreeMeta(treeContextNotes)
+  const tree = buildNoteTreeMeta(treeContextNotes, treeRootNoteId)
   const treeMeta = tree.meta
   const displayedNoteIds = new Set(notes.map(note => note.id))
   const hiddenByCollapsedAncestor = note => {
@@ -2830,6 +2856,8 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const externalResolveHandledRef = useRef(null)
   const reportDependencyViolationsRef = useRef(null)
   const [dragOverNoteId, setDragOverNoteId] = useState(null)
+  const [dragOverNoteReorder, setDragOverNoteReorder] = useState(null)
+  const [draggingNoteReorderId, setDraggingNoteReorderId] = useState(null)
   const [dragOverLaneCatId, setDragOverLaneCatId] = useState(null)
   const [draggingCatId, setDraggingCatId] = useState(null)
   const [dragOverCatReorderId, setDragOverCatReorderId] = useState(null)
@@ -3669,9 +3697,9 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       const renderedNotes = workspaceRootNote
         ? [workspaceRootNote, ...visibleNotes.filter(note => note.id !== workspaceRootNote.id)]
         : visibleNotes
-      return buildRowItems(renderedNotes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenNotesByLane, activeLaneFilter, collapsedTreeNoteIds, treeContextNotes)
+      return buildRowItems(renderedNotes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenNotesByLane, activeLaneFilter, collapsedTreeNoteIds, treeContextNotes, workspaceRootNoteId)
     },
-    [visibleNotes, allNotes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenNotesByLane, activeLaneFilter, collapsedTreeNoteIds, workspaceRootNote]
+    [visibleNotes, allNotes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenNotesByLane, activeLaneFilter, collapsedTreeNoteIds, workspaceRootNote, workspaceRootNoteId]
   )
   const rowItemsRef = useRef([])
   rowItemsRef.current = rowItems
@@ -4334,6 +4362,60 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       api.getNoteInheritance().then(setNoteInheritance),
     ]).catch(err => console.error('Note moved, but hierarchy refresh failed', err))
   }, [allNotes, onNotesChanged, showWarningPrompt])
+
+  const reorderNoteWithinProjectScope = useCallback(async (noteId, targetNoteId, position = 'before') => {
+    if (!noteId || !targetNoteId || noteId === targetNoteId) return
+    if (activeDimId || activeLaneFilter) {
+      showWarningPrompt({
+        title: 'Project order unavailable',
+        message: 'Switch back to the plain project hierarchy to reorder notes. Category and filter lanes keep their own row grouping.',
+        actions: 'close',
+      })
+      return
+    }
+
+    const note = allNotes.find(item => item.id === noteId)
+    const target = allNotes.find(item => item.id === targetNoteId)
+    if (!note || !target) return
+    if (note.id === project?.rootNoteId || note.id === workspaceRootNoteId) return
+    if (target.id === project?.rootNoteId || target.id === workspaceRootNoteId) return
+    if ((note.parentNoteId || '') !== (target.parentNoteId || '')) {
+      showWarningPrompt({
+        title: 'Reorder blocked',
+        message: 'This handle only changes the order inside the current parent project. Drag the row itself if you want to move it into another note.',
+        actions: 'close',
+      })
+      return
+    }
+
+    const siblings = allNotes
+      .filter(item => (item.parentNoteId || '') === (note.parentNoteId || ''))
+      .sort(compareNoteOrder)
+    const fromIdx = siblings.findIndex(item => item.id === noteId)
+    const targetIdx = siblings.findIndex(item => item.id === targetNoteId)
+    if (fromIdx === -1 || targetIdx === -1) return
+
+    const reordered = [...siblings]
+    const [moved] = reordered.splice(fromIdx, 1)
+    const targetAfterRemovalIdx = reordered.findIndex(item => item.id === targetNoteId)
+    if (targetAfterRemovalIdx === -1) return
+    const insertIdx = position === 'after' ? targetAfterRemovalIdx + 1 : targetAfterRemovalIdx
+    reordered.splice(insertIdx, 0, moved)
+    if (reordered.every((item, index) => item.id === siblings[index]?.id)) return
+
+    try {
+      await api.reorderNotes(reordered.map(item => item.id))
+      playSound('noteMove')
+      await onNotesChanged?.()
+    } catch (err) {
+      console.error(err)
+      showWarningPrompt({
+        title: 'Reorder failed',
+        message: err?.message || 'The note order could not be saved.',
+        actions: 'close',
+      })
+    }
+  }, [activeDimId, activeLaneFilter, allNotes, onNotesChanged, project?.rootNoteId, showWarningPrompt, workspaceRootNoteId])
 
   const reorderCategoryInGantt = useCallback(async (draggedCatId, targetCatId) => {
     if (!activeDimId || draggedCatId === targetCatId) return
@@ -6867,11 +6949,16 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                 }
                 if (item.type === 'note') {
                   const noteTimeSlot = timeSlotByNote.get(item.note.id)
+                  const rowOrderEnabled = !paintCat && !paintPersonaId && !activeDimId && !activeLaneFilter
+                  const rowOrderHandleEnabled = rowOrderEnabled && item.note.id !== project?.rootNoteId && item.note.id !== workspaceRootNoteId
+                  const reorderPosition = dragOverNoteReorder?.noteId === item.note.id ? dragOverNoteReorder.position : null
                   return (
                     <div key={item.note.id}
                       className={[
                         inLaneMode ? styles.noteRowLane : styles.noteRow,
                         dragOverNoteId === item.note.id && styles.noteRowDropTarget,
+                        reorderPosition === 'before' && styles.noteRowReorderBefore,
+                        reorderPosition === 'after' && styles.noteRowReorderAfter,
                         isNoteHighlighted(item.note.id) && styles.noteRowHighlight,
                       ].filter(Boolean).join(' ')}
                       draggable={!paintCat && !paintPersonaId && item.note.id !== project?.rootNoteId}
@@ -6896,29 +6983,65 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                         if (e.dataTransfer.types.includes('persona-drag')) {
                           e.preventDefault()
                           setDragOverNoteId(item.note.id)
+                          setDragOverNoteReorder(null)
+                          setDragOverLaneCatId(null)
+                          return
+                        }
+                        if (e.dataTransfer.types.includes('schedule-note-reorder-id')) {
+                          if (!rowOrderEnabled) return
+                          const dragNoteId = draggingNoteReorderId || e.dataTransfer.getData('schedule-note-reorder-id')
+                          if (!dragNoteId || dragNoteId === item.note.id) return
+                          const dragNote = allNotes.find(note => note.id === dragNoteId)
+                          if (!dragNote || (dragNote.parentNoteId || '') !== (item.note.parentNoteId || '')) return
+                          e.preventDefault()
+                          const rect = e.currentTarget.getBoundingClientRect()
+                          const position = e.clientY > rect.top + rect.height / 2 ? 'after' : 'before'
+                          setDragOverNoteReorder({ noteId: item.note.id, position })
+                          setDragOverNoteId(null)
                           setDragOverLaneCatId(null)
                           return
                         }
                         if (!e.dataTransfer.types.includes('schedule-note-id')) return
                         e.preventDefault()
                         setDragOverNoteId(item.note.id)
+                        setDragOverNoteReorder(null)
                         setDragOverLaneCatId(null)
                       }}
-                      onDragLeave={() => setDragOverNoteId(prev => prev === item.note.id ? null : prev)}
+                      onDragLeave={() => {
+                        setDragOverNoteId(prev => prev === item.note.id ? null : prev)
+                        setDragOverNoteReorder(prev => prev?.noteId === item.note.id ? null : prev)
+                      }}
                       onDrop={e => {
                         e.preventDefault()
                         const personaId = e.dataTransfer.getData('persona-drag')
                         if (personaId) {
                           setDragOverNoteId(null)
+                          setDragOverNoteReorder(null)
+                          setDraggingNoteReorderId(null)
                           assignPersonaToNote(personaId, item.note.id)
+                          return
+                        }
+                        const reorderNoteId = e.dataTransfer.getData('schedule-note-reorder-id')
+                        if (reorderNoteId) {
+                          const position = dragOverNoteReorder?.noteId === item.note.id ? dragOverNoteReorder.position : 'before'
+                          setDragOverNoteId(null)
+                          setDragOverNoteReorder(null)
+                          setDraggingNoteReorderId(null)
+                          reorderNoteWithinProjectScope(reorderNoteId, item.note.id, position)
                           return
                         }
                         const dragNoteId = e.dataTransfer.getData('schedule-note-id')
                         setDragOverNoteId(null)
+                        setDragOverNoteReorder(null)
+                        setDraggingNoteReorderId(null)
                         if (!dragNoteId) return
                         moveNoteUnderNote(dragNoteId, item.note.id)
                       }}
-                      onDragEnd={() => setDragOverNoteId(null)}
+                      onDragEnd={() => {
+                        setDragOverNoteId(null)
+                        setDragOverNoteReorder(null)
+                        setDraggingNoteReorderId(null)
+                      }}
                       onClick={(paintCat || paintPersonaId) ? e => {
                     e.stopPropagation()
                     paintNote(item.note.id)
@@ -6948,6 +7071,39 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                         onNoteOpen?.(item.note.id)
                       }}
                       style={{ top: item.top, height: item.height, borderLeftColor: item.cat?.color ?? 'transparent' }}>
+                      <button
+                        type="button"
+                        className={[
+                          styles.noteOrderHandle,
+                          !rowOrderHandleEnabled && styles.noteOrderHandleDisabled,
+                        ].filter(Boolean).join(' ')}
+                        draggable={rowOrderHandleEnabled}
+                        title={rowOrderHandleEnabled
+                          ? 'Drag to reorder this note inside its current parent project'
+                          : 'Project-order dragging is available in the plain hierarchy view'}
+                        aria-label="Reorder note"
+                        onMouseDown={e => {
+                          e.stopPropagation()
+                          if (!rowOrderHandleEnabled) e.preventDefault()
+                        }}
+                        onClick={e => e.stopPropagation()}
+                        onDragStart={e => {
+                          if (!rowOrderHandleEnabled) {
+                            e.preventDefault()
+                            return
+                          }
+                          e.stopPropagation()
+                          e.dataTransfer.setData('schedule-note-reorder-id', item.note.id)
+                          e.dataTransfer.effectAllowed = 'move'
+                          setDraggingNoteReorderId(item.note.id)
+                        }}
+                        onDragEnd={e => {
+                          e.stopPropagation()
+                          setDraggingNoteReorderId(null)
+                          setDragOverNoteReorder(null)
+                        }}>
+                        <span aria-hidden="true">⋮⋮</span>
+                      </button>
                       <TreeGutter
                         tree={item.tree}
                         collapsed={collapsedTreeNoteIds.has(item.note.id)}
