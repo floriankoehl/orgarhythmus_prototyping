@@ -4881,6 +4881,9 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     // constrained subtree can still fit. A locked descendant therefore limits
     // how far an ancestor window may travel, but does not force the ancestor to
     // use the descendant's zero movement delta.
+    const ownBoundaryBoundsByTimeSlotId = new Map(
+      Object.keys(originals).map(id => [id, { min: -Infinity, max: Infinity }])
+    )
     const movementBoundsByTimeSlotId = new Map(
       Object.keys(originals).map(id => [id, { min: -Infinity, max: Infinity }])
     )
@@ -4890,6 +4893,12 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       const earliestStart = findExplicitEarliestStart(descendant)
       const deadline = findExplicitDeadline(descendant)
       if (!earliestStart && !deadline) return
+      const descendantOriginal = originals[descendant.id]
+      const ownBounds = ownBoundaryBoundsByTimeSlotId.get(descendant.id)
+      if (descendantOriginal && ownBounds) {
+        if (earliestStart) ownBounds.min = Math.max(ownBounds.min, earliestStart.col - descendantOriginal.startCol)
+        if (deadline) ownBounds.max = Math.min(ownBounds.max, deadline.col - descendantOriginal.duration - descendantOriginal.startCol)
+      }
       const pendingAncestorNoteIds = [descendant.noteId]
       const visited = new Set()
       while (pendingAncestorNoteIds.length) {
@@ -4900,10 +4909,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         if (ancestor && movingTimeSlotIds.has(ancestor.id)) {
           const ancestorOriginal = originals[ancestor.id]
           const bounds = movementBoundsByTimeSlotId.get(ancestor.id)
-          if (ancestor.id === descendant.id) {
-            if (earliestStart) bounds.min = Math.max(bounds.min, earliestStart.col - ancestorOriginal.startCol)
-            if (deadline) bounds.max = Math.min(bounds.max, deadline.col - ancestorOriginal.duration - ancestorOriginal.startCol)
-          } else {
+          if (ancestor.id !== descendant.id) {
             if (earliestStart) {
               bounds.min = Math.max(
                 bounds.min,
@@ -4967,6 +4973,11 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 	      Object.entries(originals).forEach(([id, orig]) => {
         if (!directlyMovedIdSet.has(id)) return
         const movementBounds = movementBoundsByTimeSlotId.get(id) || { min: -Infinity, max: Infinity }
+        const ownBoundaryBounds = ownBoundaryBoundsByTimeSlotId.get(id) || { min: -Infinity, max: Infinity }
+        const combinedBounds = {
+          min: Math.max(movementBounds.min, ownBoundaryBounds.min),
+          max: Math.min(movementBounds.max, ownBoundaryBounds.max),
+        }
         if (isMonthMove) {
           const startVisual = minuteToZoomCol(orig.startCol, 'months')
           minDelta = Math.max(minDelta, -startVisual)
@@ -4976,11 +4987,11 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 	            minDelta = Math.max(minDelta, todayD)
 	            minDeltaFromPast = Math.max(minDeltaFromPast, todayD)
 	          }
-          if (movementBounds.max < Infinity) {
-            maxDelta = Math.min(maxDelta, minuteToZoomCol(orig.startCol + movementBounds.max, 'months') - startVisual)
+          if (combinedBounds.max < Infinity) {
+            maxDelta = Math.min(maxDelta, minuteToZoomCol(orig.startCol + combinedBounds.max, 'months') - startVisual)
           }
-          if (movementBounds.min > -Infinity) {
-            const minD = minuteToZoomCol(Math.max(0, orig.startCol + movementBounds.min), 'months') - startVisual
+          if (combinedBounds.min > -Infinity) {
+            const minD = minuteToZoomCol(Math.max(0, orig.startCol + combinedBounds.min), 'months') - startVisual
             minDelta = Math.max(minDelta, minD)
             minDeltaFromEarliest = Math.max(minDeltaFromEarliest, minD)
           }
@@ -4992,10 +5003,10 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 	          minDelta = Math.max(minDelta, todayD)
 	          minDeltaFromPast = Math.max(minDeltaFromPast, todayD)
 	        }
-        if (movementBounds.max < Infinity) maxDelta = Math.min(maxDelta, movementBounds.max)
-        if (movementBounds.min > -Infinity) {
-          minDelta = Math.max(minDelta, movementBounds.min)
-          minDeltaFromEarliest = Math.max(minDeltaFromEarliest, movementBounds.min)
+        if (combinedBounds.max < Infinity) maxDelta = Math.min(maxDelta, combinedBounds.max)
+        if (combinedBounds.min > -Infinity) {
+          minDelta = Math.max(minDelta, combinedBounds.min)
+          minDeltaFromEarliest = Math.max(minDeltaFromEarliest, combinedBounds.min)
         }
       })
 	      return { minDelta, maxDelta, minDeltaFromEarliest, minDeltaFromPast }
@@ -5052,8 +5063,13 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         .sort((left, right) => structuralDepth(left.noteId) - structuralDepth(right.noteId))
       moving.forEach(timeSlot => {
         const original = originals[timeSlot.id]
-        const bounds = movementBoundsByTimeSlotId.get(timeSlot.id) || { min: -Infinity, max: Infinity }
-        const ownDelta = Math.max(bounds.min, Math.min(bounds.max, anchorMinuteDelta))
+        const ownBoundaryBounds = ownBoundaryBoundsByTimeSlotId.get(timeSlot.id) || { min: -Infinity, max: Infinity }
+        const subtreeMovementBounds = movementBoundsByTimeSlotId.get(timeSlot.id) || { min: -Infinity, max: Infinity }
+        const effectiveMoveBounds = {
+          min: Math.max(ownBoundaryBounds.min, subtreeMovementBounds.min),
+          max: Math.min(ownBoundaryBounds.max, subtreeMovementBounds.max),
+        }
+        const ownDelta = Math.max(effectiveMoveBounds.min, Math.min(effectiveMoveBounds.max, anchorMinuteDelta))
         let startCol = original.startCol + ownDelta
         let duration = original.duration
         if (isMonthMove && directlyMovedIdSet.has(timeSlot.id)) {
@@ -5066,11 +5082,12 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
           .filter(Boolean)
           .map(parentTimeSlot => movedById.get(parentTimeSlot.id))
           .filter(Boolean)
-        if (movedParents.length) {
+        const isClampedByBoundaryOrSubtree = ownDelta !== anchorMinuteDelta
+        if (movedParents.length && isClampedByBoundaryOrSubtree) {
           const parentLower = Math.max(...movedParents.map(parent => parent.startCol))
           const parentUpper = Math.min(...movedParents.map(parent => parent.startCol + parent.duration - duration))
-          const lower = Math.max(parentLower, original.startCol + bounds.min)
-          const upper = Math.min(parentUpper, original.startCol + bounds.max)
+          const lower = Math.max(parentLower, original.startCol + effectiveMoveBounds.min)
+          const upper = Math.min(parentUpper, original.startCol + effectiveMoveBounds.max)
           if (lower <= upper) startCol = Math.max(lower, Math.min(upper, startCol))
         }
         movedById.set(timeSlot.id, { ...timeSlot, startCol, duration })
