@@ -123,6 +123,9 @@ export const projectsApi = {
   deleteProject:    (id)        => baseReq('DELETE', `/projects/${id}`),
   getProjectStats:  (id)        => baseReq('GET',    `/projects/${id}/stats`),
   exportDatabase:   (id)        => baseReq('GET',    `/export/db?project_id=${encodeURIComponent(id)}`),
+  getArchive:                   () => baseReq('GET',  '/archive'),
+  restoreArchivedProject:      (id) => baseReq('POST', `/archive/projects/${id}/restore`),
+  restoreArchivedNoteTree:     (id) => baseReq('POST', `/archive/notes/${id}/restore`),
 }
 
 export const api = {

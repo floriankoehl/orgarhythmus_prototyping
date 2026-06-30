@@ -103,7 +103,7 @@ function ChildNotesPreview({ note, notes = [], isProjectRootNote = false, onNote
 }
 
 // ── Main popup ────────────────────────────────────────────────────────────────
-export default function NotePopup({ note, notes = [], isProjectRootNote = false, onClose, onNoteUpdated, onAssignmentsChanged, onPeopleChanged, onNoteDeleted, onNoteOpen, onOpenAsWorkspace }) {
+export default function NotePopup({ note, notes = [], isProjectRootNote = false, initiallyEditTitle = false, onClose, onNoteUpdated, onAssignmentsChanged, onPeopleChanged, onNoteDeleted, onNoteOpen, onOpenAsWorkspace }) {
   const [expanded, setExpanded]           = useState(false)
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false)
   const [headlineMode, setHeadlineMode]   = useState(false)
@@ -131,6 +131,10 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
   useEffect(() => {
     setCategoryPickerOpen(false)
   }, [note.id])
+
+  useEffect(() => {
+    setEditingTitle(Boolean(initiallyEditTitle))
+  }, [initiallyEditTitle, note.id])
 
   // Focus title input when editing starts
   useEffect(() => {

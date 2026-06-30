@@ -248,6 +248,8 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
   const [draftDesc,   setDraftDesc]   = useState(workspaceDesc)
   const [exporting,   setExporting]   = useState(false)
   const [descendantDepth, setDescendantDepth] = useState(1)
+  const [expandedHierarchyNoteIds, setExpandedHierarchyNoteIds] = useState(() => new Set())
+  const [collapsedHierarchyNoteIds, setCollapsedHierarchyNoteIds] = useState(() => new Set())
   const [draggedHierarchyNoteId, setDraggedHierarchyNoteId] = useState(null)
   const [hierarchyDropTargetId, setHierarchyDropTargetId] = useState(null)
   const [hierarchyWarning, setHierarchyWarning] = useState(null)
@@ -269,11 +271,30 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
   )
   const currentHierarchyDepth = hierarchyRows.find(row => row.relation === 'current')?.depth ?? 0
   const localHierarchyBaseDepth = Math.max(0, currentHierarchyDepth - 1)
+  const hierarchyDepthById = useMemo(
+    () => new Map(hierarchyRows.map(row => [row.note.id, row.depth])),
+    [hierarchyRows],
+  )
+  const notesById = useMemo(() => new Map(notes.map(note => [note.id, note])), [notes])
+  const isHierarchyNodeExpanded = useCallback(noteId => {
+    if (collapsedHierarchyNoteIds.has(noteId)) return false
+    if (expandedHierarchyNoteIds.has(noteId)) return true
+    const nodeDepth = hierarchyDepthById.get(noteId)
+    if (nodeDepth === undefined || nodeDepth < currentHierarchyDepth) return false
+    const hopsBelowCurrent = nodeDepth - currentHierarchyDepth
+    return descendantDepth === 'all' || hopsBelowCurrent < descendantDepth
+  }, [collapsedHierarchyNoteIds, currentHierarchyDepth, descendantDepth, expandedHierarchyNoteIds, hierarchyDepthById])
   const visibleHierarchyRows = hierarchyRows.filter(row => {
     if (row.relation === 'current') return true
     if (row.relation === 'ancestor') return row.depth === currentHierarchyDepth - 1
-    const hopsBelowCurrent = row.depth - currentHierarchyDepth
-    return hopsBelowCurrent > 0 && (descendantDepth === 'all' || hopsBelowCurrent <= descendantDepth)
+    const seen = new Set()
+    let parentId = row.note.parentNoteId
+    while (parentId && parentId !== workspaceRootNoteId && !seen.has(parentId)) {
+      seen.add(parentId)
+      if (!isHierarchyNodeExpanded(parentId)) return false
+      parentId = notesById.get(parentId)?.parentNoteId || null
+    }
+    return parentId === workspaceRootNoteId && isHierarchyNodeExpanded(workspaceRootNoteId)
   })
 
   useEffect(() => {
@@ -284,8 +305,32 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
 
   useEffect(() => {
     setDescendantDepth(1)
+    setExpandedHierarchyNoteIds(new Set())
+    setCollapsedHierarchyNoteIds(new Set())
     setSelectedHierarchyNoteId(null)
   }, [project.id, workspaceRootNoteId])
+
+  const changeDescendantDepth = useCallback(value => {
+    setDescendantDepth(value)
+    setExpandedHierarchyNoteIds(new Set())
+    setCollapsedHierarchyNoteIds(new Set())
+  }, [])
+
+  const toggleHierarchyNode = useCallback(noteId => {
+    const currentlyExpanded = isHierarchyNodeExpanded(noteId)
+    setExpandedHierarchyNoteIds(previous => {
+      const next = new Set(previous)
+      if (currentlyExpanded) next.delete(noteId)
+      else next.add(noteId)
+      return next
+    })
+    setCollapsedHierarchyNoteIds(previous => {
+      const next = new Set(previous)
+      if (currentlyExpanded) next.add(noteId)
+      else next.delete(noteId)
+      return next
+    })
+  }, [isHierarchyNodeExpanded])
 
   useEffect(() => () => {
     if (hierarchyWarningTimerRef.current) window.clearTimeout(hierarchyWarningTimerRef.current)
@@ -373,8 +418,8 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     const confirmed = await confirmDialog({
       title: `Delete project “${displayName}”?`,
       message: isProjectRoot
-        ? 'This permanently deletes the entire project, including every note, time slot, deadline, dimension, relationship, and perspective. This cannot be undone.'
-        : `This permanently deletes this project and all ${descendants.length} descendant note${descendants.length === 1 ? '' : 's'}, including their schedules and relationships. This cannot be undone.`,
+        ? 'This moves the entire project into the global archive, including every note, time slot, deadline, dimension, relationship, and perspective. It can be restored later.'
+        : `This deletes this project and all ${descendants.length} descendant note${descendants.length === 1 ? '' : 's'}, including their schedules and relationships, as one undoable transaction.`,
       items: descendants.map(note => note.title || 'Untitled'),
       emptyText: isProjectRoot ? 'The complete project will be removed.' : 'This project has no descendant notes.',
       confirmLabel: 'Delete project',
@@ -406,7 +451,7 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     const displayName = noteToDelete.title || 'Untitled'
     const confirmed = await confirmDialog({
       title: `Delete note “${displayName}”?`,
-      message: 'This permanently deletes the note, its schedule, deadlines, assignments, and relationships. This cannot be undone.',
+      message: 'This deletes the note, its schedule, deadlines, assignments, and relationships as one undoable transaction.',
       confirmLabel: 'Delete note',
     })
     if (!confirmed) return
@@ -437,6 +482,12 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
         collapsed: false,
       })
       playSound('noteCreate')
+      setExpandedHierarchyNoteIds(previous => new Set([...previous, parentNoteId]))
+      setCollapsedHierarchyNoteIds(previous => {
+        const next = new Set(previous)
+        next.delete(parentNoteId)
+        return next
+      })
       await onNotesChanged?.()
       onNoteOpen?.(created.id)
       return created
@@ -581,7 +632,7 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
                 <span>Descendant depth</span>
                 <select
                   value={descendantDepth}
-                  onChange={event => setDescendantDepth(event.target.value === 'all' ? 'all' : Number(event.target.value))}>
+                  onChange={event => changeDescendantDepth(event.target.value === 'all' ? 'all' : Number(event.target.value))}>
                   <option value={1}>1 hop</option>
                   <option value={2}>2 hops</option>
                   <option value={3}>3 hops</option>
@@ -604,6 +655,7 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
                 const displayTitle = isProjectRoot ? project.name : ancestor.title
                 const hoverDescription = descriptionText(isProjectRoot ? project.description : ancestor.html)
                 const displayDepth = Math.max(0, depth - localHierarchyBaseDepth)
+                const isExpanded = hasChildren && isHierarchyNodeExpanded(ancestor.id)
                 return (
                   <div
                     key={ancestor.id}
@@ -649,32 +701,53 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
                       setDraggedHierarchyNoteId(null)
                     }}>
                     <span className={styles.hierarchyBranch} aria-hidden="true" />
-                    <button
-                      type="button"
-                      className={styles.hierarchyNode}
-                      aria-selected={selectedHierarchyNoteId === ancestor.id}
-                      onClick={event => {
-                        event.stopPropagation()
-                        setSelectedHierarchyNoteId(ancestor.id)
-                        playSound('noteSelect')
-                      }}
-                      onDoubleClick={event => {
-                        event.stopPropagation()
-                        if (isCurrent) return
-                        playSound('viewChange')
-                        onWorkspaceOpen?.(ancestor.id)
-                      }}
-                      title={hoverDescription || (isCurrent ? `Current ${hasChildren ? 'project' : 'note'}` : `Double-click to open ${displayTitle || 'Untitled'}`)}>
-                      <span
-                        className={`${styles.hierarchyIcon} ${hasChildren ? styles.hierarchyProjectIcon : styles.hierarchyNoteIcon}`}
-                        title={hasChildren ? 'Project · contains child notes' : 'Note · no child notes'}>
-                        <HierarchyTypeIcon hasChildren={hasChildren} />
-                      </span>
-                      <span className={styles.hierarchyTitle}>{displayTitle || 'Untitled'}</span>
-                      <span className={styles.hierarchyKind}>
-                        {hasChildren ? 'Project' : 'Note'}
-                      </span>
-                    </button>
+                    <div className={styles.hierarchyNodeLine}>
+                      {hasChildren ? (
+                        <button
+                          type="button"
+                          className={`${styles.hierarchyExpandBtn} ${isExpanded ? styles.hierarchyExpandBtnOpen : ''}`}
+                          aria-label={isExpanded ? `Collapse ${displayTitle || 'project'}` : `Expand ${displayTitle || 'project'}`}
+                          aria-expanded={isExpanded}
+                          draggable={false}
+                          onMouseDown={event => event.stopPropagation()}
+                          onClick={event => {
+                            event.stopPropagation()
+                            toggleHierarchyNode(ancestor.id)
+                          }}>
+                          <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                            <path d="M7 5.5 12 10l-5 4.5z" />
+                          </svg>
+                        </button>
+                      ) : (
+                        <span className={styles.hierarchyExpandSpacer} aria-hidden="true" />
+                      )}
+                      <button
+                        type="button"
+                        className={styles.hierarchyNode}
+                        aria-selected={selectedHierarchyNoteId === ancestor.id}
+                        onClick={event => {
+                          event.stopPropagation()
+                          setSelectedHierarchyNoteId(ancestor.id)
+                          playSound('noteSelect')
+                        }}
+                        onDoubleClick={event => {
+                          event.stopPropagation()
+                          if (isCurrent) return
+                          playSound('viewChange')
+                          onWorkspaceOpen?.(ancestor.id)
+                        }}
+                        title={hoverDescription || (isCurrent ? `Current ${hasChildren ? 'project' : 'note'}` : `Double-click to open ${displayTitle || 'Untitled'}`)}>
+                        <span
+                          className={`${styles.hierarchyIcon} ${hasChildren ? styles.hierarchyProjectIcon : styles.hierarchyNoteIcon}`}
+                          title={hasChildren ? 'Project · contains child notes' : 'Note · no child notes'}>
+                          <HierarchyTypeIcon hasChildren={hasChildren} />
+                        </span>
+                        <span className={styles.hierarchyTitle}>{displayTitle || 'Untitled'}</span>
+                        <span className={styles.hierarchyKind}>
+                          {hasChildren ? 'Project' : 'Note'}
+                        </span>
+                      </button>
+                    </div>
                   </div>
                 )
               })}

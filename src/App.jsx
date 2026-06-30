@@ -66,6 +66,7 @@ export default function App() {
   const [activeContextId, setActiveContextId] = useState('')
   const [activeContextState, setActiveContextState] = useState({})
   const [popupNoteId, setPopupNoteId] = useState(null)
+  const [popupEditTitle, setPopupEditTitle] = useState(false)
   const [toast, setToast]             = useState(null)
 
   const activeWorkspaceRootId = workspaceRootNoteId || activeProject?.rootNoteId || null
@@ -263,8 +264,14 @@ export default function App() {
     }
   }
 
-  const openNotePopup  = (noteId) => setPopupNoteId(noteId)
-  const closeNotePopup = () => setPopupNoteId(null)
+  const openNotePopup  = (noteId, options = {}) => {
+    setPopupEditTitle(Boolean(options?.editTitle))
+    setPopupNoteId(noteId)
+  }
+  const closeNotePopup = () => {
+    setPopupNoteId(null)
+    setPopupEditTitle(false)
+  }
 
   const openNoteAsWorkspace = (noteId) => {
     setWorkspaceRootNoteId(noteId)
@@ -486,6 +493,7 @@ export default function App() {
         <NotePopup
           note={popupNote}
           notes={notes}
+          initiallyEditTitle={popupEditTitle}
           isProjectRootNote={popupNote.id === activeProject?.rootNoteId}
           onClose={closeNotePopup}
           onNoteUpdated={handleNoteUpdated}

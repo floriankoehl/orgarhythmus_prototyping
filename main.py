@@ -128,7 +128,8 @@ def _init_db():
                 resize_warn_order_threshold REAL NOT NULL DEFAULT 2,
                 resize_block_order_threshold REAL NOT NULL DEFAULT 2,
                 resize_scale_crossing_warning_enabled INTEGER NOT NULL DEFAULT 1,
-                created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                archived_at TEXT
             )
         """)
         con.execute("""
@@ -267,6 +268,19 @@ def _init_db():
                 created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS note_archive (
+                id            TEXT PRIMARY KEY,
+                project_id    TEXT NOT NULL,
+                root_note_id  TEXT NOT NULL,
+                title         TEXT NOT NULL DEFAULT 'Untitled',
+                snapshot_json TEXT NOT NULL,
+                archived_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        project_cols = [r[1] for r in con.execute("PRAGMA table_info(projects)").fetchall()]
+        if 'archived_at' not in project_cols:
+            con.execute("ALTER TABLE projects ADD COLUMN archived_at TEXT")
         con.execute("""
             CREATE TABLE IF NOT EXISTS personas (
                 id         TEXT PRIMARY KEY,
@@ -924,6 +938,7 @@ def _project(row) -> dict:
         "resizeBlockOrderThreshold": float(d.get("resize_block_order_threshold", 2)),
         "resizeScaleCrossingWarningEnabled": bool(d.get("resize_scale_crossing_warning_enabled", 1)),
         "createdAt": d["created_at"],
+        "archivedAt": d.get("archived_at"),
     }
 
 def _note(row) -> dict:
@@ -1949,8 +1964,18 @@ def _history_summary(con, project_id: str) -> dict:
 def _apply_transaction(con, project_id: str, transaction: TransactionPayload, record_history: bool = True):
     tx = transaction.dict()
     tx["id"] = tx.get("id") or str(uuid.uuid4())
-    before = _normalize_tx_state(tx.get("before") or {})
-    after = _normalize_tx_state(tx.get("after") or {})
+    raw_before = tx.get("before") or {}
+    raw_after = tx.get("after") or {}
+    if "noteTree" in raw_before or "noteTree" in raw_after:
+        _apply_note_tree_state_change(con, project_id, raw_before, raw_after)
+        if record_history:
+            tx["before"] = raw_before
+            tx["after"] = raw_after
+            _push_history(con, project_id, tx, raw_before, raw_after)
+        return {"ok": True, "transaction": tx, "history": _history_summary(con, project_id)}
+
+    before = _normalize_tx_state(raw_before)
+    after = _normalize_tx_state(raw_after)
     _assert_transaction_project_scope(con, project_id, before, after)
     _assert_before_matches(con, before, after)
     if not _is_pure_dependency_removal(before, after):
@@ -2198,15 +2223,15 @@ def me(user: dict = Depends(current_user)):
 def list_projects(user: dict = Depends(current_user)):
     with _db() as con:
         if user.get("isSuperuser"):
-            rows = con.execute("SELECT * FROM projects ORDER BY created_at").fetchall()
+            rows = con.execute("SELECT * FROM projects WHERE archived_at IS NULL ORDER BY created_at").fetchall()
         else:
-            rows = con.execute("SELECT * FROM projects WHERE user_id = ? ORDER BY created_at", (user["id"],)).fetchall()
+            rows = con.execute("SELECT * FROM projects WHERE user_id = ? AND archived_at IS NULL ORDER BY created_at", (user["id"],)).fetchall()
         for row in rows:
             _ensure_project_root_note(con, row["id"])
         if user.get("isSuperuser"):
-            rows = con.execute("SELECT * FROM projects ORDER BY created_at").fetchall()
+            rows = con.execute("SELECT * FROM projects WHERE archived_at IS NULL ORDER BY created_at").fetchall()
         else:
-            rows = con.execute("SELECT * FROM projects WHERE user_id = ? ORDER BY created_at", (user["id"],)).fetchall()
+            rows = con.execute("SELECT * FROM projects WHERE user_id = ? AND archived_at IS NULL ORDER BY created_at", (user["id"],)).fetchall()
     return [_project(r) for r in rows]
 
 @app.post("/projects", status_code=201)
@@ -2307,41 +2332,71 @@ def get_project_stats(project_id: str, user: dict = Depends(current_user)):
 def delete_project(project_id: str, user: dict = Depends(current_user)):
     assert_project_access(project_id, user)
     with _db() as con:
-        # Cascade: notes and their time_slots/deadlines/assignments
-        note_rows = con.execute("SELECT id FROM notes WHERE project_id = ?", (project_id,)).fetchall()
-        note_ids = [r["id"] for r in note_rows]
-        if note_ids:
-            ph = ','.join('?' * len(note_ids))
-            ms_rows = con.execute(f"SELECT id FROM time_slots WHERE note_id IN ({ph})", note_ids).fetchall()
-            ms_ids = [r["id"] for r in ms_rows]
-            if ms_ids:
-                mph = ','.join('?' * len(ms_ids))
-                con.execute(f"DELETE FROM dependencies WHERE from_id IN ({mph}) OR to_id IN ({mph})", ms_ids + ms_ids)
-                con.execute(f"DELETE FROM persona_time_slot_assignments WHERE time_slot_id IN ({mph})", ms_ids)
-                con.execute(f"DELETE FROM time_slots WHERE id IN ({mph})", ms_ids)
-            con.execute(f"DELETE FROM deadlines WHERE note_id IN ({ph})", note_ids)
-            con.execute(f"DELETE FROM earliest_starts WHERE note_id IN ({ph})", note_ids)
-            con.execute(f"DELETE FROM note_inheritance WHERE child_note_id IN ({ph}) OR parent_note_id IN ({ph})", note_ids + note_ids)
-            con.execute(f"DELETE FROM assignments WHERE note_id IN ({ph})", note_ids)
-            con.execute(f"DELETE FROM notes WHERE id IN ({ph})", note_ids)
-        # Cascade: dimensions → categories → assignments
-        dim_rows = con.execute("SELECT id FROM dimensions WHERE project_id = ?", (project_id,)).fetchall()
-        dim_ids = [r["id"] for r in dim_rows]
-        if dim_ids:
-            ph = ','.join('?' * len(dim_ids))
-            con.execute(f"DELETE FROM assignments WHERE dimension_id IN ({ph})", dim_ids)
-            con.execute(f"DELETE FROM persona_assignments WHERE dimension_id IN ({ph})", dim_ids)
-            con.execute(f"DELETE FROM categories WHERE dimension_id IN ({ph})", dim_ids)
-            con.execute(f"DELETE FROM dimensions WHERE id IN ({ph})", dim_ids)
-        con.execute("DELETE FROM persona_assignments WHERE persona_id IN (SELECT id FROM personas WHERE project_id = ?)", (project_id,))
-        con.execute("DELETE FROM personas WHERE project_id = ?", (project_id,))
-        con.execute("DELETE FROM saved_filters WHERE project_id = ?", (project_id,))
-        con.execute("DELETE FROM schedule_perspectives WHERE project_id = ?", (project_id,))
-        con.execute("DELETE FROM classification_perspectives WHERE project_id = ?", (project_id,))
-        con.execute("DELETE FROM calendar_perspectives WHERE project_id = ?", (project_id,))
-        con.execute("DELETE FROM project_contexts WHERE project_id = ?", (project_id,))
-        con.execute("DELETE FROM transaction_history WHERE project_id = ?", (project_id,))
-        con.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        con.execute("UPDATE projects SET archived_at = CURRENT_TIMESTAMP WHERE id = ?", (project_id,))
+
+@app.get("/archive")
+def list_archive(user: dict = Depends(current_user)):
+    with _db() as con:
+        owner_clause = "" if user.get("isSuperuser") else "WHERE p.user_id = ?"
+        owner_args = () if user.get("isSuperuser") else (user["id"],)
+        archived_projects = con.execute(
+            f"SELECT p.* FROM projects p {owner_clause} {'AND' if owner_clause else 'WHERE'} p.archived_at IS NOT NULL ORDER BY p.archived_at DESC",
+            owner_args,
+        ).fetchall()
+        archived_notes = con.execute(
+            f"""
+            SELECT a.*, p.name AS project_name, p.archived_at AS project_archived_at
+            FROM note_archive a
+            JOIN projects p ON p.id = a.project_id
+            {owner_clause}
+            ORDER BY a.archived_at DESC
+            """,
+            owner_args,
+        ).fetchall()
+    return {
+        "projects": [_project(row) for row in archived_projects],
+        "noteTrees": [{
+            "id": row["id"],
+            "projectId": row["project_id"],
+            "projectName": row["project_name"],
+            "projectArchived": bool(row["project_archived_at"]),
+            "rootNoteId": row["root_note_id"],
+            "title": row["title"],
+            "archivedAt": row["archived_at"],
+            "noteCount": len((json.loads(row["snapshot_json"]) or {}).get("notes") or []),
+        } for row in archived_notes],
+    }
+
+@app.post("/archive/projects/{project_id}/restore")
+def restore_archived_project(project_id: str, user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    with _db() as con:
+        con.execute("UPDATE projects SET archived_at = NULL WHERE id = ?", (project_id,))
+        row = con.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+    return _project(row)
+
+@app.post("/archive/notes/{archive_id}/restore")
+def restore_archived_note_tree(archive_id: str, user: dict = Depends(current_user)):
+    with _db() as con:
+        row = con.execute("SELECT * FROM note_archive WHERE id = ?", (archive_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Archived note tree not found")
+        project_id = row["project_id"]
+        assert_project_access(project_id, user)
+        project = con.execute("SELECT archived_at FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if project and project["archived_at"]:
+            raise HTTPException(409, "Restore the containing project before restoring this note tree")
+        snapshot = json.loads(row["snapshot_json"])
+        _restore_note_tree_snapshot(con, project_id, snapshot)
+        transaction = {
+            "id": str(uuid.uuid4()),
+            "type": "note.restore-tree",
+            "label": f"Restore {row['title'] or 'Untitled'}",
+            "before": {"noteTree": None},
+            "after": {"noteTree": snapshot},
+        }
+        _push_history(con, project_id, transaction, transaction["before"], transaction["after"])
+    return {"ok": True, "projectId": project_id, "rootNoteId": snapshot["rootNoteId"]}
 
 
 # ── Notes (notes) ─────────────────────────────────────────────────────────────
@@ -2513,57 +2568,211 @@ def duplicate_note(note_id: str, user: dict = Depends(current_user)):
         "noteInheritance": [_inheritance(row) for row in inheritance_rows],
     }
 
+def _rows_as_dicts(rows) -> list[dict]:
+    return [dict(row) for row in rows]
+
+def _note_tree_snapshot(con, project_id: str, note_id: str, cascade: bool) -> dict:
+    root = con.execute(
+        "SELECT * FROM notes WHERE id = ? AND project_id = ?",
+        (note_id, project_id),
+    ).fetchone()
+    if not root:
+        raise HTTPException(404, "Note not found")
+
+    note_ids = [note_id]
+    if cascade:
+        seen = {note_id}
+        pending = [note_id]
+        while pending:
+            parent_id = pending.pop()
+            for row in con.execute(
+                "SELECT id FROM notes WHERE project_id = ? AND parent_note_id = ?",
+                (project_id, parent_id),
+            ).fetchall():
+                child_id = row["id"]
+                if child_id in seen:
+                    continue
+                seen.add(child_id)
+                note_ids.append(child_id)
+                pending.append(child_id)
+
+    note_ph = ",".join("?" for _ in note_ids)
+    time_slots = con.execute(
+        f"SELECT * FROM time_slots WHERE note_id IN ({note_ph})",
+        note_ids,
+    ).fetchall()
+    time_slot_ids = [row["id"] for row in time_slots]
+    dependencies = []
+    persona_time_slot_assignments = []
+    if time_slot_ids:
+        slot_ph = ",".join("?" for _ in time_slot_ids)
+        dependencies = con.execute(
+            f"SELECT * FROM dependencies WHERE from_id IN ({slot_ph}) OR to_id IN ({slot_ph})",
+            time_slot_ids + time_slot_ids,
+        ).fetchall()
+        persona_time_slot_assignments = con.execute(
+            f"SELECT * FROM persona_time_slot_assignments WHERE time_slot_id IN ({slot_ph})",
+            time_slot_ids,
+        ).fetchall()
+
+    return {
+        "archiveId": str(uuid.uuid4()),
+        "rootNoteId": note_id,
+        "cascade": cascade,
+        "notes": _rows_as_dicts(con.execute(
+            f"SELECT * FROM notes WHERE id IN ({note_ph}) ORDER BY order_idx",
+            note_ids,
+        ).fetchall()),
+        "timeSlots": _rows_as_dicts(time_slots),
+        "dependencies": _rows_as_dicts(dependencies),
+        "assignments": _rows_as_dicts(con.execute(
+            f"SELECT * FROM assignments WHERE note_id IN ({note_ph})",
+            note_ids,
+        ).fetchall()),
+        "deadlines": _rows_as_dicts(con.execute(
+            f"SELECT * FROM deadlines WHERE note_id IN ({note_ph})",
+            note_ids,
+        ).fetchall()),
+        "earliestStarts": _rows_as_dicts(con.execute(
+            f"SELECT * FROM earliest_starts WHERE note_id IN ({note_ph})",
+            note_ids,
+        ).fetchall()),
+        "personaNoteAssignments": _rows_as_dicts(con.execute(
+            f"SELECT * FROM persona_note_assignments WHERE note_id IN ({note_ph})",
+            note_ids,
+        ).fetchall()),
+        "personaTimeSlotAssignments": _rows_as_dicts(persona_time_slot_assignments),
+        "noteInheritance": _rows_as_dicts(con.execute(
+            f"SELECT * FROM note_inheritance WHERE child_note_id IN ({note_ph}) OR parent_note_id IN ({note_ph})",
+            note_ids + note_ids,
+        ).fetchall()),
+        "reparentedChildren": [] if cascade else _rows_as_dicts(con.execute(
+            "SELECT id, parent_note_id FROM notes WHERE project_id = ? AND parent_note_id = ?",
+            (project_id, note_id),
+        ).fetchall()),
+    }
+
+def _delete_note_tree_snapshot(con, project_id: str, snapshot: dict):
+    notes = snapshot.get("notes") or []
+    note_ids = [row["id"] for row in notes]
+    if not note_ids:
+        return
+    existing = con.execute(
+        f"SELECT id FROM notes WHERE project_id = ? AND id IN ({','.join('?' for _ in note_ids)})",
+        (project_id, *note_ids),
+    ).fetchall()
+    if len(existing) != len(note_ids):
+        raise HTTPException(409, "The note tree changed before the transaction could be applied")
+
+    root_note_id = snapshot["rootNoteId"]
+    root_row = next((row for row in notes if row["id"] == root_note_id), None)
+    archive_id = snapshot.get("archiveId") or str(uuid.uuid4())
+    snapshot["archiveId"] = archive_id
+    con.execute(
+        """
+        INSERT OR REPLACE INTO note_archive (id, project_id, root_note_id, title, snapshot_json, archived_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """,
+        (archive_id, project_id, root_note_id, (root_row or {}).get("title") or "Untitled", json.dumps(snapshot)),
+    )
+
+    fallback_parent_id = (root_row or {}).get("parent_note_id") or _ensure_project_root_note(con, project_id)
+    if not snapshot.get("cascade"):
+        con.execute("UPDATE notes SET parent_note_id = ? WHERE parent_note_id = ?", (fallback_parent_id, root_note_id))
+
+    note_ph = ",".join("?" for _ in note_ids)
+    time_slot_ids = [row["id"] for row in snapshot.get("timeSlots") or []]
+    if time_slot_ids:
+        slot_ph = ",".join("?" for _ in time_slot_ids)
+        con.execute(f"DELETE FROM dependencies WHERE from_id IN ({slot_ph}) OR to_id IN ({slot_ph})", time_slot_ids + time_slot_ids)
+        con.execute(f"DELETE FROM persona_time_slot_assignments WHERE time_slot_id IN ({slot_ph})", time_slot_ids)
+        con.execute(f"DELETE FROM time_slots WHERE id IN ({slot_ph})", time_slot_ids)
+    con.execute(f"DELETE FROM deadlines WHERE note_id IN ({note_ph})", note_ids)
+    con.execute(f"DELETE FROM earliest_starts WHERE note_id IN ({note_ph})", note_ids)
+    con.execute(f"DELETE FROM assignments WHERE note_id IN ({note_ph})", note_ids)
+    con.execute(f"DELETE FROM persona_note_assignments WHERE note_id IN ({note_ph})", note_ids)
+    con.execute(
+        f"DELETE FROM note_inheritance WHERE child_note_id IN ({note_ph}) OR parent_note_id IN ({note_ph})",
+        note_ids + note_ids,
+    )
+    con.execute(f"DELETE FROM notes WHERE id IN ({note_ph})", note_ids)
+
+def _insert_snapshot_rows(con, table: str, columns: tuple[str, ...], rows: list[dict]):
+    if not rows:
+        return
+    placeholders = ",".join("?" for _ in columns)
+    column_sql = ",".join(columns)
+    con.executemany(
+        f"INSERT INTO {table} ({column_sql}) VALUES ({placeholders})",
+        [tuple(row.get(column) for column in columns) for row in rows],
+    )
+
+def _restore_note_tree_snapshot(con, project_id: str, snapshot: dict):
+    notes = snapshot.get("notes") or []
+    if not notes:
+        raise HTTPException(422, "The deleted note snapshot is empty")
+    if any(row.get("project_id") != project_id for row in notes):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "The note snapshot is outside this project")
+    note_ids = [row["id"] for row in notes]
+    existing = con.execute(
+        f"SELECT id FROM notes WHERE id IN ({','.join('?' for _ in note_ids)})",
+        note_ids,
+    ).fetchall()
+    if existing:
+        raise HTTPException(409, "A note from the deleted tree already exists")
+
+    _insert_snapshot_rows(con, "notes", ("id", "project_id", "parent_note_id", "html", "title", "collapsed", "order_idx", "created_at"), notes)
+    for child in snapshot.get("reparentedChildren") or []:
+        con.execute("UPDATE notes SET parent_note_id = ? WHERE id = ? AND project_id = ?", (child["parent_note_id"], child["id"], project_id))
+    _insert_snapshot_rows(con, "time_slots", ("id", "note_id", "start_col", "duration", "title", "color"), snapshot.get("timeSlots") or [])
+    _insert_snapshot_rows(con, "assignments", ("note_id", "dimension_id", "category_id", "order_idx"), snapshot.get("assignments") or [])
+    _insert_snapshot_rows(con, "deadlines", ("id", "note_id", "col", "scale"), snapshot.get("deadlines") or [])
+    _insert_snapshot_rows(con, "earliest_starts", ("id", "note_id", "col", "scale"), snapshot.get("earliestStarts") or [])
+    _insert_snapshot_rows(con, "persona_note_assignments", ("persona_id", "note_id"), snapshot.get("personaNoteAssignments") or [])
+    _insert_snapshot_rows(con, "persona_time_slot_assignments", ("persona_id", "time_slot_id"), snapshot.get("personaTimeSlotAssignments") or [])
+    _insert_snapshot_rows(con, "note_inheritance", ("child_note_id", "parent_note_id"), snapshot.get("noteInheritance") or [])
+    _insert_snapshot_rows(con, "dependencies", ("id", "from_id", "to_id", "reason"), snapshot.get("dependencies") or [])
+    if snapshot.get("archiveId"):
+        con.execute("DELETE FROM note_archive WHERE id = ?", (snapshot["archiveId"],))
+    else:
+        con.execute(
+            "DELETE FROM note_archive WHERE project_id = ? AND root_note_id = ?",
+            (project_id, snapshot.get("rootNoteId")),
+        )
+
+def _apply_note_tree_state_change(con, project_id: str, before: dict, after: dict):
+    before_tree = before.get("noteTree")
+    after_tree = after.get("noteTree")
+    if before_tree and not after_tree:
+        _delete_note_tree_snapshot(con, project_id, before_tree)
+        return
+    if after_tree and not before_tree:
+        _restore_note_tree_snapshot(con, project_id, after_tree)
+        return
+    raise HTTPException(422, "A note-tree transaction must either delete or restore one snapshot")
+
 @app.delete("/notes/{note_id}", status_code=204)
-def delete_note(note_id: str, cascade: bool = Query(default=False), user: dict = Depends(current_user)):
+def delete_note(note_id: str, cascade: bool = Query(default=True), user: dict = Depends(current_user)):
     with _db() as con:
         project_id = _project_id_for_note(con, note_id)
         assert_project_access(project_id, user)
         project = con.execute("SELECT root_note_id FROM projects WHERE id = ?", (project_id,)).fetchone()
         if project and project["root_note_id"] == note_id:
             raise HTTPException(422, {"message": "The project root note cannot be deleted", "type": "root_note_delete"})
-        note = con.execute("SELECT parent_note_id FROM notes WHERE id = ?", (note_id,)).fetchone()
-        root_note_id = _ensure_project_root_note(con, project_id)
-        note_ids = [note_id]
-        if cascade:
-            seen = {note_id}
-            pending = [note_id]
-            while pending:
-                parent_id = pending.pop()
-                child_rows = con.execute(
-                    "SELECT id FROM notes WHERE project_id = ? AND parent_note_id = ?",
-                    (project_id, parent_id),
-                ).fetchall()
-                for child_row in child_rows:
-                    child_id = child_row["id"]
-                    if child_id in seen:
-                        continue
-                    seen.add(child_id)
-                    note_ids.append(child_id)
-                    pending.append(child_id)
-        else:
-            fallback_parent_id = note["parent_note_id"] if note and note["parent_note_id"] else root_note_id
-            con.execute("UPDATE notes SET parent_note_id = ? WHERE parent_note_id = ?", (fallback_parent_id, note_id))
-
-        note_ph = ",".join("?" for _ in note_ids)
-        ms_rows = con.execute(
-            f"SELECT id FROM time_slots WHERE note_id IN ({note_ph})",
-            note_ids,
-        ).fetchall()
-        ms_ids = [r["id"] for r in ms_rows]
-        if ms_ids:
-            ms_ph = ",".join("?" for _ in ms_ids)
-            con.execute(f"DELETE FROM dependencies WHERE from_id IN ({ms_ph}) OR to_id IN ({ms_ph})", ms_ids + ms_ids)
-            con.execute(f"DELETE FROM persona_time_slot_assignments WHERE time_slot_id IN ({ms_ph})", ms_ids)
-            con.execute(f"DELETE FROM time_slots WHERE id IN ({ms_ph})", ms_ids)
-        con.execute(f"DELETE FROM deadlines WHERE note_id IN ({note_ph})", note_ids)
-        con.execute(f"DELETE FROM earliest_starts WHERE note_id IN ({note_ph})", note_ids)
-        con.execute(f"DELETE FROM assignments WHERE note_id IN ({note_ph})", note_ids)
-        con.execute(f"DELETE FROM persona_note_assignments WHERE note_id IN ({note_ph})", note_ids)
-        con.execute(
-            f"DELETE FROM note_inheritance WHERE child_note_id IN ({note_ph}) OR parent_note_id IN ({note_ph})",
-            note_ids + note_ids,
-        )
-        con.execute(f"DELETE FROM notes WHERE id IN ({note_ph})", note_ids)
+        # Archive always keeps the complete subtree. A note's children are never
+        # silently reparented as a side effect of deletion.
+        snapshot = _note_tree_snapshot(con, project_id, note_id, True)
+        _delete_note_tree_snapshot(con, project_id, snapshot)
+        deleted_root = next((row for row in snapshot["notes"] if row["id"] == note_id), snapshot["notes"][0])
+        label = deleted_root.get("title") or "Untitled"
+        transaction = {
+            "id": str(uuid.uuid4()),
+            "type": "note.delete-tree",
+            "label": f"Delete {label}",
+            "before": {"noteTree": snapshot},
+            "after": {"noteTree": None},
+        }
+        _push_history(con, project_id, transaction, transaction["before"], transaction["after"])
 
 @app.put("/notes/order")
 def reorder_notes(data: OrderIn, user: dict = Depends(current_user)):

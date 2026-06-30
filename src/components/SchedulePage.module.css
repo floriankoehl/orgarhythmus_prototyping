@@ -169,11 +169,71 @@
   white-space: nowrap;
 }
 
-.scaleQuickSwitch {
+.cornerTreeDepth {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+
+.cornerTreeDepth > span {
+  color: #64748b;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cornerTreeDepth > div {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 5px;
+  background: #e9edf2;
+}
+
+.cornerTreeDepth button {
+  min-width: 0;
+  height: 21px;
+  flex: 1;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #64748b;
+  font: 700 9px Arial, sans-serif;
+  cursor: pointer;
+}
+
+.cornerTreeDepth button:hover {
+  background: #f8fafc;
+}
+
+.cornerTreeDepth .cornerTreeDepthActive {
+  background: #fff;
+  color: #1a73e8;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}
+
+.toolbarModePills {
+  flex: 0 0 auto;
+  margin-right: 2px;
+}
+
+.centerQuickControls {
   position: absolute;
   left: 50%;
   top: 13px;
   transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 2;
+}
+
+.scaleQuickSwitch {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -186,7 +246,6 @@
   border: 1px solid #c9d7e8;
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(16, 24, 40, 0.08);
-  z-index: 2;
 }
 
 .scaleQuickLabel {
@@ -2128,6 +2187,11 @@
   will-change: scroll-position;
 }
 
+.gridBodySizing,
+.gridBodySizing * {
+  cursor: crosshair !important;
+}
+
 /* ── Grid inner (virtual canvas) ─────────────────────────────────────────── */
 .gridInner {
   position: relative;
@@ -2384,6 +2448,32 @@
 }
 .timeSlot:active { cursor: grabbing; }
 
+.timeSlotCreatePreview {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 4px;
+  overflow: hidden;
+  box-sizing: border-box;
+  border: 2px dashed rgba(255, 255, 255, 0.95);
+  border-radius: 3px;
+  outline: 1px solid rgba(26, 115, 232, 0.8);
+  opacity: 0.76;
+  pointer-events: none;
+  color: #fff;
+  font: 700 10px Arial, sans-serif;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+.timeSlotCreatePreview span {
+  padding: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .timeSlotSelected {
   outline: 2px solid rgba(255,255,255,0.9);
   box-shadow: 0 0 0 3px rgba(26,115,232,0.7), 0 1px 4px rgba(0,0,0,0.22);
@@ -2539,6 +2629,7 @@
 .ctxItemDanger { color: #dc2626; }
 .ctxItemDanger:hover { background: #fef2f2; color: #dc2626; }
 .ctxReadOnly { padding: 7px 14px; font-size: 12px; color: #999; font-style: italic; }
+
 
 .inheritanceInspectorModal {
   width: min(520px, calc(100vw - 32px));

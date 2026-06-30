@@ -42,6 +42,35 @@ function CreateProjectModal({ onClose, onCreate }) {
   )
 }
 
+function ArchiveModal({ archive, onClose, onRestoreProject, onRestoreNoteTree }) {
+  const projects = archive?.projects || []
+  const noteTrees = archive?.noteTrees || []
+  return (
+    <div className={styles.modalOverlay} onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className={`${styles.modal} ${styles.archiveModal}`}>
+        <h2 className={styles.modalTitle}>Global archive</h2>
+        <p className={styles.modalText}>Deleted projects and note trees remain here until you restore them.</p>
+        <div className={styles.archiveList}>
+          {projects.map(project => (
+            <div className={styles.archiveRow} key={`project-${project.id}`}>
+              <div><strong>{project.name}</strong><span>Project · complete structure</span></div>
+              <button onClick={() => onRestoreProject(project.id)}>Restore</button>
+            </div>
+          ))}
+          {noteTrees.map(tree => (
+            <div className={styles.archiveRow} key={`notes-${tree.id}`}>
+              <div><strong>{tree.title}</strong><span>{tree.noteCount} note{tree.noteCount === 1 ? '' : 's'} · {tree.projectName}</span></div>
+              <button disabled={tree.projectArchived} title={tree.projectArchived ? 'Restore its project first' : undefined} onClick={() => onRestoreNoteTree(tree.id)}>Restore</button>
+            </div>
+          ))}
+          {projects.length === 0 && noteTrees.length === 0 && <div className={styles.archiveEmpty}>The archive is empty.</div>}
+        </div>
+        <div className={styles.modalActions}><button className={styles.modalCancel} onClick={onClose}>Close</button></div>
+      </div>
+    </div>
+  )
+}
+
 function ProjectCard({ project, onOpen, onDelete }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef()
@@ -135,6 +164,7 @@ export default function ProjectsPage({ onOpenProject, currentUser, onLogout }) {
   const [loading, setLoading]   = useState(true)
   const [creating, setCreating] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState(null)
+  const [archive, setArchive] = useState(null)
 
   useEffect(() => {
     projectsApi.getProjects()
@@ -157,6 +187,17 @@ export default function ProjectsPage({ onOpenProject, currentUser, onLogout }) {
     setDeleteConfirm(null)
   }
 
+  const openArchive = async () => setArchive(await projectsApi.getArchive())
+  const restoreArchivedProject = async id => {
+    const restored = await projectsApi.restoreArchivedProject(id)
+    setProjects(previous => [...previous, restored])
+    setArchive(await projectsApi.getArchive())
+  }
+  const restoreArchivedNoteTree = async id => {
+    await projectsApi.restoreArchivedNoteTree(id)
+    setArchive(await projectsApi.getArchive())
+  }
+
   return (
     <div className={styles.note}>
       <div className={styles.header}>
@@ -170,9 +211,10 @@ export default function ProjectsPage({ onOpenProject, currentUser, onLogout }) {
       <div className={styles.content}>
         <div className={styles.contentHeader}>
           <h1 className={styles.title}>Projects</h1>
-          <button className={styles.createBtn} type="button" onClick={() => setCreating(true)}>
-            Create project
-          </button>
+          <div className={styles.headerActions}>
+            <button className={styles.archiveBtn} type="button" onClick={openArchive}>Archive</button>
+            <button className={styles.createBtn} type="button" onClick={() => setCreating(true)}>Create project</button>
+          </div>
         </div>
         {loading ? (
           <div className={styles.empty}>Loading…</div>
@@ -210,7 +252,7 @@ export default function ProjectsPage({ onOpenProject, currentUser, onLogout }) {
           <div className={styles.modal}>
             <h2 className={styles.modalTitle}>Delete project?</h2>
             <p className={styles.modalText}>
-              "{deleteConfirm.name}" and all its notes, timeSlots, dimensions, and perspectives will be permanently deleted.
+              "{deleteConfirm.name}" and its complete structure will be moved to the global archive and can be restored later.
             </p>
             <div className={styles.modalActions}>
               <button className={styles.modalCancel} onClick={() => setDeleteConfirm(null)}>Cancel</button>
@@ -220,6 +262,15 @@ export default function ProjectsPage({ onOpenProject, currentUser, onLogout }) {
             </div>
           </div>
         </div>
+      )}
+
+      {archive && (
+        <ArchiveModal
+          archive={archive}
+          onClose={() => setArchive(null)}
+          onRestoreProject={restoreArchivedProject}
+          onRestoreNoteTree={restoreArchivedNoteTree}
+        />
       )}
     </div>
   )

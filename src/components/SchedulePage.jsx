@@ -821,6 +821,30 @@ function buildNoteTreeMeta(notes) {
   return { meta, ordered }
 }
 
+function collapsedNoteIdsForTreeDepth(notes, rootNoteId, depthPreset) {
+  if (!rootNoteId || depthPreset === 'all') return new Set()
+  const depthLimit = Math.max(1, Number(depthPreset) || 1)
+  const childrenByParent = new Map()
+  notes.forEach(note => {
+    if (!note.parentNoteId) return
+    if (!childrenByParent.has(note.parentNoteId)) childrenByParent.set(note.parentNoteId, [])
+    childrenByParent.get(note.parentNoteId).push(note)
+  })
+
+  const collapsed = new Set()
+  const seen = new Set()
+  const pending = [{ noteId: rootNoteId, depth: 0 }]
+  while (pending.length) {
+    const current = pending.pop()
+    if (!current || seen.has(current.noteId)) continue
+    seen.add(current.noteId)
+    const children = childrenByParent.get(current.noteId) || []
+    if (children.length > 0 && current.depth >= depthLimit) collapsed.add(current.noteId)
+    children.forEach(child => pending.push({ noteId: child.id, depth: current.depth + 1 }))
+  }
+  return collapsed
+}
+
 function withTreeMeta(note, treeMeta) {
   return {
     depth: 0,
@@ -1163,16 +1187,22 @@ function WarningSystemPanel({
 function ContextMenu({
   menu, onClose, onCreate, onInsertTimeUnit, onDeleteTimeUnit, onSetDeadline, onRemoveDeadline,
   onSetEarliestStart, onRemoveEarliestStart,
-  onCreateNoteInLane,
+  onCreateNoteInLane, onCreateNodeInside,
   onCopyNote, onDuplicateNote, onStartInheritancePick, onSeeInheritance,
   onDeleteTimeSlot, onToggleTimeSlotPin, pinnedTimeSlotId, onEditDepReason, onDeleteDep,
 }) {
   if (!menu) return null
+  const newNodeInsideControl = (
+    <button className={styles.ctxItem} onClick={() => { onCreateNodeInside(menu.noteId); onClose() }}>
+      New node inside
+    </button>
+  )
   return createPortal(
     <>
       <div style={{ position: 'fixed', inset: 0, zIndex: 998 }} onMouseDown={onClose} />
       <div className={styles.ctxMenu} style={{ left: menu.x, top: menu.y }}>
         {menu.type === 'cell' && (<>
+          {newNodeInsideControl}
           <button className={styles.ctxItem}
             onClick={() => { onCopyNote(menu.noteId); onClose() }}>
             Copy note — {menu.noteTitle}
@@ -1228,6 +1258,7 @@ function ContextMenu({
         </>)}
         {menu.type === 'note' && (
           <>
+            {newNodeInsideControl}
             <button className={styles.ctxItem}
               onClick={() => { onCopyNote(menu.noteId); onClose() }}>
               Copy note — {menu.noteTitle}
@@ -1777,7 +1808,7 @@ function ScheduleGroupScroller({
   )
 }
 
-function CornerGanttControls({ canUndo, canRedo, onUndo, onRedo, mode, onModeChange }) {
+function CornerGanttControls({ canUndo, canRedo, onUndo, onRedo, treeDepthPreset, onTreeDepthPresetChange }) {
   return (
     <div className={styles.cornerControls}>
       <div className={styles.historyButtons}>
@@ -1788,11 +1819,20 @@ function CornerGanttControls({ canUndo, canRedo, onUndo, onRedo, mode, onModeCha
           Redo
         </button>
       </div>
-      <div className={styles.modePills}>
-        <button className={`${styles.modePill} ${mode === 'timeSlot' ? styles.modePillActive : ''}`}
-          onClick={() => onModeChange('timeSlot')}>Time slot</button>
-        <button className={`${styles.modePill} ${mode === 'dependency' ? styles.modePillActive : ''}`}
-          onClick={() => onModeChange('dependency')}>Dependency</button>
+      <div className={styles.cornerTreeDepth}>
+        <span>Tree</span>
+        <div>
+          {[1, 2, 3, 'all'].map(depth => (
+            <button
+              key={depth}
+              type="button"
+              className={treeDepthPreset === depth ? styles.cornerTreeDepthActive : ''}
+              title={depth === 'all' ? 'Expand the complete note tree once' : `Show ${depth} descendant hop${depth === 1 ? '' : 's'} once`}
+              onClick={() => onTreeDepthPresetChange(depth)}>
+              {depth === 'all' ? 'All' : depth}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   )
@@ -1818,6 +1858,7 @@ function GanttToolbar({
 	  nostalgiaMode, onToggleNostalgia,
   canDeleteSelection, onDeleteSelection,
   canFilterToSelection, onFilterToSelectedNotes, onExpandEverything,
+  mode, onModeChange,
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [warningSettingsOpen, setWarningSettingsOpen] = useState(false)
@@ -1834,18 +1875,20 @@ function GanttToolbar({
         onClick={onDeleteSelection}>
         Delete
       </button>
-      <div className={styles.scaleQuickSwitch} aria-label="Gantt planning scale">
-        <span className={styles.scaleQuickLabel}>Scale</span>
-        <div className={styles.scaleQuickPills}>
-          {TIME_ZOOM_LEVELS.map(level => (
-            <button key={level.value}
-              type="button"
-              className={`${styles.scaleQuickPill} ${timeZoom === level.value ? styles.scaleQuickPillActive : ''}`}
-              title={`Switch to ${level.label} scale`}
-              onClick={() => onTimeZoomChange(level.value)}>
-              {level.value === 'minutes' ? level.short : level.label}
-            </button>
-          ))}
+      <div className={styles.centerQuickControls}>
+        <div className={styles.scaleQuickSwitch} aria-label="Gantt planning scale">
+          <span className={styles.scaleQuickLabel}>Scale</span>
+          <div className={styles.scaleQuickPills}>
+            {TIME_ZOOM_LEVELS.map(level => (
+              <button key={level.value}
+                type="button"
+                className={`${styles.scaleQuickPill} ${timeZoom === level.value ? styles.scaleQuickPillActive : ''}`}
+                title={`Switch to ${level.label} scale`}
+                onClick={() => onTimeZoomChange(level.value)}>
+                {level.value === 'minutes' ? level.short : level.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       <ScheduleGroupScroller
@@ -1878,6 +1921,12 @@ function GanttToolbar({
         />
       )}
       <div style={{ flex: 1 }} />
+	      <div className={`${styles.modePills} ${styles.toolbarModePills}`}>
+	        <button className={`${styles.modePill} ${mode === 'timeSlot' ? styles.modePillActive : ''}`}
+	          onClick={() => onModeChange('timeSlot')}>Time slot</button>
+	        <button className={`${styles.modePill} ${mode === 'dependency' ? styles.modePillActive : ''}`}
+	          onClick={() => onModeChange('dependency')}>Dependency</button>
+	      </div>
 	      <div className={styles.spacingWrap}>
 	        <button ref={warningSettingsBtnRef}
 	          className={`${styles.toolbarToggleBtn} ${warningSettingsOpen ? styles.toolbarToggleBtnActive : ''}`}
@@ -2622,6 +2671,8 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const [showRowTimeSlotMeta, setShowRowTimeSlotMeta] = useState(true)
   const [timeSlotLabelMode, setTimeSlotLabelMode] = useState('date')
   const [collapsedTreeNoteIds, setCollapsedTreeNoteIds] = useState(() => new Set())
+  const [treeDepthPreset, setTreeDepthPreset] = useState(1)
+  const initializedTreeRootRef = useRef(null)
   const timeSlotLabelWheelAtRef = useRef(0)
   const [reasonModal, setReasonModal] = useState(null)   // null | { depId }
   const [reasonDraft, setReasonDraft] = useState('')
@@ -2665,6 +2716,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const [dragOverLaneCatId, setDragOverLaneCatId] = useState(null)
   const [draggingCatId, setDraggingCatId] = useState(null)
   const [dragOverCatReorderId, setDragOverCatReorderId] = useState(null)
+  const [createDragPreview, setCreateDragPreview] = useState(null)
 
   const warningSettings = useMemo(() => ({
     resizeWarnOrderThreshold: Number.isFinite(Number(project?.resizeWarnOrderThreshold))
@@ -3133,6 +3185,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const timeSlotElsRef = useRef(new Map())      // id → DOM element
   const hoveredCellRef  = useRef(null)
   const drawingRef      = useRef(null)           // { fromId } sync access during drawing
+  const createSizeDraftRef = useRef(null)        // provisional time slot created by double-click, committed by next click
   const previewArrowRef = useRef(null)           // SVG path element for live preview
   const depPathElsRef   = useRef(new Map())      // dependency id -> SVG path element
   const dependenciesRef = useRef([])
@@ -3152,6 +3205,16 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   modeRef.current            = mode
   nostalgiaModeRef.current   = nostalgiaMode
   timeSlotScaleFilterRef.current = normalizeScaleVisibilityMode(timeSlotScaleFilter)
+
+  useEffect(() => {
+    const cancelCreateSizeMode = event => {
+      if (event.key !== 'Escape' || !createSizeDraftRef.current) return
+      createSizeDraftRef.current = null
+      setCreateDragPreview(null)
+    }
+    document.addEventListener('keydown', cancelCreateSizeMode)
+    return () => document.removeEventListener('keydown', cancelCreateSizeMode)
+  }, [])
 
   // Derived today/end-date columns at the current zoom level (re-evaluated every render)
   const todayZoomCol        = minuteToZoomCol(todayMinute, timeZoom)
@@ -3394,23 +3457,29 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     try {
       await api.undoTransaction()
       playSound('scheduleUndoRedo')
-      await refreshGanttTransactions()
+      await Promise.all([
+        refreshGanttTransactions(),
+        onNotesChanged?.(),
+      ])
     } catch (err) {
       console.error(err)
       showTransactionFailure(err)
     }
-  }, [refreshGanttTransactions, showTransactionFailure])
+  }, [onNotesChanged, refreshGanttTransactions, showTransactionFailure])
 
   const redoGanttTransaction = useCallback(async () => {
     try {
       await api.redoTransaction()
       playSound('scheduleUndoRedo')
-      await refreshGanttTransactions()
+      await Promise.all([
+        refreshGanttTransactions(),
+        onNotesChanged?.(),
+      ])
     } catch (err) {
       console.error(err)
       showTransactionFailure(err)
     }
-  }, [refreshGanttTransactions, showTransactionFailure])
+  }, [onNotesChanged, refreshGanttTransactions, showTransactionFailure])
 
   // ── Virtual-render state ───────────────────────────────────────────────────
   const [vpSize,      setVpSize]      = useState({ w: 0, h: 0 })
@@ -3491,6 +3560,20 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   }, [rowItems])
   const noteRowMapRef = useRef({})
   noteRowMapRef.current = noteRowMap
+
+  const applyTreeDepthPreset = useCallback(depth => {
+    setTreeDepthPreset(depth)
+    setCollapsedTreeNoteIds(collapsedNoteIdsForTreeDepth(allNotes, workspaceRootNoteId, depth))
+  }, [allNotes, workspaceRootNoteId])
+
+  useEffect(() => {
+    if (!workspaceRootNoteId || allNotes.length === 0) return
+    if (!allNotes.some(note => note.id === workspaceRootNoteId)) return
+    const rootKey = `${project?.id || ''}:${workspaceRootNoteId}`
+    if (initializedTreeRootRef.current === rootKey) return
+    initializedTreeRootRef.current = rootKey
+    applyTreeDepthPreset(1)
+  }, [allNotes, applyTreeDepthPreset, project?.id, workspaceRootNoteId])
 
   const toggleTreeNoteCollapse = useCallback(noteId => {
     setCollapsedTreeNoteIds(prev => {
@@ -3587,6 +3670,39 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       })
     }
   }, [onNoteCreated, onNotesChanged, refreshScheduleData, showWarningPrompt])
+
+  const createNodeInside = useCallback(async parentNoteId => {
+    if (!parentNoteId) return false
+    try {
+      const note = await api.createNote({
+        id: newClientId('note'),
+        title: 'New note',
+        html: '',
+        collapsed: false,
+        parentNoteId,
+      })
+      setCollapsedTreeNoteIds(previous => {
+        const next = new Set(previous)
+        next.delete(parentNoteId)
+        return next
+      })
+      setClickedNoteId(note.id)
+      if (!onNotesChanged) onNoteCreated?.(note)
+      playSound('noteCreate')
+      await onNotesChanged?.()
+      await refreshScheduleData()
+      requestAnimationFrame(() => onNoteOpen?.(note.id, { editTitle: true }))
+      return true
+    } catch (err) {
+      console.error(err)
+      showWarningPrompt({
+        title: 'Create node failed',
+        message: err?.message || 'The child node could not be created.',
+        actions: 'close',
+      })
+      return false
+    }
+  }, [onNoteCreated, onNoteOpen, onNotesChanged, refreshScheduleData, showWarningPrompt])
 
   const createNoteInLane = useCallback(async categoryId => {
     if (!activeDimId) return
@@ -3772,6 +3888,8 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     setVisibleNoteFilterIds(new Set())
     setHiddenCatIds(new Set())
     setHiddenNotesByLane({})
+    setCollapsedTreeNoteIds(new Set())
+    setTreeDepthPreset('all')
   }, [])
 
   const resolveDependencySelection = useCallback((timeSlotIds = null, resolveZoom = null, options = {}) => {
@@ -4259,6 +4377,27 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       if (highlightRef.current) highlightRef.current.style.display = ''
       return
     }
+    if (createSizeDraftRef.current) {
+      const rect = gridBodyRef.current?.getBoundingClientRect(); if (!rect) return
+      const sp = spacingRef.current
+      const rawX = e.clientX - rect.left + scrollLeftRef.current
+      const currentVisualCol = Math.max(0, Math.min(totalColsRef.current - 1, Math.floor(rawX / sp.colW)))
+      const anchorVisualCol = createSizeDraftRef.current.anchorVisualCol
+      const leftVisualCol = Math.min(anchorVisualCol, currentVisualCol)
+      const rightVisualCol = Math.max(anchorVisualCol, currentVisualCol) + 1
+      const startCol = Math.round(zoomColToMinute(leftVisualCol, timeZoomRef.current))
+      const endCol = Math.round(zoomColToMinute(rightVisualCol, timeZoomRef.current))
+      const nextPreview = {
+        ...createSizeDraftRef.current,
+        startCol,
+        duration: Math.max(MIN_TIME_SLOT_DURATION, endCol - startCol),
+      }
+      createSizeDraftRef.current = nextPreview
+      setCreateDragPreview(nextPreview)
+      hoveredCellRef.current = null
+      if (highlightRef.current) highlightRef.current.style.display = ''
+      return
+    }
     if (modeRef.current !== 'timeSlot') {
       hoveredCellRef.current = null
       if (highlightRef.current) highlightRef.current.style.display = ''
@@ -4516,9 +4655,9 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 	  }, [deadlines, earliestStarts, getNoteCellFromPointer, showPastWorkWarning, showProjectEndWarningIfNeeded])
 
   // ── TimeSlot CRUD ─────────────────────────────────────────────────────────
-  const handleCreateTimeSlot = useCallback(async (noteId, startCol, color) => {
+  const handleCreateTimeSlot = useCallback(async (noteId, startCol, color, requestedDuration = null) => {
     clearWarningPrompt()
-    const duration = defaultDurationForZoom(timeZoomRef.current, startCol)
+    const duration = requestedDuration ?? defaultDurationForZoom(timeZoomRef.current, startCol)
     const ms = { id: newClientId('ms'), noteId, startCol, duration, title: '', color: color || '#1a73e8' }
     const existingTimeSlot = timeSlotsRef.current.find(m => m.noteId === noteId)
     if (existingTimeSlot) {
@@ -4578,10 +4717,8 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 	      after: { timeSlots: [ms], dependencies: [] },
 	    })
 	    showProjectEndWarningIfNeeded(ms)
-	  }, [clearWarningPrompt, commitTransaction, showPastWorkWarning, showProjectEndWarningIfNeeded, showWarningPrompt])
-
+  }, [clearWarningPrompt, commitTransaction, showPastWorkWarning, showProjectEndWarningIfNeeded, showWarningPrompt])
   const handleGridDoubleClick = useCallback(e => {
-    if (modeRef.current !== 'timeSlot') return
     if (e.target.closest('[data-ms-id]')) return
     const cell = getNoteCellFromPointer(e)
     if (!cell || cell.type !== 'cell') return
@@ -4593,8 +4730,25 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     }
     if (isNoteRowReadOnly(cell.noteId)) return
     e.preventDefault()
-    handleCreateTimeSlot(cell.noteId, cell.col, cell.color)
-  }, [focusTimeSlotByDoubleClick, getNoteCellFromPointer, handleCreateTimeSlot, isNoteRowReadOnly])
+    if (!nostalgiaModeRef.current && cell.col < todayMinuteRef.current) {
+      showPastWorkWarning('This canvas position is before today. Enable nostalgia mode if you intentionally want to create a time slot in the past.')
+      return
+    }
+    clearWarningPrompt()
+    const startCol = Math.round(zoomColToMinute(cell.visualCol, timeZoomRef.current))
+    const endCol = Math.round(zoomColToMinute(cell.visualCol + 1, timeZoomRef.current))
+    const draft = {
+      noteId: cell.noteId,
+      anchorVisualCol: cell.visualCol,
+      startCol,
+      duration: Math.max(MIN_TIME_SLOT_DURATION, endCol - startCol),
+      color: cell.color || '#1a73e8',
+    }
+    createSizeDraftRef.current = draft
+    setCreateDragPreview(draft)
+    setSelectedIds(new Set())
+    setSelectedDepIds(new Set())
+  }, [clearWarningPrompt, focusTimeSlotByDoubleClick, getNoteCellFromPointer, isNoteRowReadOnly, showPastWorkWarning])
 
   // ── Column insert / delete ─────────────────────────────────────────────────
   const handleInsertTimeUnit = useCallback(async col => {
@@ -5974,6 +6128,15 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     }
     if (e.button !== 0) return
     setContextMenu(null)
+    if (createSizeDraftRef.current) {
+      e.preventDefault()
+      e.stopPropagation()
+      const draft = createSizeDraftRef.current
+      createSizeDraftRef.current = null
+      setCreateDragPreview(null)
+      handleCreateTimeSlot(draft.noteId, draft.startCol, draft.color, draft.duration)
+      return
+    }
     if (inheritancePickRef.current) {
       const cell = getNoteCellFromPointer(e)
       if (cell?.type === 'cell') {
@@ -6002,7 +6165,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 	    }
 	    if (cell?.type === 'cell') showProjectEndWarningIfNeeded({ startCol: cell.col })
 	    startMarqueeDrag(e.clientX, e.clientY)
-	  }, [getNoteCellFromPointer, showPastWorkWarning, showProjectEndWarningIfNeeded]) // eslint-disable-line
+	  }, [getNoteCellFromPointer, handleCreateTimeSlot, showPastWorkWarning, showProjectEndWarningIfNeeded]) // eslint-disable-line
 
   // ── Virtual ranges ─────────────────────────────────────────────────────────
   const { colW, rowH } = spacing
@@ -6139,8 +6302,8 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
               canRedo={transactionHistory.redo.length > 0}
               onUndo={undoGanttTransaction}
               onRedo={redoGanttTransaction}
-              mode={mode}
-              onModeChange={setMode}
+              treeDepthPreset={treeDepthPreset}
+              onTreeDepthPresetChange={applyTreeDepthPreset}
             />
           </div>
           <div className={styles.leftBodyClip}>
@@ -6432,7 +6595,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         </div>
 
         {/* ── Grid body ───────────────────────────────────────────────────── */}
-        <div ref={gridBodyRef} className={styles.gridBody}
+        <div ref={gridBodyRef} className={`${styles.gridBody} ${createDragPreview ? styles.gridBodySizing : ''}`}
           onScroll={handleScroll}
           onWheel={handleGridWheel}
           onMouseMove={handleMouseMove}
@@ -6627,6 +6790,26 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                   style={{ left: hatchLeft, top: HEADER_H + row.top + msY, width: hatchWidth, height: msH }} />
               ) : null
             })}
+
+            {/* Double-click sizing preview for a note that has no time slot yet */}
+            {createDragPreview && (() => {
+              const row = noteRowMap[createDragPreview.noteId]
+              if (!row) return null
+              const visual = getRenderedVisualRange(createDragPreview, timeZoom, scaleVisibilityMode)
+              return (
+                <div
+                  className={styles.timeSlotCreatePreview}
+                  style={{
+                    left: visual.startCol * colW,
+                    top: HEADER_H + row.top + msY,
+                    width: Math.max(visual.duration * colW, 4),
+                    height: msH,
+                    background: createDragPreview.color,
+                  }}>
+                  <span>{formatMinutesDuration(createDragPreview.duration)}</span>
+                </div>
+              )
+            })()}
 
             {/* TimeSlots */}
 	            {visTimeSlots.map(m => {
@@ -6924,6 +7107,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         onSetEarliestStart={handleSetEarliestStart}
         onRemoveEarliestStart={handleRemoveEarliestStart}
         onCreateNoteInLane={createNoteInLane}
+        onCreateNodeInside={createNodeInside}
         onCopyNote={copyNoteToScheduleClipboard}
         onDuplicateNote={duplicateNoteInSchedule}
         onStartInheritancePick={startInheritancePick}
