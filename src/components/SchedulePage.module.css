@@ -3014,7 +3014,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   z-index: 5;
+  border: 0;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  pointer-events: auto;
 }
+
+.boundaryReasonLabel:hover { box-shadow: 0 0 0 1px currentColor, 0 2px 5px rgba(15,23,42,0.18); }
 
 .deadlineReasonLabel { left: 7px; color: #b91c1c; }
 .earliestStartReasonLabel { right: 7px; color: #a16207; }

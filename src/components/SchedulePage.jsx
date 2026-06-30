@@ -1326,10 +1326,21 @@ function ContextMenu({
             onClick={() => { onToggleTimeSlotPin(menu.timeSlotId); onClose() }}>
             {pinnedTimeSlotId === menu.timeSlotId ? 'Unpin time slot' : 'Pin time slot'}
           </button>
-          <button className={styles.ctxItem}
-            onClick={() => { (menu.isTimeLocked ? onUnlockTimeSlot : onLockTimeSlot)(menu.timeSlotId); onClose() }}>
-            {menu.isTimeLocked ? 'Unlock milestone time' : 'Lock milestone in place…'}
-          </button>
+          {menu.isTimeLocked ? <>
+            <button className={styles.ctxItem}
+              onClick={() => { onLockTimeSlot(menu.timeSlotId); onClose() }}>
+              Edit milestone lock reason…
+            </button>
+            <button className={styles.ctxItem}
+              onClick={() => { onUnlockTimeSlot(menu.timeSlotId); onClose() }}>
+              Unlock milestone time
+            </button>
+          </> : (
+            <button className={styles.ctxItem}
+              onClick={() => { onLockTimeSlot(menu.timeSlotId); onClose() }}>
+              Lock milestone in place…
+            </button>
+          )}
           <button className={`${styles.ctxItem} ${styles.ctxItemDanger}`}
             onClick={() => { onDeleteTimeSlot(menu.timeSlotId, menu.label); onClose() }}>
             Delete time slot
@@ -6929,7 +6940,16 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                 <div key={es.id || `es-${es.noteId}-${es.col}`} className={styles.earliestStartHatch}
                   title={es.reason ? `Earliest start date — ${es.reason}` : 'Earliest start date'}
                   style={{ left: 0, top: HEADER_H + row.top, width: hatchWidth, height: row.height }}>
-                  {es.reason && <span className={`${styles.boundaryReasonLabel} ${styles.earliestStartReasonLabel}`}>{es.reason}</span>}
+                  {es.reason && (
+                    <button
+                      type="button"
+                      className={`${styles.boundaryReasonLabel} ${styles.earliestStartReasonLabel}`}
+                      title="Edit earliest-start reason"
+                      onMouseDown={event => event.stopPropagation()}
+                      onClick={event => { event.stopPropagation(); handleEditEarliestStart(es.noteId) }}>
+                      {es.reason}
+                    </button>
+                  )}
                 </div>
               ) : null
             })}
@@ -6960,7 +6980,16 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                 <div key={dl.id || `dl-${dl.noteId}-${dl.col}`} className={styles.deadlineHatch}
                   title={dl.reason ? `Hard deadline — ${dl.reason}` : 'Hard deadline'}
                   style={{ left: hatchLeft, top: HEADER_H + row.top, width: hatchWidth, height: row.height }}>
-                  {dl.reason && <span className={`${styles.boundaryReasonLabel} ${styles.deadlineReasonLabel}`}>{dl.reason}</span>}
+                  {dl.reason && (
+                    <button
+                      type="button"
+                      className={`${styles.boundaryReasonLabel} ${styles.deadlineReasonLabel}`}
+                      title="Edit hard-deadline reason"
+                      onMouseDown={event => event.stopPropagation()}
+                      onClick={event => { event.stopPropagation(); handleEditDeadline(dl.noteId) }}>
+                      {dl.reason}
+                    </button>
+                  )}
                 </div>
               ) : null
             })}
