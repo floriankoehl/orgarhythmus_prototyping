@@ -235,8 +235,10 @@ export const api = {
 
   // Earliest starts
   getEarliestStarts:   ()               => req('GET',    '/earliest-starts'),
-  setEarliestStart:    (noteId, col, scale) => req('PUT', `/earliest-starts/${noteId}`, { col, scale }),
+  setEarliestStart:    (noteId, col, scale, reason = '') => req('PUT', `/earliest-starts/${noteId}`, { col, scale, reason }),
   removeEarliestStart: (noteId)         => req('DELETE', `/earliest-starts/${noteId}`),
+  lockTimeSlot:        (timeSlotId, reason = '') => req('PUT', `/time-slots/${timeSlotId}/time-lock`, { reason }),
+  unlockTimeSlot:      (timeSlotId) => req('DELETE', `/time-slots/${timeSlotId}/time-lock`),
 
   // Note inheritance
   getNoteInheritance:    ()                  => req('GET',    '/note-inheritance'),

@@ -201,7 +201,8 @@ def _init_db():
                 id      TEXT PRIMARY KEY,
                 note_id TEXT NOT NULL UNIQUE,
                 col     INTEGER NOT NULL,
-                scale   TEXT NOT NULL DEFAULT 'day'
+                scale   TEXT NOT NULL DEFAULT 'day',
+                reason  TEXT NOT NULL DEFAULT ''
             )
         """)
         con.execute("""
@@ -526,6 +527,10 @@ def _migrate():
         if 'reason' not in deadline_cols:
             con.execute("ALTER TABLE deadlines ADD COLUMN reason TEXT NOT NULL DEFAULT ''")
 
+        earliest_start_cols = [r[1] for r in con.execute("PRAGMA table_info(earliest_starts)").fetchall()]
+        if 'reason' not in earliest_start_cols:
+            con.execute("ALTER TABLE earliest_starts ADD COLUMN reason TEXT NOT NULL DEFAULT ''")
+
         con.execute("""
             CREATE TABLE IF NOT EXISTS transaction_history (
                 id               TEXT PRIMARY KEY,
@@ -846,6 +851,9 @@ class DeadlineColIn(BaseModel):
     scale: Optional[str] = None
     reason: Optional[str] = ''
 
+class TimeLockIn(BaseModel):
+    reason: Optional[str] = ''
+
 class NoteInheritanceIn(BaseModel):
     parentNoteId: str
 
@@ -1032,7 +1040,13 @@ def _dl(row) -> dict:
 
 def _es(row) -> dict:
     d = dict(row)
-    return {"id": d["id"], "noteId": d["note_id"], "col": d["col"], "scale": _normalize_planning_scale(d.get("scale"), d["col"])}
+    return {
+        "id": d["id"],
+        "noteId": d["note_id"],
+        "col": d["col"],
+        "scale": _normalize_planning_scale(d.get("scale"), d["col"]),
+        "reason": d.get("reason", "") or "",
+    }
 
 def _inheritance(row) -> dict:
     d = dict(row)
@@ -2743,7 +2757,11 @@ def _restore_note_tree_snapshot(con, project_id: str, snapshot: dict):
         for row in snapshot.get("deadlines") or []
     ]
     _insert_snapshot_rows(con, "deadlines", ("id", "note_id", "col", "scale", "reason"), archived_deadlines)
-    _insert_snapshot_rows(con, "earliest_starts", ("id", "note_id", "col", "scale"), snapshot.get("earliestStarts") or [])
+    archived_earliest_starts = [
+        {**row, "reason": row.get("reason") or ""}
+        for row in snapshot.get("earliestStarts") or []
+    ]
+    _insert_snapshot_rows(con, "earliest_starts", ("id", "note_id", "col", "scale", "reason"), archived_earliest_starts)
     _insert_snapshot_rows(con, "persona_note_assignments", ("persona_id", "note_id"), snapshot.get("personaNoteAssignments") or [])
     _insert_snapshot_rows(con, "persona_time_slot_assignments", ("persona_id", "time_slot_id"), snapshot.get("personaTimeSlotAssignments") or [])
     _insert_snapshot_rows(con, "note_inheritance", ("child_note_id", "parent_note_id"), snapshot.get("noteInheritance") or [])
@@ -4108,10 +4126,16 @@ def set_earliest_start(note_id: str, data: DeadlineColIn, user: dict = Depends(c
                 })
         existing = con.execute("SELECT id FROM earliest_starts WHERE note_id = ?", (note_id,)).fetchone()
         if existing:
-            con.execute("UPDATE earliest_starts SET col = ?, scale = ? WHERE note_id = ?", (data.col, scale, note_id))
+            con.execute(
+                "UPDATE earliest_starts SET col = ?, scale = ?, reason = ? WHERE note_id = ?",
+                (data.col, scale, data.reason or "", note_id),
+            )
         else:
             eid = str(uuid.uuid4())
-            con.execute("INSERT INTO earliest_starts (id, note_id, col, scale) VALUES (?, ?, ?, ?)", (eid, note_id, data.col, scale))
+            con.execute(
+                "INSERT INTO earliest_starts (id, note_id, col, scale, reason) VALUES (?, ?, ?, ?, ?)",
+                (eid, note_id, data.col, scale, data.reason or ""),
+            )
         row = con.execute("SELECT * FROM earliest_starts WHERE note_id = ?", (note_id,)).fetchone()
     return _es(row)
 
@@ -4120,6 +4144,49 @@ def remove_earliest_start(note_id: str, user: dict = Depends(current_user)):
     with _db() as con:
         assert_project_access(_project_id_for_note(con, note_id), user)
         con.execute("DELETE FROM earliest_starts WHERE note_id = ?", (note_id,))
+
+@app.put("/time-slots/{time_slot_id}/time-lock")
+def lock_time_slot(time_slot_id: str, data: TimeLockIn, user: dict = Depends(current_user)):
+    with _db() as con:
+        project_id = _project_id_for_time_slot(con, time_slot_id)
+        assert_project_access(project_id, user)
+        row = con.execute("SELECT * FROM time_slots WHERE id = ?", (time_slot_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Time slot not found")
+        time_slot = _time_slot(row)
+        note_id = time_slot["noteId"]
+        scale = _planning_scale_for_time_slot(time_slot)
+        reason = data.reason or ""
+        con.execute(
+            """
+            INSERT INTO earliest_starts (id, note_id, col, scale, reason)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(note_id) DO UPDATE SET col = excluded.col, scale = excluded.scale, reason = excluded.reason
+            """,
+            (str(uuid.uuid4()), note_id, time_slot["startCol"], scale, reason),
+        )
+        con.execute(
+            """
+            INSERT INTO deadlines (id, note_id, col, scale, reason)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(note_id) DO UPDATE SET col = excluded.col, scale = excluded.scale, reason = excluded.reason
+            """,
+            (str(uuid.uuid4()), note_id, time_slot["startCol"] + time_slot["duration"], scale, reason),
+        )
+        earliest_start = con.execute("SELECT * FROM earliest_starts WHERE note_id = ?", (note_id,)).fetchone()
+        deadline = con.execute("SELECT * FROM deadlines WHERE note_id = ?", (note_id,)).fetchone()
+    return {"earliestStart": _es(earliest_start), "deadline": _dl(deadline)}
+
+@app.delete("/time-slots/{time_slot_id}/time-lock", status_code=204)
+def unlock_time_slot(time_slot_id: str, user: dict = Depends(current_user)):
+    with _db() as con:
+        project_id = _project_id_for_time_slot(con, time_slot_id)
+        assert_project_access(project_id, user)
+        row = con.execute("SELECT note_id FROM time_slots WHERE id = ?", (time_slot_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Time slot not found")
+        con.execute("DELETE FROM earliest_starts WHERE note_id = ?", (row["note_id"],))
+        con.execute("DELETE FROM deadlines WHERE note_id = ?", (row["note_id"],))
 
 
 # ── Project export ─────────────────────────────────────────────────────────────

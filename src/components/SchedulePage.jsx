@@ -1186,7 +1186,7 @@ function WarningSystemPanel({
 // ── Context menu ──────────────────────────────────────────────────────────────
 function ContextMenu({
   menu, onClose, onCreate, onInsertTimeUnit, onDeleteTimeUnit, onSetDeadline, onEditDeadline, onRemoveDeadline,
-  onSetEarliestStart, onRemoveEarliestStart,
+  onSetEarliestStart, onEditEarliestStart, onRemoveEarliestStart, onLockTimeSlot, onUnlockTimeSlot,
   onCreateNoteInLane, onCreateNodeInside,
   onCopyNote, onDuplicateNote, onStartInheritancePick, onSeeInheritance,
   onDeleteTimeSlot, onToggleTimeSlotPin, pinnedTimeSlotId, onEditDepReason, onDeleteDep,
@@ -1251,10 +1251,16 @@ function ContextMenu({
               </button>
           }
           {menu.hasEarliestStart
-            ? <button className={styles.ctxItem}
-                onClick={() => { onRemoveEarliestStart(menu.noteId); onClose() }}>
-                Remove earliest start date
-              </button>
+            ? <>
+                <button className={styles.ctxItem}
+                  onClick={() => { onEditEarliestStart(menu.noteId); onClose() }}>
+                  {menu.earliestStartReason ? 'Edit earliest-start reason…' : 'Add earliest-start reason…'}
+                </button>
+                <button className={styles.ctxItem}
+                  onClick={() => { onRemoveEarliestStart(menu.noteId); onClose() }}>
+                  Remove earliest start date
+                </button>
+              </>
             : <button className={styles.ctxItem}
                 onClick={() => { onSetEarliestStart(menu.noteId, menu.col); onClose() }}>
                 Set earliest start date here
@@ -1319,6 +1325,10 @@ function ContextMenu({
           <button className={styles.ctxItem}
             onClick={() => { onToggleTimeSlotPin(menu.timeSlotId); onClose() }}>
             {pinnedTimeSlotId === menu.timeSlotId ? 'Unpin time slot' : 'Pin time slot'}
+          </button>
+          <button className={styles.ctxItem}
+            onClick={() => { (menu.isTimeLocked ? onUnlockTimeSlot : onLockTimeSlot)(menu.timeSlotId); onClose() }}>
+            {menu.isTimeLocked ? 'Unlock milestone time' : 'Lock milestone in place…'}
           </button>
           <button className={`${styles.ctxItem} ${styles.ctxItemDanger}`}
             onClick={() => { onDeleteTimeSlot(menu.timeSlotId, menu.label); onClose() }}>
@@ -2686,6 +2696,12 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const [deadlineReasonModal, setDeadlineReasonModal] = useState(null) // null | { noteId, col }
   const [deadlineReasonDraft, setDeadlineReasonDraft] = useState('')
   const deadlineReasonInputRef = useRef()
+  const [earliestStartReasonModal, setEarliestStartReasonModal] = useState(null) // null | { noteId, col }
+  const [earliestStartReasonDraft, setEarliestStartReasonDraft] = useState('')
+  const earliestStartReasonInputRef = useRef()
+  const [timeLockModal, setTimeLockModal] = useState(null) // null | { timeSlotId }
+  const [timeLockReasonDraft, setTimeLockReasonDraft] = useState('')
+  const timeLockReasonInputRef = useRef()
   const [colorDimId,        setColorDimId]        = useState('')
   const [activeFilterIds, setActiveFilterIds] = useState([])
   const [quickFilters, setQuickFilters] = useState([])
@@ -4654,13 +4670,15 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 
     const deadline = deadlines.find(d => d.noteId === cell.noteId)
     const hasDeadline = Boolean(deadline)
-    const hasEarliestStart = earliestStarts.some(e => e.noteId === cell.noteId)
+    const earliestStart = earliestStarts.find(e => e.noteId === cell.noteId)
+    const hasEarliestStart = Boolean(earliestStart)
     const rowMs = timeSlotsRef.current.find(m => m.noteId === cell.noteId)
     const readOnly = !!rowMs && !isTimeSlotEditableAtZoom(rowMs.duration, timeZoomRef.current, rowMs.startCol)
     const readOnlyLabel = rowMs ? scaleLabelForZoom(getTimeSlotLevel(rowMs.duration, rowMs.startCol)) : null
     setClickedNoteId(cell.noteId)
     setContextMenu({ type: 'cell', x: e.clientX, y: e.clientY, col: cell.col,
-      noteId: cell.noteId, noteTitle: cell.noteTitle, color: cell.color, hasDeadline, deadlineReason: deadline?.reason || '', hasEarliestStart,
+      noteId: cell.noteId, noteTitle: cell.noteTitle, color: cell.color, hasDeadline, deadlineReason: deadline?.reason || '',
+      hasEarliestStart, earliestStartReason: earliestStart?.reason || '',
       isReadOnly: readOnly, readOnlyLabel, hasTimeSlot: !!rowMs })
 	  }, [deadlines, earliestStarts, getNoteCellFromPointer, showPastWorkWarning, showProjectEndWarningIfNeeded])
 
@@ -5672,17 +5690,39 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   }, [])
 
   const handleSetEarliestStart = useCallback(async (noteId, col) => {
+    const existing = earliestStarts.find(start => start.noteId === noteId)
+    setEarliestStartReasonDraft(existing?.reason || '')
+    setEarliestStartReasonModal({ noteId, col: existing?.col ?? col, scale: existing?.scale || null })
+  }, [earliestStarts])
+
+  const handleEditEarliestStart = useCallback(noteId => {
+    const existing = earliestStarts.find(start => start.noteId === noteId)
+    if (!existing) return
+    setEarliestStartReasonDraft(existing.reason || '')
+    setEarliestStartReasonModal({ noteId, col: existing.col, scale: existing.scale })
+  }, [earliestStarts])
+
+  const handleSaveEarliestStart = useCallback(async () => {
+    if (!earliestStartReasonModal) return
     try {
-      const scale = planningScaleForZoom(timeZoomRef.current)
-      const alignedCol = zoomColToMinute(minuteToZoomCol(col, timeZoomRef.current), timeZoomRef.current)
-      const es = await api.setEarliestStart(noteId, alignedCol, scale)
+      const scale = earliestStartReasonModal.scale || planningScaleForZoom(timeZoomRef.current)
+      const alignedCol = earliestStartReasonModal.scale
+        ? earliestStartReasonModal.col
+        : zoomColToMinute(minuteToZoomCol(earliestStartReasonModal.col, timeZoomRef.current), timeZoomRef.current)
+      const es = await api.setEarliestStart(
+        earliestStartReasonModal.noteId,
+        alignedCol,
+        scale,
+        earliestStartReasonDraft.trim()
+      )
       playSound('earliestStartSet')
-      setEarliestStarts(prev => { const next = prev.filter(e => e.noteId !== noteId); return [...next, es] })
+      setEarliestStarts(prev => { const next = prev.filter(e => e.noteId !== earliestStartReasonModal.noteId); return [...next, es] })
+      setEarliestStartReasonModal(null)
     } catch (err) {
       console.error(err)
       showWarningPrompt({ title: 'Earliest start date', message: err.message || 'Earliest start date could not be set for this planning scale.', actions: 'close' })
     }
-  }, [showWarningPrompt])
+  }, [earliestStartReasonDraft, earliestStartReasonModal, showWarningPrompt])
 
   const handleRemoveEarliestStart = useCallback(async noteId => {
     try {
@@ -5691,6 +5731,43 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       setEarliestStarts(prev => prev.filter(e => e.noteId !== noteId))
     } catch (err) { console.error(err) }
   }, [])
+
+  const handleLockTimeSlot = useCallback(timeSlotId => {
+    const timeSlot = timeSlotsRef.current.find(candidate => candidate.id === timeSlotId)
+    if (!timeSlot) return
+    const deadline = deadlines.find(item => item.noteId === timeSlot.noteId)
+    const earliestStart = earliestStarts.find(item => item.noteId === timeSlot.noteId)
+    setTimeLockReasonDraft(deadline?.reason || earliestStart?.reason || '')
+    setTimeLockModal({ timeSlotId })
+  }, [deadlines, earliestStarts])
+
+  const handleSaveTimeLock = useCallback(async () => {
+    if (!timeLockModal) return
+    try {
+      const result = await api.lockTimeSlot(timeLockModal.timeSlotId, timeLockReasonDraft.trim())
+      setDeadlines(previous => [...previous.filter(item => item.noteId !== result.deadline.noteId), result.deadline])
+      setEarliestStarts(previous => [...previous.filter(item => item.noteId !== result.earliestStart.noteId), result.earliestStart])
+      playSound('deadlineSet')
+      setTimeLockModal(null)
+    } catch (error) {
+      console.error(error)
+      showWarningPrompt({ title: 'Milestone lock', message: error.message || 'The milestone could not be locked.', actions: 'close' })
+    }
+  }, [showWarningPrompt, timeLockModal, timeLockReasonDraft])
+
+  const handleUnlockTimeSlot = useCallback(async timeSlotId => {
+    const timeSlot = timeSlotsRef.current.find(candidate => candidate.id === timeSlotId)
+    if (!timeSlot) return
+    try {
+      await api.unlockTimeSlot(timeSlotId)
+      setDeadlines(previous => previous.filter(item => item.noteId !== timeSlot.noteId))
+      setEarliestStarts(previous => previous.filter(item => item.noteId !== timeSlot.noteId))
+      playSound('deadlineSet')
+    } catch (error) {
+      console.error(error)
+      showWarningPrompt({ title: 'Milestone lock', message: error.message || 'The milestone could not be unlocked.', actions: 'close' })
+    }
+  }, [showWarningPrompt])
 
   const handleDeleteTimeSlotRequest = useCallback((timeSlotId, label) => {
     setDeleteDraft({ items: [{ key: `timeSlot:${timeSlotId}`, type: 'timeSlot', id: timeSlotId, label, checked: true }] })
@@ -5880,6 +5957,14 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   useEffect(() => {
     if (deadlineReasonModal) setTimeout(() => deadlineReasonInputRef.current?.focus(), 30)
   }, [deadlineReasonModal])
+
+  useEffect(() => {
+    if (earliestStartReasonModal) setTimeout(() => earliestStartReasonInputRef.current?.focus(), 30)
+  }, [earliestStartReasonModal])
+
+  useEffect(() => {
+    if (timeLockModal) setTimeout(() => timeLockReasonInputRef.current?.focus(), 30)
+  }, [timeLockModal])
 
   // ── Left-panel resize ─────────────────────────────────────────────────────
   const [leftPanelWidth, setLeftPanelWidth] = useState(220)
@@ -6842,8 +6927,10 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
               const hatchWidth = Math.max(0, visualCol) * colW
               return hatchWidth > 0 ? (
                 <div key={es.id || `es-${es.noteId}-${es.col}`} className={styles.earliestStartHatch}
-                  title="Earliest start date"
-                  style={{ left: 0, top: HEADER_H + row.top, width: hatchWidth, height: row.height }} />
+                  title={es.reason ? `Earliest start date — ${es.reason}` : 'Earliest start date'}
+                  style={{ left: 0, top: HEADER_H + row.top, width: hatchWidth, height: row.height }}>
+                  {es.reason && <span className={`${styles.boundaryReasonLabel} ${styles.earliestStartReasonLabel}`}>{es.reason}</span>}
+                </div>
               ) : null
             })}
 
@@ -6872,7 +6959,9 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
               return hatchWidth > 0 ? (
                 <div key={dl.id || `dl-${dl.noteId}-${dl.col}`} className={styles.deadlineHatch}
                   title={dl.reason ? `Hard deadline — ${dl.reason}` : 'Hard deadline'}
-                  style={{ left: hatchLeft, top: HEADER_H + row.top, width: hatchWidth, height: row.height }} />
+                  style={{ left: hatchLeft, top: HEADER_H + row.top, width: hatchWidth, height: row.height }}>
+                  {dl.reason && <span className={`${styles.boundaryReasonLabel} ${styles.deadlineReasonLabel}`}>{dl.reason}</span>}
+                </div>
               ) : null
             })}
 
@@ -7011,7 +7100,14 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                     if (paintCat || paintPersonaId) return
                     const note = notes.find(g => g.id === m.noteId)
                     const label = `${note?.title ?? 'Time slot'} · ${m.title || minuteToLabel(m.startCol, timeZoom)}`
-                    setContextMenu({ type: 'timeSlot', x: e.clientX, y: e.clientY, timeSlotId: m.id, noteId: m.noteId, label })
+                    const explicitDeadline = deadlines.find(item => item.noteId === m.noteId)
+                    const explicitEarliestStart = earliestStarts.find(item => item.noteId === m.noteId)
+                    const isTimeLocked = Boolean(
+                      explicitDeadline && explicitEarliestStart
+                      && explicitDeadline.col === m.startCol + m.duration
+                      && explicitEarliestStart.col === m.startCol
+                    )
+                    setContextMenu({ type: 'timeSlot', x: e.clientX, y: e.clientY, timeSlotId: m.id, noteId: m.noteId, label, isTimeLocked })
 	                  }}>
 	                  <div
                     className={[styles.msHandle, isDepMode && styles.depHandle, isDepMode && isSource && styles.depHandleSource].filter(Boolean).join(' ')}
@@ -7236,7 +7332,10 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         onEditDeadline={handleEditDeadline}
         onRemoveDeadline={handleRemoveDeadline}
         onSetEarliestStart={handleSetEarliestStart}
+        onEditEarliestStart={handleEditEarliestStart}
         onRemoveEarliestStart={handleRemoveEarliestStart}
+        onLockTimeSlot={handleLockTimeSlot}
+        onUnlockTimeSlot={handleUnlockTimeSlot}
         onCreateNoteInLane={createNoteInLane}
         onCreateNodeInside={createNodeInside}
         onCopyNote={copyNoteToScheduleClipboard}
@@ -7428,6 +7527,58 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
             <div className={styles.deleteModalActions}>
               <button className={styles.deleteCancelBtn} onClick={() => setDeadlineReasonModal(null)}>Cancel</button>
               <button className={styles.deleteConfirmBtn} onClick={handleSaveDeadline}>Save hard deadline</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {earliestStartReasonModal && createPortal(
+        <div className={styles.deleteModalBackdrop} onMouseDown={() => setEarliestStartReasonModal(null)}>
+          <div className={styles.reasonModal} role="dialog" aria-modal="true" onMouseDown={e => e.stopPropagation()}>
+            <div className={styles.deleteModalTitle}>Earliest start reason</div>
+            <div className={styles.reasonModalSub}>Explain why this fixed start boundary exists (optional)</div>
+            <textarea
+              ref={earliestStartReasonInputRef}
+              className={styles.reasonInput}
+              value={earliestStartReasonDraft}
+              onChange={e => setEarliestStartReasonDraft(e.target.value)}
+              placeholder="e.g. Venue access only begins at this time"
+              rows={3}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveEarliestStart() }
+                if (e.key === 'Escape') setEarliestStartReasonModal(null)
+              }}
+            />
+            <div className={styles.deleteModalActions}>
+              <button className={styles.deleteCancelBtn} onClick={() => setEarliestStartReasonModal(null)}>Cancel</button>
+              <button className={styles.deleteConfirmBtn} onClick={handleSaveEarliestStart}>Save earliest start</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {timeLockModal && createPortal(
+        <div className={styles.deleteModalBackdrop} onMouseDown={() => setTimeLockModal(null)}>
+          <div className={styles.reasonModal} role="dialog" aria-modal="true" onMouseDown={e => e.stopPropagation()}>
+            <div className={styles.deleteModalTitle}>Lock milestone in place</div>
+            <div className={styles.reasonModalSub}>Creates a fixed earliest start and hard deadline at the milestone’s exact edges.</div>
+            <textarea
+              ref={timeLockReasonInputRef}
+              className={styles.reasonInput}
+              value={timeLockReasonDraft}
+              onChange={e => setTimeLockReasonDraft(e.target.value)}
+              placeholder="e.g. Meeting time confirmed with all participants"
+              rows={3}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveTimeLock() }
+                if (e.key === 'Escape') setTimeLockModal(null)
+              }}
+            />
+            <div className={styles.deleteModalActions}>
+              <button className={styles.deleteCancelBtn} onClick={() => setTimeLockModal(null)}>Cancel</button>
+              <button className={styles.deleteConfirmBtn} onClick={handleSaveTimeLock}>Lock milestone</button>
             </div>
           </div>
         </div>,

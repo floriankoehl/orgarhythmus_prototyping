@@ -2998,6 +2998,27 @@
   z-index: 2;
 }
 
+.boundaryReasonLabel {
+  position: absolute;
+  top: 3px;
+  display: block;
+  max-width: 260px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.92);
+  box-shadow: 0 1px 3px rgba(15,23,42,0.14);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 5;
+}
+
+.deadlineReasonLabel { left: 7px; color: #b91c1c; }
+.earliestStartReasonLabel { right: 7px; color: #a16207; }
+
 /* Parent time-slot boundaries are movable planning bounds, deliberately
    distinct from fixed earliest starts and hard deadlines. */
 .inheritedStartHatch,
