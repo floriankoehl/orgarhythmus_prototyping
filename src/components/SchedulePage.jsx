@@ -27,11 +27,11 @@ const DRAG_AUTOSCROLL_EDGE_PX = 72
 const DRAG_AUTOSCROLL_MAX_PX = 28
 const WARNING_PROMPT_TIMEOUT_MS = 20000
 
-const DEFAULT_SPACING = { colW: 110, rowH: 36, rowGap: 0, laneGap: 28 }
+const DEFAULT_COLUMN_WIDTH = 90
+const DEFAULT_SPACING = { colW: DEFAULT_COLUMN_WIDTH, rowH: 36, rowGap: 0, laneGap: 28 }
 const COL_WIDTH_MIN = 20
 const MINUTE_COL_WIDTH_MIN = 8
 const COL_WIDTH_MAX = 250
-const DEFAULT_COL_WIDTH_BY_ZOOM = { minutes: 40, hours: 64, days: 110, weeks: 130, months: 110 }
 const INIT_TOTAL_COLS = 60    // initial column count; grows to cover viewport + buffer on mount
 const EDGE_COLS       = 5     // columns from right edge before extending
 
@@ -49,7 +49,7 @@ const TIME_ZOOM_LEVELS = [
   { value: 'months', label: 'Months', short: 'mo', unit: 60 * 24 * 30 },
 ]
 const TIME_ZOOM_BY_VALUE = Object.fromEntries(TIME_ZOOM_LEVELS.map(level => [level.value, level]))
-const DEFAULT_TIME_ZOOM = 'days'
+const DEFAULT_TIME_ZOOM = 'hours'
 const ZOOM_ORDER = TIME_ZOOM_LEVELS.map(l => l.value)
 const SCALE_VISIBILITY_MODES = {
   HIERARCHY: 'hierarchy',
@@ -103,13 +103,16 @@ function persistedPlanningScaleForZoom(timeZoom) {
 }
 
 function normalizePerspectiveTimeZoom(state = {}) {
-  return normalizeTimeZoom(
-    state.timeZoom
-    ?? state.planningScale
-    ?? state.metric
-    ?? state.timeScale
-    ?? state.scale
-  )
+  const explicitZoom = state.timeZoom ?? state.timeScale
+  if (explicitZoom) return normalizeTimeZoom(explicitZoom)
+  const legacyScale = state.metric ?? state.scale ?? state.planningScale
+  if (legacyScale === 'minute' || legacyScale === 'minutes') return DEFAULT_TIME_ZOOM
+  return normalizeTimeZoom(legacyScale)
+}
+
+function explicitProjectTimeZoom(project) {
+  const raw = project?.metric ?? project?.timeZoom ?? project?.timeScale ?? project?.scale
+  return raw ? normalizeTimeZoom(raw) : null
 }
 
 function normalizeToolbarMode(value) {
@@ -120,14 +123,11 @@ function normalizeAxisMode(value) {
   return value === 'numbers' || value === 'none' ? value : 'full'
 }
 
-function normalizeColWidthByZoom(raw = {}) {
-  return {
-    minutes: Math.max(MINUTE_COL_WIDTH_MIN, Math.min(COL_WIDTH_MAX, Number(raw?.minutes) || DEFAULT_COL_WIDTH_BY_ZOOM.minutes)),
-    hours:   Math.max(COL_WIDTH_MIN,        Math.min(COL_WIDTH_MAX, Number(raw?.hours)   || DEFAULT_COL_WIDTH_BY_ZOOM.hours)),
-    days:    Math.max(COL_WIDTH_MIN,        Math.min(COL_WIDTH_MAX, Number(raw?.days)    || DEFAULT_COL_WIDTH_BY_ZOOM.days)),
-    weeks:   Math.max(COL_WIDTH_MIN,        Math.min(COL_WIDTH_MAX, Number(raw?.weeks)   || DEFAULT_COL_WIDTH_BY_ZOOM.weeks)),
-    months:  Math.max(COL_WIDTH_MIN,        Math.min(COL_WIDTH_MAX, Number(raw?.months)  || DEFAULT_COL_WIDTH_BY_ZOOM.months)),
-  }
+function normalizeColumnWidth(value, timeZoom = DEFAULT_TIME_ZOOM) {
+  return Math.max(
+    minColWidthForZoom(timeZoom),
+    Math.min(COL_WIDTH_MAX, Number(value) || DEFAULT_COLUMN_WIDTH)
+  )
 }
 
 function normalizeSchedulePerspectiveState(rawState = {}) {
@@ -139,10 +139,12 @@ function normalizeSchedulePerspectiveState(rawState = {}) {
     ?? state.scaleMode
     ?? state.visibilityMode
   )
-  const spacing = { ...DEFAULT_SPACING, ...(state.spacing ?? {}) }
-  spacing.colW = Math.max(
-    minColWidthForZoom(timeZoom),
-    Math.min(COL_WIDTH_MAX, Number(spacing.colW) || DEFAULT_SPACING.colW)
+  const legacyZoomWidths = state.colWidthByZoom ?? {}
+  const rawSpacing = state.spacing ?? {}
+  const spacing = { ...DEFAULT_SPACING, ...rawSpacing }
+  spacing.colW = normalizeColumnWidth(
+    rawSpacing.colW ?? state.columnWidth ?? state.colWidth ?? legacyZoomWidths[timeZoom],
+    timeZoom
   )
 
   return {
@@ -164,7 +166,6 @@ function normalizeSchedulePerspectiveState(rawState = {}) {
     timeSlotScaleFilter: visibilityMode,
     scaleVisibilityMode: visibilityMode,
     spacing,
-    colWidthByZoom: normalizeColWidthByZoom(state.colWidthByZoom ?? {}),
     leftPanelWidth: typeof state.leftPanelWidth === 'number'
       ? Math.max(120, Math.min(600, state.leftPanelWidth))
       : 220,
@@ -898,6 +899,43 @@ function collapsedNoteIdsForTreeDepth(notes, rootNoteId, depthPreset) {
   return collapsed
 }
 
+function collectDescendantNoteIds(notes, rootNoteId) {
+  if (!rootNoteId) return new Set()
+  const childrenByParent = new Map()
+  notes.forEach(note => {
+    if (!note.parentNoteId) return
+    if (!childrenByParent.has(note.parentNoteId)) childrenByParent.set(note.parentNoteId, [])
+    childrenByParent.get(note.parentNoteId).push(note)
+  })
+  const descendants = new Set()
+  const pending = [...(childrenByParent.get(rootNoteId) || [])]
+  while (pending.length) {
+    const note = pending.shift()
+    if (!note || descendants.has(note.id)) continue
+    descendants.add(note.id)
+    pending.push(...(childrenByParent.get(note.id) || []))
+  }
+  return descendants
+}
+
+function windowFromTimeSlots(slots) {
+  if (!slots.length) return null
+  const start = Math.min(...slots.map(slot => Math.max(0, Number(slot.startCol) || 0)))
+  const end = Math.max(...slots.map(slot => {
+    const slotStart = Math.max(0, Number(slot.startCol) || 0)
+    return slotStart + Math.max(MIN_TIME_SLOT_DURATION, Number(slot.duration) || MIN_TIME_SLOT_DURATION)
+  }))
+  return { start, end, duration: Math.max(MIN_TIME_SLOT_DURATION, end - start), slots }
+}
+
+function zoomForTimeWindow(window) {
+  if (!window) return DEFAULT_TIME_ZOOM
+  return window.slots.reduce((largest, slot) => {
+    const current = getTimeSlotLevel(slot.duration, slot.startCol)
+    return ZOOM_ORDER.indexOf(current) > ZOOM_ORDER.indexOf(largest) ? current : largest
+  }, getTimeSlotLevel(window.duration, window.start))
+}
+
 function withTreeMeta(note, treeMeta) {
   return {
     depth: 0,
@@ -1044,7 +1082,6 @@ function buildRowItems(notes, categories, assignments, assignmentOrders, activeD
 function SpacingPanel({
   spacing, onChange, onClose, anchorRef, axisMode, onAxisModeChange,
   timeZoom, onTimeZoomChange,
-  colWidthByZoom, onColWidthByZoomChange,
   showDepLabels, onShowDepLabelsChange,
   showDeps, onShowDepsChange,
   hideCrossCatDeps, onHideCrossCatDepsChange,
@@ -1072,6 +1109,7 @@ function SpacingPanel({
 
   const set = (key, val) => onChange({ ...spacing, [key]: +val })
   const rows = [
+    ['colW',    'Column width', minColWidthForZoom(timeZoom), COL_WIDTH_MAX, 'px'],
     ['rowH',    'Row height',   20,  80, 'px'],
     ['laneGap', 'Lane gap',      8,  80, 'px'],
   ]
@@ -1080,19 +1118,6 @@ function SpacingPanel({
       <div className={styles.spacingPanelHdr}>
         <span>Visual settings</span>
         <button className={styles.spacingClose} onClick={onClose}>✕</button>
-      </div>
-      <div className={styles.colWidthGroup}>
-        <span className={styles.spacingGroupLabel}>Column width</span>
-        {TIME_ZOOM_LEVELS.map(level => (
-          <label key={level.value} className={`${styles.spacingRow} ${timeZoom === level.value ? styles.spacingRowActive : ''}`}>
-            <span className={styles.spacingZoomTag}>{level.label}</span>
-            <input type="range" className={styles.spacingSlider}
-              min={minColWidthForZoom(level.value)} max={COL_WIDTH_MAX}
-              value={colWidthByZoom?.[level.value] ?? DEFAULT_COL_WIDTH_BY_ZOOM[level.value]}
-              onChange={e => onColWidthByZoomChange(level.value, +e.target.value)} />
-            <span className={styles.spacingVal}>{colWidthByZoom?.[level.value] ?? DEFAULT_COL_WIDTH_BY_ZOOM[level.value]}px</span>
-          </label>
-        ))}
       </div>
       {rows.map(([key, label, min, max, unit]) => (
         <label key={key} className={styles.spacingRow}>
@@ -1337,28 +1362,12 @@ function ContextMenu({
         {menu.type === 'note' && (
           <>
             {newNodeInsideControl}
-            <button className={styles.ctxItem}
-              onClick={() => { onCopyNote(menu.noteId); onClose() }}>
-              Copy note — {menu.noteTitle}
-            </button>
-            <button className={styles.ctxItem}
-              onClick={() => { onDuplicateNote(menu.noteId); onClose() }}>
-              Duplicate note
-            </button>
             {onOpenAsProject && (
               <button className={styles.ctxItem}
                 onClick={() => { onOpenAsProject(menu.noteId); onClose() }}>
                 Open as project
               </button>
             )}
-            <button className={styles.ctxItem}
-              onClick={() => { onStartInheritancePick(menu.noteId, 'child'); onClose() }}>
-              Inherit from...
-            </button>
-            <button className={styles.ctxItem}
-              onClick={() => { onStartInheritancePick(menu.noteId, 'parent'); onClose() }}>
-              Make parent of...
-            </button>
             {menu.hasTimeSlot && (
               <button className={styles.ctxItem}
                 onClick={() => { onSeeInheritance(menu.noteId); onClose() }}>
@@ -1942,7 +1951,6 @@ function GanttToolbar({
   categories, onToggleCategory, onShowAllCategories, onShowOnlyCategory,
   savedFilters, activeLaneFilterId, onLaneGroupChange,
   spacing, onSpacingChange,
-  colWidthByZoom, onColWidthByZoomChange,
   axisMode, onAxisModeChange,
   timeZoom, onTimeZoomChange,
   showDepLabels, onShowDepLabelsChange,
@@ -2056,7 +2064,6 @@ function GanttToolbar({
             onClose={closeSettings} anchorRef={settingsBtnRef}
             axisMode={axisMode} onAxisModeChange={onAxisModeChange}
             timeZoom={timeZoom} onTimeZoomChange={onTimeZoomChange}
-            colWidthByZoom={colWidthByZoom} onColWidthByZoomChange={onColWidthByZoomChange}
             showDepLabels={showDepLabels} onShowDepLabelsChange={onShowDepLabelsChange}
             showDeps={showDeps} onShowDepsChange={onShowDepsChange}
             hideCrossCatDeps={hideCrossCatDeps} onHideCrossCatDepsChange={onHideCrossCatDepsChange}
@@ -2833,7 +2840,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const personaCursor = usePersonaCursor(activePersona)
   const [floatingPanel, setFloatingPanel] = useState(null)
   const [spacing,     setSpacing]     = useState(DEFAULT_SPACING)
-  const [colWidthByZoom, setColWidthByZoom] = useState(DEFAULT_COL_WIDTH_BY_ZOOM)
   const [hiddenCatIds, setHiddenCatIds] = useState(new Set())
   const [hiddenNotesByLane, setHiddenNotesByLane] = useState({})
   const [revealedConflictNoteIds, setRevealedConflictNoteIds] = useState(new Set())
@@ -2855,8 +2861,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const externalResolveHandledRef = useRef(null)
   const reportDependencyViolationsRef = useRef(null)
   const [dragOverNoteId, setDragOverNoteId] = useState(null)
-  const [dragOverNoteReorder, setDragOverNoteReorder] = useState(null)
-  const [draggingNoteReorderId, setDraggingNoteReorderId] = useState(null)
   const [dragOverLaneCatId, setDragOverLaneCatId] = useState(null)
   const [draggingCatId, setDraggingCatId] = useState(null)
   const [dragOverCatReorderId, setDragOverCatReorderId] = useState(null)
@@ -2969,8 +2973,26 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     [savedFilters, activeLaneFilterId]
   )
 
+  const defaultScheduleWindow = useMemo(() => {
+    if (!timeSlots.length) return null
+    const rootId = workspaceRootNoteId || project?.rootNoteId || null
+    if (!rootId) return windowFromTimeSlots(timeSlots)
+    const ownSlots = timeSlots.filter(slot => slot.noteId === rootId)
+    if (ownSlots.length) return windowFromTimeSlots(ownSlots)
+    const descendantIds = collectDescendantNoteIds(allNotes, rootId)
+    const descendantSlots = timeSlots.filter(slot => descendantIds.has(slot.noteId))
+    return windowFromTimeSlots(descendantSlots)
+  }, [allNotes, project?.rootNoteId, timeSlots, workspaceRootNoteId])
+
+  const defaultScheduleZoom = useMemo(() => (
+    explicitProjectTimeZoom(project) || zoomForTimeWindow(defaultScheduleWindow)
+  ), [defaultScheduleWindow, project?.metric, project?.scale, project?.timeScale, project?.timeZoom])
+
   const nonePerspective = useMemo(() => {
     const priorityDim = visibleDimensions.find(d => d.name === 'Priority')
+    const defaultScrollLeft = defaultScheduleWindow
+      ? Math.max(0, (minuteToZoomCol(defaultScheduleWindow.start, defaultScheduleZoom) - 1) * DEFAULT_COLUMN_WIDTH)
+      : 0
     return normalizePerspective({
       id: NONE_PERSPECTIVE_ID,
       name: 'None',
@@ -2978,8 +3000,8 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       state: {
         version: SCHEDULE_PERSPECTIVE_VERSION,
         spacing: DEFAULT_SPACING,
-        timeZoom: DEFAULT_TIME_ZOOM,
-        planningScale: persistedPlanningScaleForZoom(DEFAULT_TIME_ZOOM),
+        timeZoom: defaultScheduleZoom,
+        planningScale: persistedPlanningScaleForZoom(defaultScheduleZoom),
         mode: 'timeSlot',
         axisMode: 'full',
         showDepLabels: true,
@@ -2997,7 +3019,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         group: { activeDimId: '', activeLaneFilterId: '' },
         collapsedCategories: [],
         hiddenNotesByLane: {},
-        scrollLeft: 0,
+        scrollLeft: defaultScrollLeft,
         timelineAnchorCreatedAt: project?.createdAt ?? '',
         color: {
           colorDimId: priorityDim?.id ?? '',
@@ -3006,7 +3028,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         },
       },
     })
-  }, [project?.createdAt, visibleDimensions])
+  }, [defaultScheduleWindow, defaultScheduleZoom, project?.createdAt, visibleDimensions])
 
   const perspectiveOptions = useMemo(
     () => [nonePerspective, ...perspectives],
@@ -3317,7 +3339,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const vpRef           = useRef({ w: 0, h: 0 })
   const spacingRef      = useRef(spacing)
   const timeZoomRef     = useRef(timeZoom)
-  const colWidthByZoomRef = useRef(colWidthByZoom)
   const totalColsRef    = useRef(INIT_TOTAL_COLS)
   const rafIdRef          = useRef(null)         // requestAnimationFrame id
   const gridInnerRef      = useRef(null)         // for synchronous width update during extension
@@ -3342,7 +3363,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   // Keep imperative refs in sync with state (assigned synchronously in render)
   spacingRef.current       = spacing
   timeZoomRef.current      = timeZoom
-  colWidthByZoomRef.current = colWidthByZoom
   totalColsRef.current     = totalCols
   dependenciesRef.current  = dependencies
   deadlinesRef.current       = effectiveDeadlines
@@ -3376,9 +3396,10 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 	  const minuteLabel = useCallback(minute => minuteToLabel(minute, timeZoomRef.current), [])
 	  const defaultScrollLeftForZoom = useCallback((zoom = timeZoomRef.current, colW = spacingRef.current.colW) => {
 	    const normalizedZoom = normalizeTimeZoom(zoom)
-	    const todayCol = minuteToZoomColExact(todayMinuteRef.current, normalizedZoom)
-	    return Math.max(0, Math.round(todayCol * colW))
-	  }, [])
+      const startMinute = defaultScheduleWindow?.start ?? todayMinuteRef.current
+	    const startCol = minuteToZoomColExact(startMinute, normalizedZoom)
+	    return Math.max(0, Math.round((startCol - (defaultScheduleWindow ? 1 : 0)) * colW))
+	  }, [defaultScheduleWindow])
 
   // Live refs that closures read — no useEffect needed
   const timeSlotsRef  = useRef([])
@@ -4382,60 +4403,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     ]).catch(err => console.error('Note moved, but hierarchy refresh failed', err))
   }, [allNotes, onNotesChanged, showWarningPrompt])
 
-  const reorderNoteWithinProjectScope = useCallback(async (noteId, targetNoteId, position = 'before') => {
-    if (!noteId || !targetNoteId || noteId === targetNoteId) return
-    if (activeDimId || activeLaneFilter) {
-      showWarningPrompt({
-        title: 'Project order unavailable',
-        message: 'Switch back to the plain project hierarchy to reorder notes. Category and filter lanes keep their own row grouping.',
-        actions: 'close',
-      })
-      return
-    }
-
-    const note = allNotes.find(item => item.id === noteId)
-    const target = allNotes.find(item => item.id === targetNoteId)
-    if (!note || !target) return
-    if (note.id === project?.rootNoteId || note.id === workspaceRootNoteId) return
-    if (target.id === project?.rootNoteId || target.id === workspaceRootNoteId) return
-    if ((note.parentNoteId || '') !== (target.parentNoteId || '')) {
-      showWarningPrompt({
-        title: 'Reorder blocked',
-        message: 'This handle only changes the order inside the current parent project. Drag the row itself if you want to move it into another note.',
-        actions: 'close',
-      })
-      return
-    }
-
-    const siblings = allNotes
-      .filter(item => (item.parentNoteId || '') === (note.parentNoteId || ''))
-      .sort(compareNoteOrder)
-    const fromIdx = siblings.findIndex(item => item.id === noteId)
-    const targetIdx = siblings.findIndex(item => item.id === targetNoteId)
-    if (fromIdx === -1 || targetIdx === -1) return
-
-    const reordered = [...siblings]
-    const [moved] = reordered.splice(fromIdx, 1)
-    const targetAfterRemovalIdx = reordered.findIndex(item => item.id === targetNoteId)
-    if (targetAfterRemovalIdx === -1) return
-    const insertIdx = position === 'after' ? targetAfterRemovalIdx + 1 : targetAfterRemovalIdx
-    reordered.splice(insertIdx, 0, moved)
-    if (reordered.every((item, index) => item.id === siblings[index]?.id)) return
-
-    try {
-      await api.reorderNotes(reordered.map(item => item.id))
-      playSound('noteMove')
-      await onNotesChanged?.()
-    } catch (err) {
-      console.error(err)
-      showWarningPrompt({
-        title: 'Reorder failed',
-        message: err?.message || 'The note order could not be saved.',
-        actions: 'close',
-      })
-    }
-  }, [activeDimId, activeLaneFilter, allNotes, onNotesChanged, project?.rootNoteId, showWarningPrompt, workspaceRootNoteId])
-
   const reorderCategoryInGantt = useCallback(async (draggedCatId, targetCatId) => {
     if (!activeDimId || draggedCatId === targetCatId) return
     const dimCats = categories.filter(c => c.dimensionId === activeDimId)
@@ -4769,8 +4736,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         setTotalCols(needed)
       }
     }
-    if (next.colW !== prev.colW)
-      setColWidthByZoom(prev => ({ ...prev, [timeZoomRef.current]: next.colW }))
     setSpacing(next)
   }, [])
 
@@ -4806,16 +4771,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       setTimeZoom(nextZoom)
     }
     setSpacing({ ...prev, colW: nextColW })
-    setColWidthByZoom(prev => ({ ...prev, [nextZoom]: nextColW }))
   }, [])
-
-  const handleColWidthByZoomChange = useCallback((zoom, width) => {
-    const validated = Math.max(minColWidthForZoom(zoom), Math.min(COL_WIDTH_MAX, width))
-    setColWidthByZoom(prev => ({ ...prev, [zoom]: validated }))
-    if (normalizeTimeZoom(zoom) === normalizeTimeZoom(timeZoomRef.current)) {
-      handleSpacingChange({ ...spacingRef.current, colW: validated })
-    }
-  }, [handleSpacingChange])
 
   const cycleTimeSlotLabelMode = useCallback(deltaY => {
     const now = Date.now()
@@ -4847,10 +4803,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     const prevZoom = timeZoomRef.current
     if (nextZoom === prevZoom) return
     const sp = spacingRef.current
-    const storedColW = colWidthByZoomRef.current[nextZoom]
-    const nextColW = storedColW
-      ? Math.max(minColWidthForZoom(nextZoom), Math.min(COL_WIDTH_MAX, storedColW))
-      : Math.max(minColWidthForZoom(nextZoom), sp.colW)
+    const nextColW = normalizeColumnWidth(sp.colW, nextZoom)
     const pinned = pinnedTimeSlotIdRef.current
       ? timeSlotsRef.current.find(m => m.id === pinnedTimeSlotIdRef.current)
       : null
@@ -6311,7 +6264,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     version: SCHEDULE_PERSPECTIVE_VERSION,
     activePerspectiveId,
     spacing,
-    colWidthByZoom,
     timeZoom,
     planningScale: persistedPlanningScaleForZoom(timeZoom),
     mode,
@@ -6373,7 +6325,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     restoringColorRef.current = nextColorDimId !== colorDimId
 
     setSpacing(state.spacing)
-    setColWidthByZoom(normalizeColWidthByZoom(state.colWidthByZoom ?? {}))
     setTimeZoom(state.timeZoom)
     setMode(state.mode)
     setAxisMode(state.axisMode)
@@ -6435,7 +6386,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     restoringColorRef.current = nextColorDimId !== colorDimId
 
     setSpacing(state.spacing)
-    setColWidthByZoom(normalizeColWidthByZoom(state.colWidthByZoom ?? {}))
     setTimeZoom(state.timeZoom)
     setMode(state.mode)
     setAxisMode(state.axisMode)
@@ -6814,7 +6764,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         onUndo={undoGanttTransaction}
         onRedo={redoGanttTransaction}
         spacing={spacing} onSpacingChange={handleSpacingChange}
-        colWidthByZoom={colWidthByZoom} onColWidthByZoomChange={handleColWidthByZoomChange}
         mode={mode} onModeChange={setMode}
         axisMode={axisMode} onAxisModeChange={setAxisMode}
         timeZoom={timeZoom} onTimeZoomChange={handleTimeZoomChange}
@@ -6968,16 +6917,11 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                 }
                 if (item.type === 'note') {
                   const noteTimeSlot = timeSlotByNote.get(item.note.id)
-                  const rowOrderEnabled = !paintCat && !paintPersonaId && !activeDimId && !activeLaneFilter
-                  const rowOrderHandleEnabled = rowOrderEnabled && item.note.id !== project?.rootNoteId && item.note.id !== workspaceRootNoteId
-                  const reorderPosition = dragOverNoteReorder?.noteId === item.note.id ? dragOverNoteReorder.position : null
                   return (
                     <div key={item.note.id}
                       className={[
                         inLaneMode ? styles.noteRowLane : styles.noteRow,
                         dragOverNoteId === item.note.id && styles.noteRowDropTarget,
-                        reorderPosition === 'before' && styles.noteRowReorderBefore,
-                        reorderPosition === 'after' && styles.noteRowReorderAfter,
                         isNoteHighlighted(item.note.id) && styles.noteRowHighlight,
                       ].filter(Boolean).join(' ')}
                       draggable={!paintCat && !paintPersonaId && item.note.id !== project?.rootNoteId}
@@ -7002,64 +6946,32 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                         if (e.dataTransfer.types.includes('persona-drag')) {
                           e.preventDefault()
                           setDragOverNoteId(item.note.id)
-                          setDragOverNoteReorder(null)
-                          setDragOverLaneCatId(null)
-                          return
-                        }
-                        if (e.dataTransfer.types.includes('schedule-note-reorder-id')) {
-                          if (!rowOrderEnabled) return
-                          const dragNoteId = draggingNoteReorderId || e.dataTransfer.getData('schedule-note-reorder-id')
-                          if (!dragNoteId || dragNoteId === item.note.id) return
-                          const dragNote = allNotes.find(note => note.id === dragNoteId)
-                          if (!dragNote || (dragNote.parentNoteId || '') !== (item.note.parentNoteId || '')) return
-                          e.preventDefault()
-                          const rect = e.currentTarget.getBoundingClientRect()
-                          const position = e.clientY > rect.top + rect.height / 2 ? 'after' : 'before'
-                          setDragOverNoteReorder({ noteId: item.note.id, position })
-                          setDragOverNoteId(null)
                           setDragOverLaneCatId(null)
                           return
                         }
                         if (!e.dataTransfer.types.includes('schedule-note-id')) return
                         e.preventDefault()
                         setDragOverNoteId(item.note.id)
-                        setDragOverNoteReorder(null)
                         setDragOverLaneCatId(null)
                       }}
                       onDragLeave={() => {
                         setDragOverNoteId(prev => prev === item.note.id ? null : prev)
-                        setDragOverNoteReorder(prev => prev?.noteId === item.note.id ? null : prev)
                       }}
                       onDrop={e => {
                         e.preventDefault()
                         const personaId = e.dataTransfer.getData('persona-drag')
                         if (personaId) {
                           setDragOverNoteId(null)
-                          setDragOverNoteReorder(null)
-                          setDraggingNoteReorderId(null)
                           assignPersonaToNote(personaId, item.note.id)
-                          return
-                        }
-                        const reorderNoteId = e.dataTransfer.getData('schedule-note-reorder-id')
-                        if (reorderNoteId) {
-                          const position = dragOverNoteReorder?.noteId === item.note.id ? dragOverNoteReorder.position : 'before'
-                          setDragOverNoteId(null)
-                          setDragOverNoteReorder(null)
-                          setDraggingNoteReorderId(null)
-                          reorderNoteWithinProjectScope(reorderNoteId, item.note.id, position)
                           return
                         }
                         const dragNoteId = e.dataTransfer.getData('schedule-note-id')
                         setDragOverNoteId(null)
-                        setDragOverNoteReorder(null)
-                        setDraggingNoteReorderId(null)
                         if (!dragNoteId) return
                         moveNoteUnderNote(dragNoteId, item.note.id)
                       }}
                       onDragEnd={() => {
                         setDragOverNoteId(null)
-                        setDragOverNoteReorder(null)
-                        setDraggingNoteReorderId(null)
                       }}
                       onClick={(paintCat || paintPersonaId) ? e => {
                     e.stopPropagation()
@@ -7090,41 +7002,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
                         onNoteOpen?.(item.note.id)
                       }}
                       style={{ top: item.top, height: item.height, borderLeftColor: item.cat?.color ?? 'transparent' }}>
-                      {!inLaneMode && (
-                        <button
-                          type="button"
-                          className={[
-                            styles.noteOrderHandle,
-                            !rowOrderHandleEnabled && styles.noteOrderHandleDisabled,
-                          ].filter(Boolean).join(' ')}
-                          draggable={rowOrderHandleEnabled}
-                          title={rowOrderHandleEnabled
-                            ? 'Drag to reorder this note inside its current parent project'
-                            : 'Project-order dragging is available in the plain hierarchy view'}
-                          aria-label="Reorder note"
-                          onMouseDown={e => {
-                            e.stopPropagation()
-                            if (!rowOrderHandleEnabled) e.preventDefault()
-                          }}
-                          onClick={e => e.stopPropagation()}
-                          onDragStart={e => {
-                            if (!rowOrderHandleEnabled) {
-                              e.preventDefault()
-                              return
-                            }
-                            e.stopPropagation()
-                            e.dataTransfer.setData('schedule-note-reorder-id', item.note.id)
-                            e.dataTransfer.effectAllowed = 'move'
-                            setDraggingNoteReorderId(item.note.id)
-                          }}
-                          onDragEnd={e => {
-                            e.stopPropagation()
-                            setDraggingNoteReorderId(null)
-                            setDragOverNoteReorder(null)
-                          }}>
-                          <span aria-hidden="true">⋮⋮</span>
-                        </button>
-                      )}
                       {!inLaneMode && (
                         <TreeGutter
                           tree={item.tree}

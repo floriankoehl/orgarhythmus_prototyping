@@ -527,6 +527,7 @@ function ClassificationToolbar({
   onContainerDimChange, onToggleCategory, onShowAllCategories, onShowOnlyCategory,
   onCreateDim, onRenameDim, onRequestDeleteDim,
   onReorderDims, maxGridCols, onMaxGridColsChange, singleColumnWidth, onSingleColumnWidthChange,
+  noteDepthPreset = 1, onNoteDepthPresetChange,
 }) {
   const [dimMenuOpen, setDimMenuOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -602,6 +603,22 @@ function ClassificationToolbar({
           onShowAll={onShowAllCategories}
         />
       )}
+
+      <div className={styles.depthToggleUnit}>
+        <span className={styles.groupScrollerLabel}>Depth</span>
+        <div className={styles.depthToggle}>
+          {[1, 2, 3, 'all'].map(value => (
+            <button
+              key={value}
+              type="button"
+              className={noteDepthPreset === value ? styles.depthToggleActive : ''}
+              onClick={() => onNoteDepthPresetChange?.(value)}
+            >
+              {value === 'all' ? 'All' : value}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div style={{ flex: 1 }} />
 
@@ -1431,7 +1448,7 @@ function LegendWidget({
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ClassificationPage({ notes = [], isActive = false, onNoteOpen, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [], onSetContextDefaultPerspective }) {
+export default function ClassificationPage({ notes = [], workspaceRootNoteId = null, isActive = false, onNoteOpen, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [], onSetContextDefaultPerspective }) {
   const [dimensions, setDimensions]         = useState([])
   const [categories, setCategories]         = useState([])
   const [timeSlots, setTimeSlots]           = useState([])
@@ -1447,6 +1464,7 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const [namedFilters, setNamedFilters] = useState([])
   const [activeFilterIds, setActiveFilterIds] = useState([])
   const [quickFilters, setQuickFilters] = useState([])
+  const [noteDepthPreset, setNoteDepthPreset] = useState(1)
   const [peopleVisibleNoteIds, setPeopleVisibleNoteIds] = useState(null)
   const [editingFilter, setEditingFilter] = useState(null)
   const [maxGridCols, setMaxGridCols] = useState(6)
@@ -1468,6 +1486,10 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const [floatingPanel, setFloatingPanel] = useState(null)
   const [statusNotice, setStatusNotice] = useState('')
   const { confirm: confirmDialog, dialog: confirmDialogNode } = useConfirmDialog()
+
+  useEffect(() => {
+    setNoteDepthPreset(1)
+  }, [workspaceRootNoteId])
 
   useEffect(() => {
     if (contextDefaultPerspectiveId === undefined) return
@@ -2100,6 +2122,31 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
     return categories.find(c => c.id === catId)?.color ?? null
   }
 
+  const depthScopedNotes = useMemo(() => {
+    if (!workspaceRootNoteId || noteDepthPreset === 'all') return notes
+    const maxDepth = Number(noteDepthPreset) || 1
+    const childrenByParent = new Map()
+    notes.forEach(note => {
+      const parentId = note.parentNoteId || ''
+      if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, [])
+      childrenByParent.get(parentId).push(note)
+    })
+    const scoped = []
+    const seen = new Set()
+    const queue = (childrenByParent.get(workspaceRootNoteId) || []).map(note => ({ note, depth: 1 }))
+    while (queue.length) {
+      const { note, depth } = queue.shift()
+      if (!note || seen.has(note.id) || depth > maxDepth) continue
+      seen.add(note.id)
+      scoped.push(note)
+      if (depth < maxDepth) {
+        const childNotes = childrenByParent.get(note.id) || []
+        childNotes.forEach(child => queue.push({ note: child, depth: depth + 1 }))
+      }
+    }
+    return scoped
+  }, [notes, workspaceRootNoteId, noteDepthPreset])
+
   const activeFilters = activeFilterIds
     .map(id => namedFilters.find(filter => filter.id === id))
     .filter(Boolean)
@@ -2108,8 +2155,8 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
   const matchesQuickFilter = note => quickFilterMatchesNote(quickFilters, note, (id, dimensionId) => assignments[id]?.[dimensionId])
 
   const filterMatchedNotes = hasActiveFiltering
-    ? notes.filter(g => activeFilters.some(filter => filterMatchesNote(filter, g.id, assignments, g)) || matchesQuickFilter(g))
-    : notes
+    ? depthScopedNotes.filter(g => activeFilters.some(filter => filterMatchesNote(filter, g.id, assignments, g)) || matchesQuickFilter(g))
+    : depthScopedNotes
   const visibleNotes = peopleVisibleNoteIds === null
     ? filterMatchedNotes
     : filterMatchedNotes.filter(note => peopleVisibleNoteIds.has(note.id))
@@ -2245,6 +2292,8 @@ export default function ClassificationPage({ notes = [], isActive = false, onNot
         onMaxGridColsChange={setMaxGridCols}
         singleColumnWidth={singleColumnWidth}
         onSingleColumnWidthChange={setSingleColumnWidth}
+        noteDepthPreset={noteDepthPreset}
+        onNoteDepthPresetChange={setNoteDepthPreset}
       />
 
       <div className={styles.body}>

@@ -415,6 +415,7 @@ export default function App() {
         <div className={styles.view} style={{ display: view === 2 ? 'flex' : 'none' }}>
           <ClassificationPage
             notes={visibleNotes}
+            workspaceRootNoteId={activeWorkspaceRootId}
             isActive={view === 2}
             onNoteOpen={openNotePopup}
             refreshKey={noteDataVersion}
