@@ -1965,6 +1965,7 @@ function GanttToolbar({
 	  nostalgiaMode, onToggleNostalgia,
   canDeleteSelection, onDeleteSelection,
   canFilterToSelection, onFilterToSelectedNotes, onExpandEverything,
+  onScrollNowToLeft,
   mode, onModeChange,
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -1996,6 +1997,13 @@ function GanttToolbar({
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            className={styles.scaleQuickNowBtn}
+            title="Put now at the left edge"
+            onClick={onScrollNowToLeft}>
+            Now
+          </button>
         </div>
       </div>
       <ScheduleGroupScroller
@@ -3905,7 +3913,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       scrollTopRef.current = el.scrollTop
       if (leftBodyInnerRef.current) leftBodyInnerRef.current.style.transform = `translateY(${-el.scrollTop}px)`
       setScrollTop(el.scrollTop)
-      const visual = getVisualRange(earliest, timeZoomRef.current)
+      const visual = getRenderedVisualRange(earliest, timeZoomRef.current, timeSlotScaleFilterRef.current)
       const nextLeft = Math.max(0, visual.startCol * sp.colW - sp.colW * 2)
       el.scrollLeft = nextLeft
       scrollLeftRef.current = el.scrollLeft
@@ -4831,6 +4839,23 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     })
   }, [])
 
+  const scrollNowToLeft = useCallback(() => {
+    const grid = gridBodyRef.current
+    if (!grid) return
+    const sp = spacingRef.current
+    const nowVisualCol = minuteToZoomColExact(todayMinuteRef.current, timeZoomRef.current)
+    const nextScrollLeft = Math.max(0, Math.round(nowVisualCol * sp.colW))
+    const needed = Math.ceil((nextScrollLeft + vpRef.current.w) / sp.colW) + COL_BUF + EDGE_COLS + 1
+    if (needed > totalColsRef.current) {
+      totalColsRef.current = needed
+      setTotalCols(needed)
+      if (gridInnerRef.current) gridInnerRef.current.style.width = `${needed * sp.colW}px`
+    }
+    grid.scrollLeft = nextScrollLeft
+    scrollLeftRef.current = grid.scrollLeft
+    setScrollLeft(scrollLeftRef.current)
+  }, [])
+
   const focusTimeSlotByDoubleClick = useCallback(timeSlotId => {
     const timeSlot = timeSlotsRef.current.find(m => m.id === timeSlotId)
     if (!timeSlot) return
@@ -4843,7 +4868,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     if (!nextZoom) return
 
     const viewportW = Math.max(1, vpRef.current.w || gridBodyRef.current?.clientWidth || 1)
-    const visual = getVisualRange(timeSlot, nextZoom, true)
+    const visual = getRenderedVisualRange(timeSlot, nextZoom, timeSlotScaleFilterRef.current)
     const nextColW = isInspectingOneScaleDown
       ? Math.max(minColWidthForZoom(nextZoom), Math.min(COL_WIDTH_MAX, spacingRef.current.colW))
       : Math.max(
@@ -5325,17 +5350,20 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       const firstOrig = Object.values(originals)[0]
       if (!firstOrig) return 0
       const firstVisualStart = minuteToZoomCol(firstOrig.startCol, timeZoomRef.current)
-      const requestedVisual = snapPxToCol(firstVisualStart * sp.colW + rawDx, sp.colW)
-      let colDelta = isMonthMove
-        ? requestedVisual - firstVisualStart
-        : (requestedVisual - firstVisualStart) * getZoomUnit(timeZoomRef.current)
-	      const { minDelta, maxDelta, minDeltaFromEarliest, minDeltaFromPast, containmentMinDelta, containmentMaxDelta } = getBounds()
-      const clamped = Math.max(minDelta, Math.min(maxDelta, colDelta))
+      const firstExactVisualStart = minuteToZoomColExact(firstOrig.startCol, timeZoomRef.current)
       if (dragRef.current) {
         dragRef.current.hitBoundary = false
         dragRef.current.hitEarliestBoundary = false
         dragRef.current.hitContainmentBoundary = false
+        dragRef.current.hitPastBoundary = false
       }
+      if (Math.abs(rawDx) <= 2) return 0
+      const requestedVisual = snapPxToCol(firstExactVisualStart * sp.colW + rawDx, sp.colW)
+      let colDelta = isMonthMove
+        ? requestedVisual - firstVisualStart
+        : zoomColToMinute(requestedVisual, timeZoomRef.current) - firstOrig.startCol
+	      const { minDelta, maxDelta, minDeltaFromEarliest, minDeltaFromPast, containmentMinDelta, containmentMaxDelta } = getBounds()
+      const clamped = Math.max(minDelta, Math.min(maxDelta, colDelta))
       if (dragRef.current && clamped !== colDelta) {
         if ((colDelta > containmentMaxDelta && containmentMaxDelta < Infinity) || (colDelta < containmentMinDelta && containmentMinDelta > -Infinity)) {
           dragRef.current.hitContainmentBoundary = true
@@ -5393,8 +5421,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
           .filter(Boolean)
           .map(parentTimeSlot => movedById.get(parentTimeSlot.id))
           .filter(Boolean)
-        const isClampedByBoundaryOrSubtree = ownDelta !== anchorMinuteDelta
-        if (movedParents.length && isClampedByBoundaryOrSubtree) {
+        if (movedParents.length) {
           const parentLower = Math.max(...movedParents.map(parent => parent.startCol))
           const parentUpper = Math.min(...movedParents.map(parent => parent.startCol + parent.duration - duration))
           const lower = Math.max(parentLower, original.startCol + effectiveMoveBounds.min)
@@ -5414,7 +5441,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       Object.entries(originals).forEach(([id, orig]) => {
         const ms = timeSlotsRef.current.find(m => m.id === id)
         const moved = movedTimeSlots.get(id)
-        const visual = getVisualRange(moved ?? orig, timeZoomRef.current)
+        const visual = getRenderedVisualRange(moved ?? orig, timeZoomRef.current, timeSlotScaleFilterRef.current)
         const leftPx = visual.startCol * sp.colW
         if (ms) overrides[id] = { ...ms, leftPx, widthPx: visual.duration * sp.colW }
         const el = timeSlotElsRef.current.get(id)
@@ -5484,7 +5511,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       const resetToOriginal = () => {
         Object.entries(originals).forEach(([id, orig]) => {
           const el = timeSlotElsRef.current.get(id)
-          const origVisual = getVisualRange(orig, timeZoomRef.current)
+          const origVisual = getRenderedVisualRange(orig, timeZoomRef.current, timeSlotScaleFilterRef.current)
           if (el) el.style.left = `${origVisual.startCol * sp.colW}px`
         })
         updateDependencyPaths()
@@ -5596,7 +5623,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     const resetToOriginal = () => {
       const el = timeSlotElsRef.current.get(timeSlotId)
       if (el) {
-        const origVisual = getVisualRange({ startCol: origStart, duration: origDur }, timeZoomRef.current)
+        const origVisual = getRenderedVisualRange({ startCol: origStart, duration: origDur }, timeZoomRef.current, timeSlotScaleFilterRef.current)
         el.style.left = `${origVisual.startCol * sp.colW}px`
         el.style.width = `${origVisual.duration * sp.colW}px`
       }
@@ -5661,7 +5688,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 
     const getLiveResize = clientX => {
       const next = getSafeResize(clientX)
-      const visual = getVisualRange(next, timeZoomRef.current)
+      const visual = getRenderedVisualRange(next, timeZoomRef.current, timeSlotScaleFilterRef.current)
       return { leftPx: visual.startCol * sp.colW, widthPx: visual.duration * sp.colW }
     }
 
@@ -5818,7 +5845,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       const hit   = new Set()
       timeSlotsRef.current.forEach(m => {
         const row = grm[m.noteId]; if (!row) return
-        const visual = getVisualRange(m, timeZoomRef.current)
+        const visual = getRenderedVisualRange(m, timeZoomRef.current, timeSlotScaleFilterRef.current)
         const mL  = visual.startCol * sp.colW; const mR = visual.endCol * sp.colW
         if (mR > selL && mL < selR && row.top + row.height > selT && row.top < selB) hit.add(m.id)
       })
@@ -5865,7 +5892,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     const sp = spacingRef.current
     const x2 = clientX - rect.left + scrollLeftRef.current
     const y2 = clientY - rect.top + scrollTopRef.current
-    const sourceVisual = getVisualRange(source, timeZoomRef.current)
+    const sourceVisual = getRenderedVisualRange(source, timeZoomRef.current, timeSlotScaleFilterRef.current)
     // Pick source edge based on which side of the timeSlot the cursor is on
     const sourceCenter = (sourceVisual.startCol + sourceVisual.duration / 2) * sp.colW
     const x1 = x2 >= sourceCenter
@@ -5895,7 +5922,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       if (!rect) return 'right'
       const sp = spacingRef.current
       const x = clientX - rect.left + scrollLeftRef.current
-      const sourceVisual = getVisualRange(source, timeZoomRef.current)
+      const sourceVisual = getRenderedVisualRange(source, timeZoomRef.current, timeSlotScaleFilterRef.current)
       return x >= (sourceVisual.startCol + sourceVisual.duration / 2) * sp.colW ? 'right' : 'left'
     }
 
@@ -6759,6 +6786,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         canFilterToSelection={selectedIds.size > 0}
         onFilterToSelectedNotes={filterToSelectedNotes}
         onExpandEverything={expandEverything}
+        onScrollNowToLeft={scrollNowToLeft}
         canUndo={transactionHistory.undo.length > 0}
         canRedo={transactionHistory.redo.length > 0}
         onUndo={undoGanttTransaction}

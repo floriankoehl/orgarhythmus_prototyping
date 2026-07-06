@@ -289,6 +289,23 @@
   box-shadow: inset 0 0 0 1px #b8d7f3;
 }
 
+.scaleQuickNowBtn {
+  flex: 0 0 auto;
+  height: 24px;
+  padding: 0 10px;
+  color: #0f5ea8;
+  background: #fff;
+  border: 1px solid #b8d7f3;
+  border-radius: 6px;
+  cursor: pointer;
+  font: 800 12px Arial, sans-serif;
+  line-height: 22px;
+}
+
+.scaleQuickNowBtn:hover {
+  background: #e7f1fc;
+}
+
 .toolbarDiv {
   width: 1px;
   height: 20px;
