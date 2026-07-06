@@ -16,6 +16,13 @@ import { COLOR_UNASSIGNED_CATEGORY_ID, colorPickerCategories } from './colorPick
 
 const DRIFT_VARIANTS = 6
 
+function compareNotesForTree(a, b) {
+  const ao = Number.isFinite(a?.orderIdx) ? a.orderIdx : Number.isFinite(a?.order_idx) ? a.order_idx : 0
+  const bo = Number.isFinite(b?.orderIdx) ? b.orderIdx : Number.isFinite(b?.order_idx) ? b.order_idx : 0
+  if (ao !== bo) return ao - bo
+  return (a?.title || '').localeCompare(b?.title || '')
+}
+
 function makeColorCursor(color) {
   const safeColor = /^#[0-9a-f]{3,8}$/i.test(String(color)) ? color : '#1a73e8'
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><circle cx="9" cy="9" r="7" fill="${safeColor}" stroke="white" stroke-width="2"/><path d="M14 14l8 8" stroke="black" stroke-width="2.5" stroke-linecap="round"/></svg>`
@@ -37,6 +44,89 @@ function stripHtml(html) {
     .replace(/&amp;/g, '&')
     .replace(/\n{4,}/g, '\n\n\n')
     .trim()
+}
+
+function NoteChildTree({
+  parentId,
+  depth = 0,
+  childrenByParent,
+  expandedChildIds,
+  checkedLeafIds,
+  onToggleChild,
+  onToggleLeafCheck,
+  onOpenChild,
+  onChildDragStart,
+  visited = new Set(),
+}) {
+  const children = childrenByParent.get(parentId) || []
+  if (!children.length || visited.has(parentId)) return null
+  const nextVisited = new Set(visited)
+  nextVisited.add(parentId)
+
+  return (
+    <div className={depth === 0 ? styles.childTree : styles.childTreeNested}>
+      {children.map(child => {
+        const grandChildren = childrenByParent.get(child.id) || []
+        const hasChildren = grandChildren.length > 0
+        const expanded = expandedChildIds.has(child.id)
+        return (
+          <div key={child.id} className={styles.childTreeItem}>
+            <div className={styles.childTreeRow} style={{ paddingLeft: depth * 10 }}>
+              {hasChildren ? (
+                <button
+                  type="button"
+                  className={`${styles.childTreeToggle} ${expanded ? styles.childTreeToggleOpen : ''}`}
+                  title={expanded ? 'Collapse child notes' : 'Expand child notes'}
+                  onPointerDown={e => e.stopPropagation()}
+                  onClick={e => { e.stopPropagation(); onToggleChild(child.id) }}
+                >
+                  <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                    <path d="M5.5 3.5 10 8l-4.5 4.5z" />
+                  </svg>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className={`${styles.childTreeLeafCheck} ${checkedLeafIds.has(child.id) ? styles.childTreeLeafCheckDone : ''}`}
+                  title={checkedLeafIds.has(child.id) ? 'Mark as open' : 'Mark as done'}
+                  aria-pressed={checkedLeafIds.has(child.id)}
+                  onPointerDown={e => e.stopPropagation()}
+                  onClick={e => { e.stopPropagation(); onToggleLeafCheck(child.id) }}
+                >
+                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+                  </svg>
+                </button>
+              )}
+              <button
+                type="button"
+                className={styles.childTreeTitle}
+                title="Open detailed view"
+                onPointerDown={e => onChildDragStart(e, child.id)}
+                onClick={e => { e.stopPropagation(); onOpenChild(child.id) }}
+              >
+                {child.title || 'Untitled'}
+              </button>
+            </div>
+            {hasChildren && expanded && (
+              <NoteChildTree
+                parentId={child.id}
+                depth={depth + 1}
+                childrenByParent={childrenByParent}
+                expandedChildIds={expandedChildIds}
+                checkedLeafIds={checkedLeafIds}
+                onToggleChild={onToggleChild}
+                onToggleLeafCheck={onToggleLeafCheck}
+                onOpenChild={onOpenChild}
+                onChildDragStart={onChildDragStart}
+                visited={nextVisited}
+              />
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
 function computeWordRects(el) {
@@ -63,6 +153,7 @@ function PostIt({
   position,
   size,
   isMergeTarget,
+  dropAction,
   selected,
   backgroundColor,
   zIndex,
@@ -80,6 +171,13 @@ function PostIt({
   onResize,
   onRegisterCard,
   onInlineUpdate,
+  childrenByParent,
+  expandedChildIds,
+  checkedLeafIds,
+  onToggleChild,
+  onToggleLeafCheck,
+  onOpenChild,
+  onChildDragStart,
 }) {
   const [cutY, setCutY]               = useState(null) // px from top of card
   const [cutOffset, setCutOffset]     = useState(null) // char index in snippet text
@@ -361,7 +459,26 @@ function PostIt({
           placeholder="Description..."
         />
       ) : (
-        snippet && <p ref={bodyRef} className={styles.postitBody} style={hasAccent ? { backgroundColor: backgroundColor + '22' } : undefined}>{snippet}</p>
+        <div className={styles.postitContent} style={hasAccent ? { backgroundColor: backgroundColor + '22' } : undefined}>
+          {snippet && <p ref={bodyRef} className={styles.postitBody}>{snippet}</p>}
+          <NoteChildTree
+            parentId={note.id}
+            childrenByParent={childrenByParent}
+            expandedChildIds={expandedChildIds}
+            checkedLeafIds={checkedLeafIds}
+            onToggleChild={onToggleChild}
+            onToggleLeafCheck={onToggleLeafCheck}
+            onOpenChild={onOpenChild}
+            onChildDragStart={onChildDragStart}
+          />
+        </div>
+      )}
+
+      {isMergeTarget && (
+        <div className={styles.dropZoneOverlay} aria-hidden="true">
+          <div className={`${styles.dropZoneMerge} ${dropAction === 'merge' ? styles.dropZoneActive : ''}`}>Merge</div>
+          <div className={`${styles.dropZoneChild} ${dropAction === 'child' ? styles.dropZoneActive : ''}`}>Drop in</div>
+        </div>
       )}
 
       <div className={styles.resizeHandle} onPointerDown={handleResizeDown}>
@@ -529,14 +646,17 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   // Canvas state
   const [openNoteIds, setOpenNoteIds]       = useState(new Set())
   const [notePositions, setNotePositions]   = useState({})
-  const [mergeCandidate, setMergeCandidate] = useState(null)
+  const [dropCandidate, setDropCandidate]   = useState(null) // { targetId, action }
   const [mergeProposal, setMergeProposal]   = useState(null)
   const [noteSizes, setNoteSizes]           = useState({}) // { [id]: { w, h } }
   const [noteZIndexes, setNoteZIndexes]     = useState({})
+  const [expandedChildIds, setExpandedChildIds] = useState(new Set())
+  const [checkedLeafIds, setCheckedLeafIds] = useState(new Set())
 
   // Drag
   const draggingRef   = useRef(null)
   const wasDraggedRef = useRef(false)
+  const dropCandidateRef = useRef(null)
   const canvasRef     = useRef(null)
   const cardRefs      = useRef({})
   const zCounterRef   = useRef(20)
@@ -579,6 +699,10 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   const titleInputRef = useRef(null)
   const positionsRef  = useRef({}) // floating background memo
 
+  useEffect(() => {
+    dropCandidateRef.current = dropCandidate
+  }, [dropCandidate])
+
   // ── Canvas search results ─────────────────────────────────────────────────────
   const { results: findResults, searchingDescriptions, validQuery } = useProgressiveNoteSearch(notes, findQuery)
   useEffect(() => {
@@ -600,6 +724,50 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     })
     return map
   }, [personas, personaNoteAssignments])
+
+  const childrenByParent = useMemo(() => {
+    const map = new Map()
+    notes.forEach(note => {
+      const parentId = note.parentNoteId || ''
+      if (!parentId) return
+      if (!map.has(parentId)) map.set(parentId, [])
+      map.get(parentId).push(note)
+    })
+    map.forEach(children => children.sort(compareNotesForTree))
+    return map
+  }, [notes])
+
+  const isDescendantOf = (candidateId, ancestorId) => {
+    if (!candidateId || !ancestorId || candidateId === ancestorId) return false
+    const pending = [...(childrenByParent.get(ancestorId) || [])]
+    const seen = new Set()
+    while (pending.length) {
+      const note = pending.pop()
+      if (!note || seen.has(note.id)) continue
+      if (note.id === candidateId) return true
+      seen.add(note.id)
+      pending.push(...(childrenByParent.get(note.id) || []))
+    }
+    return false
+  }
+
+  const toggleChildExpanded = noteId => {
+    setExpandedChildIds(prev => {
+      const next = new Set(prev)
+      if (next.has(noteId)) next.delete(noteId)
+      else next.add(noteId)
+      return next
+    })
+  }
+
+  const toggleLeafCheck = noteId => {
+    setCheckedLeafIds(prev => {
+      const next = new Set(prev)
+      if (next.has(noteId)) next.delete(noteId)
+      else next.add(noteId)
+      return next
+    })
+  }
 
   useEffect(() => {
     Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getPersonas(), api.getDirectPersonaNoteAssignments(), api.getDirectPersonaAssignments()])
@@ -708,7 +876,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   const changeInteractionMode = mode => {
     playSound('modeSwitch')
     setInteractionMode(mode)
-    setMergeCandidate(null)
+    setDropCandidate(null)
     setMergeProposal(null)
   }
 
@@ -811,6 +979,12 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     layoutNotesOnCanvas(noteIds)
   }
 
+  const showProjectChildrenOnCanvas = () => {
+    if (!workspaceRootNoteId) return
+    const noteIds = (childrenByParent.get(workspaceRootNoteId) || []).map(note => note.id)
+    layoutNotesOnCanvas(noteIds)
+  }
+
   const filterNotesCanvasToPersona = personaId => {
     if (!personaId) return
     const isResponsibleForNote = noteId =>
@@ -825,7 +999,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
       )
     setOpenNoteIds(prev => new Set([...prev].filter(isResponsibleForNote)))
     setSelectedIds(new Set())
-    setMergeCandidate(null)
+    setDropCandidate(null)
     setMergeProposal(null)
   }
 
@@ -848,7 +1022,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
 
   const clearCanvas = () => {
     setOpenNoteIds(new Set())
-    setMergeCandidate(null)
+    setDropCandidate(null)
     setMergeProposal(null)
   }
 
@@ -889,14 +1063,20 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     const src = notes.find(n => n.id === sourceId)
     const tgt = notes.find(n => n.id === targetId)
     if (!src || !tgt) return
+    if (isDescendantOf(targetId, sourceId)) return
 
     const mergedHtml = (tgt.html || tgt.title || '') +
       `<br><br><br><strong>${src.title || 'Untitled'}</strong><br>${src.html || ''}`
+    const sourceChildren = childrenByParent.get(sourceId) || []
 
     try {
       await api.updateNote(targetId, { title: tgt.title, html: mergedHtml })
+      await Promise.all(sourceChildren
+        .filter(child => child.id !== targetId)
+        .map(child => api.updateNote(child.id, { parentNoteId: targetId })))
       await api.deleteNote(sourceId)
       setOpenNoteIds(prev => { const n = new Set(prev); n.delete(sourceId); return n })
+      onNoteUpdated?.(targetId, { title: tgt.title, html: mergedHtml })
       onRefresh?.()
     } catch (e) {
       console.error('Merge failed', e)
@@ -963,6 +1143,29 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     e.currentTarget.setPointerCapture(e.pointerId)
   }
 
+  const handleChildPointerDown = (e, id) => {
+    if (e.button !== 0 || paintCat) return
+    e.stopPropagation()
+    wasDraggedRef.current = false
+    setSelectedIds(new Set([id]))
+    bringNotesToFront([id])
+    const canvasRect = canvasRef.current?.getBoundingClientRect()
+    const scrollTop = canvasRef.current?.scrollTop || 0
+    const startPos = canvasRect
+      ? { x: e.clientX - canvasRect.left - 120, y: e.clientY - canvasRect.top + scrollTop - 22 }
+      : { x: 100, y: 100 }
+    draggingRef.current = {
+      type: 'child',
+      id,
+      ids: [id],
+      startX: e.clientX,
+      startY: e.clientY,
+      origPositions: { [id]: startPos },
+      promoted: false,
+    }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
   const handleCanvasPointerDown = (e) => {
     if (e.button !== 0 || paintCat) return
 
@@ -1002,7 +1205,27 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
     else delete cardRefs.current[id]
   }
 
-  const findMergeCandidate = (dragId, dragPos) => {
+  const reparentNote = async (noteId, parentNoteId, options = {}) => {
+    if (!noteId || !parentNoteId || noteId === parentNoteId) return
+    const note = notes.find(item => item.id === noteId)
+    if (!note || note.parentNoteId === parentNoteId || isDescendantOf(parentNoteId, noteId)) return
+    try {
+      await api.updateNote(noteId, { parentNoteId })
+      if (options.collapseAfter) {
+        setOpenNoteIds(prev => {
+          const next = new Set(prev)
+          next.delete(noteId)
+          return next
+        })
+      }
+      onNoteUpdated?.(noteId, { parentNoteId })
+      onRefresh?.()
+    } catch (e) {
+      console.error('Reparent note failed', e)
+    }
+  }
+
+  const findDropCandidate = (dragId, dragPos, pointer) => {
     const draggedEl = cardRefs.current[dragId]
     const draggedSize = {
       width: draggedEl?.offsetWidth || 240,
@@ -1024,6 +1247,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
       const otherEl = cardRefs.current[otherId]
       const otherPos = notePositions[otherId]
       if (!otherEl || !otherPos) continue
+      if (isDescendantOf(otherId, dragId)) continue
       const otherRect = {
         left: otherPos.x,
         top: otherPos.y,
@@ -1041,7 +1265,8 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
       const overlapRatio = overlapArea / Math.max(smallerArea, 1)
       if (overlapRatio < 0.18 || overlapW < 48 || overlapH < 36) continue
       if (overlapArea > bestArea) {
-        best = otherId
+        const action = pointer && pointer.x >= otherRect.left + otherRect.width / 2 ? 'child' : 'merge'
+        best = { targetId: otherId, action }
         bestArea = overlapArea
       }
     }
@@ -1073,12 +1298,21 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
       return
     }
 
-    if (type === 'card') {
+    if (type === 'card' || type === 'child') {
       const { id, ids, startX, startY, origPositions } = draggingRef.current
       const dx = e.clientX - startX
       const dy = e.clientY - startY
       if (Math.abs(dx) > 4 || Math.abs(dy) > 4) wasDraggedRef.current = true
       if (!wasDraggedRef.current) return
+
+      if (type === 'child' && !draggingRef.current.promoted) {
+        draggingRef.current.promoted = true
+        setOpenNoteIds(prev => {
+          const next = new Set(prev)
+          next.add(id)
+          return next
+        })
+      }
 
       setNotePositions(prev => {
         const next = { ...prev }
@@ -1089,10 +1323,15 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
         return next
       })
 
-      if (interactionMode === 'refractor' && ids.length === 1) {
-        setMergeCandidate(findMergeCandidate(id, { x: origPositions[id].x + dx, y: origPositions[id].y + dy }))
+      if (ids.length === 1) {
+        const canvasRect = canvasRef.current?.getBoundingClientRect()
+        const scrollTop = canvasRef.current?.scrollTop || 0
+        const pointer = canvasRect
+          ? { x: e.clientX - canvasRect.left, y: e.clientY - canvasRect.top + scrollTop }
+          : null
+        setDropCandidate(findDropCandidate(id, { x: origPositions[id].x + dx, y: origPositions[id].y + dy }, pointer))
       } else {
-        setMergeCandidate(null)
+        setDropCandidate(null)
       }
     }
   }
@@ -1107,14 +1346,23 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
       return
     }
 
-    if (dragging?.type === 'card') {
+    if (dragging?.type === 'card' || dragging?.type === 'child') {
       const { id, ids } = dragging
-      if (interactionMode === 'refractor' && ids.length === 1 && mergeCandidate && wasDraggedRef.current) {
+      const activeDrop = dropCandidateRef.current
+      if (ids.length === 1 && activeDrop && wasDraggedRef.current) {
         const pos = notePositions[id] || { x: 200, y: 200 }
-        setMergeProposal({ sourceId: id, targetId: mergeCandidate, x: pos.x + 130, y: pos.y + 70 })
-        setMergeCandidate(null)
+        const { targetId, action } = activeDrop
+        setDropCandidate(null)
+        if (action === 'merge') {
+          setMergeProposal({ sourceId: id, targetId, x: pos.x + 130, y: pos.y + 70 })
+        } else {
+          reparentNote(id, targetId, { collapseAfter: true })
+        }
+      } else if (dragging.type === 'child' && workspaceRootNoteId && wasDraggedRef.current) {
+        setDropCandidate(null)
+        reparentNote(id, workspaceRootNoteId)
       } else {
-        setMergeCandidate(null)
+        setDropCandidate(null)
       }
     }
 
@@ -1262,7 +1510,8 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
               note={note}
               position={pos}
               size={noteSizes[id] || null}
-              isMergeTarget={mergeCandidate === id}
+              isMergeTarget={dropCandidate?.targetId === id}
+              dropAction={dropCandidate?.targetId === id ? dropCandidate.action : null}
               selected={selectedIds.has(id)}
               backgroundColor={noteBackground}
               zIndex={noteZIndexes[id] ?? undefined}
@@ -1274,6 +1523,13 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
               onResize={(w, h) => setNoteSizes(prev => ({ ...prev, [id]: { w, h } }))}
               onRegisterCard={registerCard}
               onInlineUpdate={handleInlineUpdate}
+              childrenByParent={childrenByParent}
+              expandedChildIds={expandedChildIds}
+              checkedLeafIds={checkedLeafIds}
+              onToggleChild={toggleChildExpanded}
+              onToggleLeafCheck={toggleLeafCheck}
+              onOpenChild={childId => { if (!wasDraggedRef.current) { playSound('noteOpen'); onNoteOpen?.(childId) } }}
+              onChildDragStart={handleChildPointerDown}
               paintCat={paintCat}
               onPaint={paintNote}
               paintPersona={paintPersonaId ? true : null}
@@ -1324,6 +1580,19 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
             </div>
           )}
           <div className={styles.gridArrangeBtnGroup}>
+            <button
+              className={styles.gridArrangeBtn}
+              onClick={showProjectChildrenOnCanvas}
+              disabled={!workspaceRootNoteId || (childrenByParent.get(workspaceRootNoteId) || []).length === 0}
+              title="Show direct child notes"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M5 4a2 2 0 0 0-2 2v4h2V6h6V4H5z"/>
+                <path d="M13 4v2h6v4h2V6a2 2 0 0 0-2-2h-6z"/>
+                <path d="M6 13h5v5H6zM13 13h5v5h-5z"/>
+              </svg>
+              Children
+            </button>
             <button
               className={styles.gridArrangeBtn}
               onClick={() => arrangeInGrid(gridCols, gridHeight)}

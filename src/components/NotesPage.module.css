@@ -258,18 +258,108 @@
 .postit:hover .resizeHandle { opacity: 1; }
 .resizeHandle:hover { color: #999; }
 
-.postitBody {
+.postitContent {
   flex: 1;
   min-height: 0;
-  margin: 0;
+  overflow-y: auto;
   padding: 7px 10px 14px;
+}
+
+.postitBody {
+  margin: 0;
   font-size: 11px;
   font-family: Arial, sans-serif;
   color: #444;
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
-  overflow-y: auto;
+}
+
+.childTree {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(0,0,0,0.08);
+}
+
+.postitBody + .childTree {
+  margin-top: 10px;
+}
+
+.childTreeNested {
+  margin-top: 2px;
+}
+
+.childTreeItem {
+  min-width: 0;
+}
+
+.childTreeRow {
+  display: flex;
+  align-items: center;
+  min-height: 22px;
+  gap: 4px;
+}
+
+.childTreeToggle,
+.childTreeLeafIcon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.childTreeToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #8a8a8a;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, transform 0.12s;
+}
+
+.childTreeToggleOpen svg {
+  transform: rotate(90deg);
+}
+
+.childTreeToggle:hover {
+  color: #1a73e8;
+  background: rgba(26,115,232,0.08);
+}
+
+.childTreeLeafIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #2f8f58;
+  background: rgba(47,143,88,0.08);
+  border: 1px solid rgba(47,143,88,0.35);
+  border-radius: 3px;
+}
+
+.childTreeTitle {
+  min-width: 0;
+  flex: 1;
+  padding: 2px 4px;
+  color: #333;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  font-family: Arial, sans-serif;
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.childTreeTitle:hover {
+  color: #1a73e8;
+  background: rgba(26,115,232,0.06);
 }
 
 .inlineBodyInput {
@@ -296,6 +386,46 @@
 .postitMergeTarget {
   border-color: #1a73e8 !important;
   box-shadow: 0 0 0 3px rgba(26,115,232,0.25), 2px 4px 14px rgba(0,0,0,0.1) !important;
+}
+
+.dropZoneOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  overflow: hidden;
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.dropZoneMerge,
+.dropZoneChild {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(20, 32, 48, 0.72);
+  background: rgba(255,255,255,0.52);
+  border: 2px solid rgba(26,115,232,0.28);
+  font-family: Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.dropZoneMerge {
+  border-right: 1px solid rgba(26,115,232,0.32);
+}
+
+.dropZoneChild {
+  border-left: 1px solid rgba(26,115,232,0.32);
+}
+
+.dropZoneActive {
+  color: #0b57d0;
+  background: rgba(232,240,254,0.82);
+  border-color: rgba(26,115,232,0.76);
 }
 
 /* ── Merge proposal dialog ────────────────────────────────────────────────── */
