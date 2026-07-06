@@ -301,7 +301,7 @@
 }
 
 .childTreeToggle,
-.childTreeLeafIcon {
+.childTreeLeafCheck {
   flex-shrink: 0;
   width: 16px;
   height: 16px;
@@ -329,14 +329,28 @@
   background: rgba(26,115,232,0.08);
 }
 
-.childTreeLeafIcon {
+.childTreeLeafCheck {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #2f8f58;
-  background: rgba(47,143,88,0.08);
-  border: 1px solid rgba(47,143,88,0.35);
+  color: transparent;
+  background: rgba(255,255,255,0.42);
+  border: 1px solid rgba(80, 80, 80, 0.28);
   border-radius: 3px;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.childTreeLeafCheck:hover {
+  border-color: rgba(47,143,88,0.62);
+  background: rgba(47,143,88,0.08);
+}
+
+.childTreeLeafCheckDone {
+  color: #fff;
+  background: #2f8f58;
+  border-color: #2f8f58;
 }
 
 .childTreeTitle {

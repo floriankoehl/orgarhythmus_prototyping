@@ -1208,7 +1208,17 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   const reparentNote = async (noteId, parentNoteId, options = {}) => {
     if (!noteId || !parentNoteId || noteId === parentNoteId) return
     const note = notes.find(item => item.id === noteId)
-    if (!note || note.parentNoteId === parentNoteId || isDescendantOf(parentNoteId, noteId)) return
+    if (!note || isDescendantOf(parentNoteId, noteId)) return
+    if (note.parentNoteId === parentNoteId) {
+      if (options.collapseAfter) {
+        setOpenNoteIds(prev => {
+          const next = new Set(prev)
+          next.delete(noteId)
+          return next
+        })
+      }
+      return
+    }
     try {
       await api.updateNote(noteId, { parentNoteId })
       if (options.collapseAfter) {

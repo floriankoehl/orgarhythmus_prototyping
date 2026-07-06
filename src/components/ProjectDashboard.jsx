@@ -3,6 +3,7 @@ import { api, projectsApi } from '../api'
 import styles from './ProjectDashboard.module.css'
 import { playSound } from '../sounds/sound_registry'
 import { useConfirmDialog } from './ConfirmDialog'
+import NoteHierarchyTree, { buildNoteHierarchyRows } from './NoteHierarchyTree'
 
 const STAT_LABELS = {
   notes:        'Notes',
@@ -129,6 +130,13 @@ function collectDescendantIdsForNote(notes, noteId) {
     })
   }
   return descendants
+}
+
+function compareHierarchyNoteOrder(a, b) {
+  const aOrder = a.orderIdx ?? a.order_idx ?? Number.MAX_SAFE_INTEGER
+  const bOrder = b.orderIdx ?? b.order_idx ?? Number.MAX_SAFE_INTEGER
+  if (aOrder !== bOrder) return aOrder - bOrder
+  return String(a.title || '').localeCompare(String(b.title || ''))
 }
 
 function buildAncestorPath(notes, noteId) {
@@ -278,11 +286,13 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
   const [editingDesc, setEditingDesc] = useState(false)
   const [draftDesc,   setDraftDesc]   = useState(descriptionText(workspaceDesc))
   const [exporting,   setExporting]   = useState(false)
-  const [descendantDepth, setDescendantDepth] = useState('all')
+  const [descendantDepth, setDescendantDepth] = useState(1)
   const [expandedHierarchyNoteIds, setExpandedHierarchyNoteIds] = useState(() => new Set())
   const [collapsedHierarchyNoteIds, setCollapsedHierarchyNoteIds] = useState(() => new Set())
   const [draggedHierarchyNoteIds, setDraggedHierarchyNoteIds] = useState(() => new Set())
   const [hierarchyDropTargetId, setHierarchyDropTargetId] = useState(null)
+  const [hierarchyReorderDragId, setHierarchyReorderDragId] = useState(null)
+  const [hierarchyReorderTarget, setHierarchyReorderTarget] = useState(null)
   const [hierarchyWarning, setHierarchyWarning] = useState(null)
   const [hierarchyContextMenu, setHierarchyContextMenu] = useState(null)
   const [selectedHierarchyNoteIds, setSelectedHierarchyNoteIds] = useState(() => new Set())
@@ -320,7 +330,7 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     deriveWorkspaceWindow({ project, notes, timeSlots, rootNoteId: workspaceRootNoteId })
   ), [project, notes, timeSlots, workspaceRootNoteId])
   const hierarchyRows = useMemo(
-    () => buildWorkspaceHierarchy(notes, workspaceRootNoteId),
+    () => buildNoteHierarchyRows(notes, workspaceRootNoteId, { includeAncestors: true }),
     [notes, workspaceRootNoteId],
   )
   const currentHierarchyDepth = hierarchyRows.find(row => row.relation === 'current')?.depth ?? 0
@@ -358,10 +368,12 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
   }, [project.id, workspaceNote?.id, workspaceName, workspaceDesc]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    setDescendantDepth('all')
+    setDescendantDepth(1)
     setExpandedHierarchyNoteIds(new Set())
     setCollapsedHierarchyNoteIds(new Set())
     setSelectedHierarchyNoteIds(new Set())
+    setHierarchyReorderDragId(null)
+    setHierarchyReorderTarget(null)
   }, [project.id, workspaceRootNoteId])
 
   useEffect(() => {
@@ -464,6 +476,39 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     playSound('noteMove')
     await onNotesChanged?.().catch(error => console.error('Note moved, but hierarchy refresh failed', error))
   }, [notes, onNotesChanged, project.rootNoteId, showHierarchyWarning])
+
+  const reorderHierarchyNote = useCallback(async (noteId, targetNoteId, position = 'before') => {
+    if (!noteId || !targetNoteId || noteId === targetNoteId) return
+    const note = notes.find(item => item.id === noteId)
+    const target = notes.find(item => item.id === targetNoteId)
+    if (!note || !target) return
+    if (note.id === project.rootNoteId || note.id === workspaceRootNoteId) return
+    if (target.id === project.rootNoteId || target.id === workspaceRootNoteId) return
+    if ((note.parentNoteId || '') !== (target.parentNoteId || '')) {
+      showHierarchyWarning('Reorder blocked', 'The reorder handle only changes order inside the current parent note.')
+      return
+    }
+    const siblings = notes
+      .filter(item => (item.parentNoteId || '') === (note.parentNoteId || ''))
+      .sort(compareHierarchyNoteOrder)
+    const fromIdx = siblings.findIndex(item => item.id === noteId)
+    const targetIdx = siblings.findIndex(item => item.id === targetNoteId)
+    if (fromIdx === -1 || targetIdx === -1) return
+    const reordered = [...siblings]
+    reordered.splice(fromIdx, 1)
+    const targetAfterRemovalIdx = reordered.findIndex(item => item.id === targetNoteId)
+    if (targetAfterRemovalIdx === -1) return
+    reordered.splice(position === 'after' ? targetAfterRemovalIdx + 1 : targetAfterRemovalIdx, 0, note)
+    if (reordered.every((item, index) => item.id === siblings[index]?.id)) return
+    try {
+      await api.reorderNotes(reordered.map(item => item.id))
+      playSound('noteMove')
+      await onNotesChanged?.()
+    } catch (error) {
+      console.error(error)
+      showHierarchyWarning('Reorder failed', error?.message || 'The note order could not be saved.')
+    }
+  }, [notes, onNotesChanged, project.rootNoteId, showHierarchyWarning, workspaceRootNoteId])
 
   const deleteHierarchyProject = useCallback(async noteToDelete => {
     if (!noteToDelete) return
@@ -770,129 +815,45 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
                 </select>
               </label>
             </div>
-            <div
-              className={styles.hierarchyTree}
-              role="tree"
-              aria-multiselectable="true"
-              aria-label="Project, ancestors, and child notes"
-              onClick={event => {
-                if (event.target === event.currentTarget) setSelectedHierarchyNoteIds(new Set())
+            <NoteHierarchyTree
+              rows={visibleHierarchyRows}
+              rootNoteId={workspaceRootNoteId}
+              projectRootNoteId={project.rootNoteId}
+              project={project}
+              localBaseDepth={localHierarchyBaseDepth}
+              selectedIds={selectedHierarchyNoteIds}
+              draggedIds={draggedHierarchyNoteIds}
+              dropTargetId={hierarchyDropTargetId}
+              reorderDragId={hierarchyReorderDragId}
+              reorderTarget={hierarchyReorderTarget}
+              isExpanded={isHierarchyNodeExpanded}
+              onToggle={toggleHierarchyNode}
+              onSelect={handleHierarchyNodeClick}
+              onOpenWorkspace={noteId => { playSound('viewChange'); onWorkspaceOpen?.(noteId) }}
+              onContextMenu={openHierarchyContextMenu}
+              onMove={moveHierarchyNotes}
+              onReorder={reorderHierarchyNote}
+              onDragStartIds={noteId => selectedHierarchyNoteIds.has(noteId)
+                ? [...selectedHierarchyNoteIds].filter(selectedId => selectedId !== project.rootNoteId)
+                : [noteId]}
+              onDragStateChange={({ draggedIds, selectedId, dropTargetId, onlyIfDropTargetId }) => {
+                if (draggedIds) setDraggedHierarchyNoteIds(draggedIds)
+                if (selectedId && !selectedHierarchyNoteIds.has(selectedId)) setSelectedHierarchyNoteIds(new Set([selectedId]))
+                if (dropTargetId !== undefined) {
+                  if (onlyIfDropTargetId) setHierarchyDropTargetId(current => current === onlyIfDropTargetId ? dropTargetId : current)
+                  else setHierarchyDropTargetId(dropTargetId)
+                }
               }}
-              onContextMenu={event => openHierarchyContextMenu(event, workspaceRootNoteId)}>
-              {visibleHierarchyRows.map(({ note: hierarchyNote, depth, hasChildren }) => {
-                const ancestor = hierarchyNote
-                const isCurrent = ancestor.id === workspaceRootNoteId
-                const isProjectRoot = ancestor.id === project.rootNoteId
-                const displayTitle = isProjectRoot ? project.name : ancestor.title
-                const hoverDescription = descriptionText(isProjectRoot ? project.description : ancestor.html)
-                const displayDepth = Math.max(0, depth - localHierarchyBaseDepth)
-                const isExpanded = hasChildren && isHierarchyNodeExpanded(ancestor.id)
-                const isSelected = selectedHierarchyNoteIds.has(ancestor.id)
-                const createdLabel = formatHierarchyCreatedAt(ancestor.createdAt || (isProjectRoot ? project.createdAt : ''))
-                const hoverTitle = [
-                  createdLabel ? `Created ${createdLabel}` : '',
-                  hoverDescription || (isCurrent ? 'Current note' : `Double-click to open ${displayTitle || 'Untitled'}`),
-                ].filter(Boolean).join('\n')
-                return (
-                  <div
-                    key={ancestor.id}
-                    className={[
-                      styles.hierarchyRow,
-                      isCurrent && styles.hierarchyRowCurrent,
-                      isSelected && styles.hierarchyRowSelected,
-                      hierarchyDropTargetId === ancestor.id && !draggedHierarchyNoteIds.has(ancestor.id) && styles.hierarchyRowDropTarget,
-                      draggedHierarchyNoteIds.has(ancestor.id) && styles.hierarchyRowDragging,
-                    ].filter(Boolean).join(' ')}
-                    style={{ '--tree-depth': displayDepth }}
-                    role="treeitem"
-                    aria-current={isCurrent ? 'page' : undefined}
-                    aria-level={displayDepth + 1}
-                    draggable={!isProjectRoot}
-                    onContextMenu={event => openHierarchyContextMenu(event, ancestor.id)}
-                    onDragStart={event => {
-                      if (isProjectRoot) return
-                      const draggedIds = selectedHierarchyNoteIds.has(ancestor.id)
-                        ? [...selectedHierarchyNoteIds].filter(noteId => noteId !== project.rootNoteId)
-                        : [ancestor.id]
-                      event.dataTransfer.setData('project-hierarchy-note-ids', JSON.stringify(draggedIds))
-                      event.dataTransfer.setData('project-hierarchy-note-id', ancestor.id)
-                      event.dataTransfer.effectAllowed = 'move'
-                      setDraggedHierarchyNoteIds(new Set(draggedIds))
-                      if (!selectedHierarchyNoteIds.has(ancestor.id)) setSelectedHierarchyNoteIds(new Set([ancestor.id]))
-                    }}
-                    onDragOver={event => {
-                      if (!event.dataTransfer.types.includes('project-hierarchy-note-ids') && !event.dataTransfer.types.includes('project-hierarchy-note-id')) return
-                      event.preventDefault()
-                      event.dataTransfer.dropEffect = 'move'
-                      setHierarchyDropTargetId(ancestor.id)
-                    }}
-                    onDragLeave={event => {
-                      if (!event.currentTarget.contains(event.relatedTarget)) {
-                        setHierarchyDropTargetId(current => current === ancestor.id ? null : current)
-                      }
-                    }}
-                    onDrop={event => {
-                      event.preventDefault()
-                      const rawMovedNoteIds = event.dataTransfer.getData('project-hierarchy-note-ids')
-                      const fallbackMovedNoteId = event.dataTransfer.getData('project-hierarchy-note-id')
-                      let movedNoteIds = fallbackMovedNoteId ? [fallbackMovedNoteId] : []
-                      try {
-                        const parsed = JSON.parse(rawMovedNoteIds)
-                        if (Array.isArray(parsed)) movedNoteIds = parsed
-                      } catch {}
-                      setHierarchyDropTargetId(null)
-                      setDraggedHierarchyNoteIds(new Set())
-                      moveHierarchyNotes(movedNoteIds, ancestor.id)
-                    }}
-                    onDragEnd={() => {
-                      setHierarchyDropTargetId(null)
-                      setDraggedHierarchyNoteIds(new Set())
-                    }}>
-                    <span className={styles.hierarchyBranch} aria-hidden="true" />
-                    <div className={styles.hierarchyNodeLine}>
-                      {hasChildren ? (
-                        <button
-                          type="button"
-                          className={`${styles.hierarchyExpandBtn} ${isExpanded ? styles.hierarchyExpandBtnOpen : ''}`}
-                          aria-label={isExpanded ? `Collapse ${displayTitle || 'project'}` : `Expand ${displayTitle || 'project'}`}
-                          aria-expanded={isExpanded}
-                          draggable={false}
-                          onMouseDown={event => event.stopPropagation()}
-                          onClick={event => {
-                            event.stopPropagation()
-                            toggleHierarchyNode(ancestor.id)
-                          }}>
-                          <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                            <path d="M7 5.5 12 10l-5 4.5z" />
-                          </svg>
-                        </button>
-                      ) : (
-                        <span className={styles.hierarchyExpandSpacer} aria-hidden="true" />
-                      )}
-                      <button
-                        type="button"
-                        className={styles.hierarchyNode}
-                        aria-selected={isSelected}
-                        onClick={event => handleHierarchyNodeClick(event, ancestor.id)}
-                        onDoubleClick={event => {
-                          event.stopPropagation()
-                          if (isCurrent) return
-                          playSound('viewChange')
-                          onWorkspaceOpen?.(ancestor.id)
-                        }}
-                        title={hoverTitle}>
-                        <span
-                          className={`${styles.hierarchyIcon} ${hasChildren ? styles.hierarchyProjectIcon : styles.hierarchyNoteIcon}`}
-                          title={hasChildren ? 'Project · contains child notes' : 'Note · no child notes'}>
-                          <HierarchyTypeIcon hasChildren={hasChildren} />
-                        </span>
-                        <span className={styles.hierarchyTitle}>{displayTitle || 'Untitled'}</span>
-                      </button>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+              onReorderDragStateChange={({ dragId, target, onlyIfTargetId }) => {
+                if (dragId !== undefined) setHierarchyReorderDragId(dragId)
+                if (target !== undefined) {
+                  if (onlyIfTargetId) setHierarchyReorderTarget(current => current?.noteId === onlyIfTargetId ? target : current)
+                  else setHierarchyReorderTarget(target)
+                }
+              }}
+              onClearSelection={() => setSelectedHierarchyNoteIds(new Set())}
+              ariaLabel="Project, ancestors, and child notes"
+            />
           </div>
         )}
 

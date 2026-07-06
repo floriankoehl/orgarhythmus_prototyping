@@ -7,6 +7,7 @@ import CategoryHashtagSuggestions from './CategoryHashtagSuggestions'
 import PersonaAvatarStack from './PersonaAvatarStack'
 import { mergeSelectionsWithHashtags } from '../categoryHashtags'
 import { playSound } from '../sounds/sound_registry'
+import NoteHierarchyTree, { buildNoteHierarchyRows } from './NoteHierarchyTree'
 
 // ── Headline-mode helpers ─────────────────────────────────────────────────────
 function computeWordRects(editorEl) {
@@ -52,58 +53,33 @@ function ChevronIcon({ down }) {
   )
 }
 
-function ChildNotesPreview({ note, notes = [], isProjectRootNote = false, onNoteOpen }) {
-  const [checked, setChecked] = useState({})
-  const children = notes
-    .filter(item => item.parentNoteId === note.id)
-    .sort((a, b) => (a.orderIdx ?? 0) - (b.orderIdx ?? 0))
+function descendantIdsForNote(notes, noteId) {
+  const childrenByParent = new Map()
+  notes.forEach(item => {
+    if (!item.parentNoteId) return
+    if (!childrenByParent.has(item.parentNoteId)) childrenByParent.set(item.parentNoteId, [])
+    childrenByParent.get(item.parentNoteId).push(item.id)
+  })
+  const descendants = new Set()
+  const pending = [...(childrenByParent.get(noteId) || [])]
+  while (pending.length) {
+    const id = pending.pop()
+    if (!id || descendants.has(id)) continue
+    descendants.add(id)
+    pending.push(...(childrenByParent.get(id) || []))
+  }
+  return descendants
+}
 
-  useEffect(() => {
-    setChecked({})
-  }, [note.id])
-
-  return (
-    <div className={styles.childrenSection}>
-      <div className={styles.childrenHeader}>
-        <span className={styles.sectionLabel}>{isProjectRootNote ? 'Child notes' : 'Subnotes'}</span>
-        <span className={styles.childrenCount}>{children.length}</span>
-      </div>
-      {children.length === 0 ? (
-        <p className={styles.emptyNote}>No child notes.</p>
-      ) : (
-        <div className={styles.childrenList}>
-          {children.map(child => {
-            const isChecked = Boolean(checked[child.id])
-            return (
-              <div key={child.id} className={styles.childRow}>
-                {isProjectRootNote ? (
-                  <span className={styles.childBullet} />
-                ) : (
-                  <input
-                    className={styles.childCheckbox}
-                    type="checkbox"
-                    checked={isChecked}
-                    onChange={e => setChecked(prev => ({ ...prev, [child.id]: e.target.checked }))}
-                  />
-                )}
-                <button
-                  type="button"
-                  className={`${styles.childTitle} ${isChecked ? styles.childTitleChecked : ''}`}
-                  onClick={() => onNoteOpen?.(child.id)}
-                  title="Open child note">
-                  {child.title || 'Untitled'}
-                </button>
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
+function compareHierarchyNoteOrder(a, b) {
+  const aOrder = a.orderIdx ?? a.order_idx ?? Number.MAX_SAFE_INTEGER
+  const bOrder = b.orderIdx ?? b.order_idx ?? Number.MAX_SAFE_INTEGER
+  if (aOrder !== bOrder) return aOrder - bOrder
+  return String(a.title || '').localeCompare(String(b.title || ''))
 }
 
 // ── Main popup ────────────────────────────────────────────────────────────────
-export default function NotePopup({ note, notes = [], isProjectRootNote = false, initiallyEditTitle = false, onClose, onNoteUpdated, onAssignmentsChanged, onPeopleChanged, onNoteDeleted, onNoteOpen, onOpenAsWorkspace }) {
+export default function NotePopup({ note, notes = [], isProjectRootNote = false, initiallyEditTitle = false, onClose, onNoteUpdated, onAssignmentsChanged, onPeopleChanged, onNoteDeleted, onNoteOpen, onOpenAsWorkspace, onNotesChanged }) {
   const [expanded, setExpanded]           = useState(false)
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false)
   const [headlineMode, setHeadlineMode]   = useState(false)
@@ -112,6 +88,12 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
   const [editingTitle, setEditingTitle]   = useState(false)
   const [titleVal, setTitleVal]           = useState(note.title)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [expandedHierarchyNoteIds, setExpandedHierarchyNoteIds] = useState(() => new Set())
+  const [selectedHierarchyNoteIds, setSelectedHierarchyNoteIds] = useState(() => new Set())
+  const [draggedHierarchyNoteIds, setDraggedHierarchyNoteIds] = useState(() => new Set())
+  const [hierarchyDropTargetId, setHierarchyDropTargetId] = useState(null)
+  const [hierarchyReorderDragId, setHierarchyReorderDragId] = useState(null)
+  const [hierarchyReorderTarget, setHierarchyReorderTarget] = useState(null)
   const [aiHeadlineLoading, setAiHeadlineLoading] = useState(false)
   const [aiHeadlineSuggestion, setAiHeadlineSuggestion] = useState(null)
   const [aiHeadlineError, setAiHeadlineError] = useState('')
@@ -127,6 +109,18 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
   const popupRef       = useRef(null)
   const titleInputRef  = useRef(null)
   const saveTimerRef   = useRef(null)
+  const notesById = new Map(notes.map(item => [item.id, item]))
+  const hierarchyRows = buildNoteHierarchyRows(notes, note.id, { includeRoot: true })
+  const visibleHierarchyRows = hierarchyRows.filter(row => {
+    if (row.note.id === note.id) return true
+    let parentId = row.note.parentNoteId
+    while (parentId && parentId !== note.id) {
+      if (!expandedHierarchyNoteIds.has(parentId)) return false
+      parentId = notesById.get(parentId)?.parentNoteId || null
+    }
+    return parentId === note.id
+  })
+  const childCount = notes.filter(item => item.parentNoteId === note.id).length
 
   // Keep note title in sync if parent updates note
   useEffect(() => { setTitleVal(note.title) }, [note.title])
@@ -135,6 +129,12 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
     setCategoryPickerOpen(false)
     setAiHeadlineSuggestion(null)
     setAiHeadlineError('')
+    setExpandedHierarchyNoteIds(new Set())
+    setSelectedHierarchyNoteIds(new Set())
+    setDraggedHierarchyNoteIds(new Set())
+    setHierarchyDropTargetId(null)
+    setHierarchyReorderDragId(null)
+    setHierarchyReorderTarget(null)
   }, [note.id])
 
   useEffect(() => {
@@ -300,6 +300,71 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
     }
   }
 
+  const toggleHierarchyNode = noteId => {
+    setExpandedHierarchyNoteIds(prev => {
+      const next = new Set(prev)
+      if (next.has(noteId)) next.delete(noteId)
+      else next.add(noteId)
+      return next
+    })
+  }
+
+  const selectHierarchyNode = (event, noteId) => {
+    if (event.ctrlKey || event.metaKey) {
+      setSelectedHierarchyNoteIds(prev => {
+        const next = new Set(prev)
+        if (next.has(noteId)) next.delete(noteId)
+        else next.add(noteId)
+        return next
+      })
+      return
+    }
+    setSelectedHierarchyNoteIds(new Set([noteId]))
+  }
+
+  const moveHierarchyNotes = async (noteIds, parentNoteId) => {
+    const uniqueIds = [...new Set(Array.isArray(noteIds) ? noteIds : [noteIds])].filter(Boolean)
+    const movableIds = uniqueIds.filter(noteId => {
+      const movedNote = notesById.get(noteId)
+      if (!movedNote || movedNote.parentNoteId === parentNoteId || noteId === parentNoteId) return false
+      return !descendantIdsForNote(notes, noteId).has(parentNoteId)
+    })
+    if (!movableIds.length) return
+    try {
+      await Promise.all(movableIds.map(noteId => api.updateNote(noteId, { parentNoteId })))
+      await onNotesChanged?.()
+    } catch (error) {
+      console.error('Popup hierarchy move failed', error)
+    }
+  }
+
+  const reorderHierarchyNote = async (noteId, targetNoteId, position = 'before') => {
+    if (!noteId || !targetNoteId || noteId === targetNoteId) return
+    const movedNote = notesById.get(noteId)
+    const targetNote = notesById.get(targetNoteId)
+    if (!movedNote || !targetNote) return
+    if (movedNote.id === note.id || targetNote.id === note.id) return
+    if ((movedNote.parentNoteId || '') !== (targetNote.parentNoteId || '')) return
+    const siblings = notes
+      .filter(item => (item.parentNoteId || '') === (movedNote.parentNoteId || ''))
+      .sort(compareHierarchyNoteOrder)
+    const fromIdx = siblings.findIndex(item => item.id === noteId)
+    const targetIdx = siblings.findIndex(item => item.id === targetNoteId)
+    if (fromIdx === -1 || targetIdx === -1) return
+    const reordered = [...siblings]
+    reordered.splice(fromIdx, 1)
+    const targetAfterRemovalIdx = reordered.findIndex(item => item.id === targetNoteId)
+    if (targetAfterRemovalIdx === -1) return
+    reordered.splice(position === 'after' ? targetAfterRemovalIdx + 1 : targetAfterRemovalIdx, 0, movedNote)
+    if (reordered.every((item, index) => item.id === siblings[index]?.id)) return
+    try {
+      await api.reorderNotes(reordered.map(item => item.id))
+      await onNotesChanged?.()
+    } catch (error) {
+      console.error('Popup hierarchy reorder failed', error)
+    }
+  }
+
   const handleCategoryChange = async (newSels) => {
     const old = { ...assignments }
     const allDimIds = new Set([...Object.keys(old), ...Object.keys(newSels)])
@@ -445,15 +510,51 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
           )}
         </div>
 
-        <ChildNotesPreview
-          note={note}
-          notes={notes}
-          isProjectRootNote={isProjectRootNote}
-          onNoteOpen={childId => {
-            onClose()
-            requestAnimationFrame(() => onNoteOpen?.(childId))
-          }}
-        />
+        <div className={styles.childrenSection}>
+          <div className={styles.childrenHeader}>
+            <span className={styles.sectionLabel}>{isProjectRootNote ? 'Child notes' : 'Subnotes'}</span>
+            <span className={styles.childrenCount}>{childCount}</span>
+          </div>
+          {childCount === 0 ? (
+            <p className={styles.emptyNote}>No child notes.</p>
+          ) : (
+            <NoteHierarchyTree
+              rows={visibleHierarchyRows}
+              rootNoteId={note.id}
+              selectedIds={selectedHierarchyNoteIds}
+              draggedIds={draggedHierarchyNoteIds}
+              dropTargetId={hierarchyDropTargetId}
+              reorderDragId={hierarchyReorderDragId}
+              reorderTarget={hierarchyReorderTarget}
+              isExpanded={noteId => expandedHierarchyNoteIds.has(noteId)}
+              onToggle={toggleHierarchyNode}
+              onSelect={selectHierarchyNode}
+              onOpenWorkspace={noteId => { playSound('viewChange'); onOpenAsWorkspace?.(noteId) }}
+              onMove={moveHierarchyNotes}
+              onReorder={reorderHierarchyNote}
+              onDragStartIds={noteId => selectedHierarchyNoteIds.has(noteId)
+                ? [...selectedHierarchyNoteIds]
+                : [noteId]}
+              onDragStateChange={({ draggedIds, selectedId, dropTargetId, onlyIfDropTargetId }) => {
+                if (draggedIds) setDraggedHierarchyNoteIds(draggedIds)
+                if (selectedId && !selectedHierarchyNoteIds.has(selectedId)) setSelectedHierarchyNoteIds(new Set([selectedId]))
+                if (dropTargetId !== undefined) {
+                  if (onlyIfDropTargetId) setHierarchyDropTargetId(current => current === onlyIfDropTargetId ? dropTargetId : current)
+                  else setHierarchyDropTargetId(dropTargetId)
+                }
+              }}
+              onReorderDragStateChange={({ dragId, target, onlyIfTargetId }) => {
+                if (dragId !== undefined) setHierarchyReorderDragId(dragId)
+                if (target !== undefined) {
+                  if (onlyIfTargetId) setHierarchyReorderTarget(current => current?.noteId === onlyIfTargetId ? target : current)
+                  else setHierarchyReorderTarget(target)
+                }
+              }}
+              onClearSelection={() => setSelectedHierarchyNoteIds(new Set())}
+              ariaLabel="Subnote hierarchy"
+            />
+          )}
+        </div>
 
         {/* Description section */}
         <div className={styles.descSection}>

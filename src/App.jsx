@@ -503,6 +503,7 @@ export default function App() {
           onNoteDeleted={handleNoteDeleted}
           onNoteOpen={openNotePopup}
           onOpenAsWorkspace={openNoteAsWorkspace}
+          onNotesChanged={handleNotesChanged}
         />
       )}
 
