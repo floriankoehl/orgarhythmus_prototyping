@@ -88,7 +88,9 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
   const [editingTitle, setEditingTitle]   = useState(false)
   const [titleVal, setTitleVal]           = useState(note.title)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [descendantDepth, setDescendantDepth] = useState(1)
   const [expandedHierarchyNoteIds, setExpandedHierarchyNoteIds] = useState(() => new Set())
+  const [collapsedHierarchyNoteIds, setCollapsedHierarchyNoteIds] = useState(() => new Set())
   const [selectedHierarchyNoteIds, setSelectedHierarchyNoteIds] = useState(() => new Set())
   const [draggedHierarchyNoteIds, setDraggedHierarchyNoteIds] = useState(() => new Set())
   const [hierarchyDropTargetId, setHierarchyDropTargetId] = useState(null)
@@ -111,14 +113,24 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
   const saveTimerRef   = useRef(null)
   const notesById = new Map(notes.map(item => [item.id, item]))
   const hierarchyRows = buildNoteHierarchyRows(notes, note.id, { includeRoot: true })
+  const hierarchyDepthById = new Map(hierarchyRows.map(row => [row.note.id, row.depth]))
+  const rootHierarchyDepth = hierarchyDepthById.get(note.id) ?? 0
+  const isHierarchyNodeExpanded = useCallback(noteId => {
+    if (collapsedHierarchyNoteIds.has(noteId)) return false
+    if (expandedHierarchyNoteIds.has(noteId)) return true
+    const nodeDepth = hierarchyDepthById.get(noteId)
+    if (nodeDepth === undefined || nodeDepth < rootHierarchyDepth) return false
+    const hopsBelowRoot = nodeDepth - rootHierarchyDepth
+    return descendantDepth === 'all' || hopsBelowRoot < descendantDepth
+  }, [collapsedHierarchyNoteIds, descendantDepth, expandedHierarchyNoteIds, hierarchyDepthById, rootHierarchyDepth])
   const visibleHierarchyRows = hierarchyRows.filter(row => {
     if (row.note.id === note.id) return true
     let parentId = row.note.parentNoteId
     while (parentId && parentId !== note.id) {
-      if (!expandedHierarchyNoteIds.has(parentId)) return false
+      if (!isHierarchyNodeExpanded(parentId)) return false
       parentId = notesById.get(parentId)?.parentNoteId || null
     }
-    return parentId === note.id
+    return parentId === note.id && isHierarchyNodeExpanded(note.id)
   })
   const childCount = notes.filter(item => item.parentNoteId === note.id).length
 
@@ -129,7 +141,9 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
     setCategoryPickerOpen(false)
     setAiHeadlineSuggestion(null)
     setAiHeadlineError('')
+    setDescendantDepth(1)
     setExpandedHierarchyNoteIds(new Set())
+    setCollapsedHierarchyNoteIds(new Set())
     setSelectedHierarchyNoteIds(new Set())
     setDraggedHierarchyNoteIds(new Set())
     setHierarchyDropTargetId(null)
@@ -301,12 +315,32 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
   }
 
   const toggleHierarchyNode = noteId => {
+    const currentlyExpanded = isHierarchyNodeExpanded(noteId)
     setExpandedHierarchyNoteIds(prev => {
       const next = new Set(prev)
-      if (next.has(noteId)) next.delete(noteId)
+      if (currentlyExpanded) next.delete(noteId)
       else next.add(noteId)
       return next
     })
+    setCollapsedHierarchyNoteIds(prev => {
+      const next = new Set(prev)
+      if (currentlyExpanded) next.add(noteId)
+      else next.delete(noteId)
+      return next
+    })
+  }
+
+  const changeDescendantDepth = value => {
+    setDescendantDepth(value)
+    setExpandedHierarchyNoteIds(new Set())
+    setCollapsedHierarchyNoteIds(new Set())
+  }
+
+  const cycleDescendantDepth = deltaY => {
+    const options = [1, 2, 3, 'all']
+    const currentIndex = Math.max(0, options.findIndex(option => option === descendantDepth))
+    const direction = deltaY > 0 ? 1 : -1
+    changeDescendantDepth(options[(currentIndex + direction + options.length) % options.length])
   }
 
   const selectHierarchyNode = (event, noteId) => {
@@ -513,7 +547,26 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
         <div className={styles.childrenSection}>
           <div className={styles.childrenHeader}>
             <span className={styles.sectionLabel}>{isProjectRootNote ? 'Child notes' : 'Subnotes'}</span>
-            <span className={styles.childrenCount}>{childCount}</span>
+            <div className={styles.childrenControls}>
+              {childCount > 0 && (
+                <label className={styles.depthControl}>
+                  <span>Depth</span>
+                  <select
+                    value={descendantDepth}
+                    onWheel={event => {
+                      event.preventDefault()
+                      cycleDescendantDepth(event.deltaY)
+                    }}
+                    onChange={event => changeDescendantDepth(event.target.value === 'all' ? 'all' : Number(event.target.value))}>
+                    <option value={1}>1 hop</option>
+                    <option value={2}>2 hops</option>
+                    <option value={3}>3 hops</option>
+                    <option value="all">All</option>
+                  </select>
+                </label>
+              )}
+              <span className={styles.childrenCount}>{childCount}</span>
+            </div>
           </div>
           {childCount === 0 ? (
             <p className={styles.emptyNote}>No child notes.</p>
@@ -526,7 +579,7 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
               dropTargetId={hierarchyDropTargetId}
               reorderDragId={hierarchyReorderDragId}
               reorderTarget={hierarchyReorderTarget}
-              isExpanded={noteId => expandedHierarchyNoteIds.has(noteId)}
+              isExpanded={isHierarchyNodeExpanded}
               onToggle={toggleHierarchyNode}
               onSelect={selectHierarchyNode}
               onOpenWorkspace={noteId => { playSound('viewChange'); onOpenAsWorkspace?.(noteId) }}

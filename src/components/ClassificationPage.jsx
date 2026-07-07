@@ -83,6 +83,13 @@ function isKanbanDimension(dim) {
   return dim?.systemType === 'kanban'
 }
 
+function compareHierarchyNoteOrder(a, b) {
+  const aOrder = a.orderIdx ?? a.order_idx ?? Number.MIN_SAFE_INTEGER
+  const bOrder = b.orderIdx ?? b.order_idx ?? Number.MIN_SAFE_INTEGER
+  if (aOrder !== bOrder) return aOrder - bOrder
+  return String(a.title || '').localeCompare(String(b.title || ''))
+}
+
 function dynamicDimensionLabel(cat) {
   if (cat?.dynamicType === 'all_notes') return 'All'
   if (cat?.systemType === 'kanban') return 'Status'
@@ -527,6 +534,7 @@ function ClassificationToolbar({
   onContainerDimChange, onToggleCategory, onShowAllCategories, onShowOnlyCategory,
   onCreateDim, onRenameDim, onRequestDeleteDim,
   onReorderDims, maxGridCols, onMaxGridColsChange, singleColumnWidth, onSingleColumnWidthChange,
+  noteDepthMode = 'depth', onNoteDepthModeChange,
   noteDepthPreset = 1, onNoteDepthPresetChange,
 }) {
   const [dimMenuOpen, setDimMenuOpen] = useState(false)
@@ -607,16 +615,31 @@ function ClassificationToolbar({
       <div className={styles.depthToggleUnit}>
         <span className={styles.groupScrollerLabel}>Depth</span>
         <div className={styles.depthToggle}>
-          {[1, 2, 3, 'all'].map(value => (
+          <span className={styles.depthToggleGroup}>
+            {[1, 2, 3, 'all'].map(value => (
+              <button
+                key={value}
+                type="button"
+                className={noteDepthMode === 'depth' && noteDepthPreset === value ? styles.depthToggleActive : ''}
+                onClick={() => {
+                  onNoteDepthModeChange?.('depth')
+                  onNoteDepthPresetChange?.(value)
+                }}
+              >
+                {value === 'all' ? 'All' : value}
+              </button>
+            ))}
+          </span>
+          <span className={styles.depthToggleDivider} aria-hidden="true" />
+          <span className={styles.depthToggleGroup}>
             <button
-              key={value}
               type="button"
-              className={noteDepthPreset === value ? styles.depthToggleActive : ''}
-              onClick={() => onNoteDepthPresetChange?.(value)}
+              className={noteDepthMode === 'leaves' ? styles.depthToggleActive : ''}
+              onClick={() => onNoteDepthModeChange?.('leaves')}
             >
-              {value === 'all' ? 'All' : value}
+              Leaves
             </button>
-          ))}
+          </span>
         </div>
       </div>
 
@@ -834,10 +857,22 @@ function CategoryEditModal({ cat, onClose, onSave, onDelete }) {
 }
 
 // ── Note row inside a container ───────────────────────────────────────────────
-function NoteRow({ note, paintCat, onPaint, paintPersona, onPersonaPaint, legendColor, onNoteDrop, onOpen, canDrag = true, forceExpanded = false, getNotePersonas, onRemovePersona }) {
+function NoteRow({ note, paintCat, onPaint, paintPersona, onPersonaPaint, legendColor, hierarchyNumber, hierarchyPath, onNoteDrop, onOpen, canDrag = true, forceExpanded = false, getNotePersonas, onRemovePersona }) {
   const [expanded, setExpanded] = useState(false)
   const [dragging, setDragging] = useState(false)
+  const [pathTooltip, setPathTooltip] = useState(null)
   const showContent = Boolean(note.html && (expanded || forceExpanded))
+  const showHierarchyPath = Boolean(hierarchyNumber?.includes('.') && hierarchyPath)
+
+  const openPathTooltip = event => {
+    if (!showHierarchyPath) return
+    const rect = event.currentTarget.getBoundingClientRect()
+    setPathTooltip({
+      path: hierarchyPath,
+      left: rect.left + rect.width / 2,
+      top: rect.bottom,
+    })
+  }
 
   return (
     <div
@@ -883,6 +918,15 @@ function NoteRow({ note, paintCat, onPaint, paintPersona, onPersonaPaint, legend
           </svg>
         </button>
         <PersonaAvatarStack personas={getNotePersonas?.(note.id) ?? []} onRemove={onRemovePersona ? personaId => onRemovePersona(personaId, note.id) : undefined} />
+        {hierarchyNumber && (
+          <span
+            className={`${styles.rowHierarchyNumber} ${hierarchyNumber.includes('.') ? styles.rowHierarchyNumberWithPath : ''}`}
+            onMouseEnter={openPathTooltip}
+            onMouseLeave={() => setPathTooltip(null)}
+          >
+            {hierarchyNumber}
+          </span>
+        )}
         <span className={styles.rowTitle}>{note.title}</span>
       </div>
       {showContent && (
@@ -891,6 +935,24 @@ function NoteRow({ note, paintCat, onPaint, paintPersona, onPersonaPaint, legend
       {!showContent && note.html && (
         <div className={styles.noteHoverContent} dangerouslySetInnerHTML={{ __html: note.html }} />
       )}
+      {pathTooltip && createPortal(
+        <div
+          className={styles.rowHierarchyTooltip}
+          style={{ left: pathTooltip.left, top: pathTooltip.top }}
+        >
+          {pathTooltip.path.map((item, index) => (
+            <div
+              key={item.number}
+              className={styles.rowHierarchyTooltipItem}
+              style={{ '--path-depth': index }}
+            >
+              <span className={styles.rowHierarchyTooltipNumber}>{item.number}</span>
+              <span className={styles.rowHierarchyTooltipTitle}>{item.title}</span>
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
     </div>
   )
 }
@@ -898,7 +960,7 @@ function NoteRow({ note, paintCat, onPaint, paintPersona, onPersonaPaint, legend
 // ── Category container box ────────────────────────────────────────────────────
 function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, paintPersona, onPersonaCategoryPaint, onPersonaNotePaint, getNoteColor, getNotePersonas, onRemovePersona, catPersonas, onPersonaCatDrop, onRemoveCatPersona, onEdit, onCollapse,
   onCatDragStart, onCatDragEnd, onCatDragOver, onCatDrop, onReorderNote, insertSide, isDraggingCat, onNoteOpen,
-  onBulkPaint, dynamic = false, readOnlyCategory = false, unassignedLabel = 'Unassigned' }) {
+  getNoteHierarchyNumber, getNoteHierarchyPath, onBulkPaint, dynamic = false, readOnlyCategory = false, unassignedLabel = 'Unassigned' }) {
   const [isDragOver, setIsDragOver] = useState(false)
   const [isPersonaDragOver, setIsPersonaDragOver] = useState(false)
   const [allExpanded, setAllExpanded] = useState(false)
@@ -1084,6 +1146,8 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, paintPersona, onP
         {notes.length === 0
           ? <div className={styles.catBoxEmpty}>{dynamic ? 'No matching notes' : 'Drop notes here'}</div>
           : notes.map(g => <NoteRow key={g.id} note={g} paintCat={paintCat} onPaint={onPaint} paintPersona={paintPersona} onPersonaPaint={onPersonaNotePaint} legendColor={getNoteColor?.(g.id)}
+              hierarchyNumber={getNoteHierarchyNumber?.(g.id)}
+              hierarchyPath={getNoteHierarchyPath?.(g.id)}
               onNoteDrop={handleNoteDrop}
               canDrag={!dynamic}
               forceExpanded={allExpanded}
@@ -1464,6 +1528,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
   const [namedFilters, setNamedFilters] = useState([])
   const [activeFilterIds, setActiveFilterIds] = useState([])
   const [quickFilters, setQuickFilters] = useState([])
+  const [noteDepthMode, setNoteDepthMode] = useState('depth')
   const [noteDepthPreset, setNoteDepthPreset] = useState(1)
   const [peopleVisibleNoteIds, setPeopleVisibleNoteIds] = useState(null)
   const [editingFilter, setEditingFilter] = useState(null)
@@ -1488,6 +1553,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
   const { confirm: confirmDialog, dialog: confirmDialogNode } = useConfirmDialog()
 
   useEffect(() => {
+    setNoteDepthMode('depth')
     setNoteDepthPreset(1)
   }, [workspaceRootNoteId])
 
@@ -1608,7 +1674,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
       restoringPerspectiveRef.current = false
       return
     }
-    setCollapsedCatIds(new Set())
+    setCollapsedCatIds(containerDimId ? new Set([allNotesCategoryId(containerDimId)]) : new Set())
     setUnassignedCollapsed(false)
   }, [containerDimId])
 
@@ -1624,10 +1690,12 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
         singleColumnWidth: 800,
         containerDimId: groupDim?.id ?? '',
         legendDimId: priorityDim?.id ?? '',
-        collapsedCatIds: [],
+        collapsedCatIds: groupDim?.id ? [allNotesCategoryId(groupDim.id)] : [],
         unassignedCollapsed: false,
         activeFilterIds: [],
         quickFilters: [],
+        noteDepthMode: 'depth',
+        noteDepthPreset: 1,
       },
     })
   }
@@ -1644,6 +1712,8 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     unassignedCollapsed,
     activeFilterIds,
     quickFilters,
+    noteDepthMode,
+    noteDepthPreset,
   })
 
   const applyPerspective = perspective => {
@@ -1658,6 +1728,8 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     setUnassignedCollapsed(Boolean(state.unassignedCollapsed))
     setActiveFilterIds(Array.isArray(state.activeFilterIds) ? state.activeFilterIds : [])
     setQuickFilters(Array.isArray(state.quickFilters) ? state.quickFilters : [])
+    setNoteDepthMode(state.noteDepthMode === 'leaves' ? 'leaves' : 'depth')
+    setNoteDepthPreset(state.noteDepthPreset === 'all' ? 'all' : Math.max(1, Math.min(3, Number(state.noteDepthPreset) || 1)))
     setPeopleVisibleNoteIds(null)
     setPaintCat(null)
     setActivePerspectiveId(perspective?.id ?? NONE_PERSPECTIVE_ID)
@@ -2122,15 +2194,65 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     return categories.find(c => c.id === catId)?.color ?? null
   }
 
-  const depthScopedNotes = useMemo(() => {
-    if (!workspaceRootNoteId || noteDepthPreset === 'all') return notes
-    const maxDepth = Number(noteDepthPreset) || 1
+  const hierarchyIndexByNoteId = useMemo(() => {
     const childrenByParent = new Map()
     notes.forEach(note => {
       const parentId = note.parentNoteId || ''
       if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, [])
       childrenByParent.get(parentId).push(note)
     })
+    childrenByParent.forEach(children => children.sort(compareHierarchyNoteOrder))
+
+    const numbers = new Map()
+    const rootChildren = workspaceRootNoteId
+      ? childrenByParent.get(workspaceRootNoteId) || []
+      : childrenByParent.get('') || []
+
+    const visit = (children, numberPrefix = [], titlePrefix = []) => {
+      children.forEach((child, index) => {
+        const numberPath = [...numberPrefix, index + 1]
+        const titlePath = [...titlePrefix, child.title || 'Untitled']
+        numbers.set(child.id, {
+          number: numberPath.join('.'),
+          path: titlePath.map((title, pathIndex) => ({
+            number: numberPath.slice(0, pathIndex + 1).join('.'),
+            title,
+          })),
+        })
+        visit(childrenByParent.get(child.id) || [], numberPath, titlePath)
+      })
+    }
+
+    visit(rootChildren)
+    return numbers
+  }, [notes, workspaceRootNoteId])
+
+  const depthScopedNotes = useMemo(() => {
+    const childrenByParent = new Map()
+    notes.forEach(note => {
+      const parentId = note.parentNoteId || ''
+      if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, [])
+      childrenByParent.get(parentId).push(note)
+    })
+
+    if (noteDepthMode === 'leaves') {
+      if (!workspaceRootNoteId) return notes.filter(note => !(childrenByParent.get(note.id) || []).length)
+      const scoped = []
+      const seen = new Set()
+      const queue = [...(childrenByParent.get(workspaceRootNoteId) || [])]
+      while (queue.length) {
+        const note = queue.shift()
+        if (!note || seen.has(note.id)) continue
+        seen.add(note.id)
+        const childNotes = childrenByParent.get(note.id) || []
+        if (childNotes.length === 0) scoped.push(note)
+        else childNotes.forEach(child => queue.push(child))
+      }
+      return scoped
+    }
+
+    if (!workspaceRootNoteId || noteDepthPreset === 'all') return notes
+    const maxDepth = Number(noteDepthPreset) || 1
     const scoped = []
     const seen = new Set()
     const queue = (childrenByParent.get(workspaceRootNoteId) || []).map(note => ({ note, depth: 1 }))
@@ -2145,7 +2267,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
       }
     }
     return scoped
-  }, [notes, workspaceRootNoteId, noteDepthPreset])
+  }, [notes, workspaceRootNoteId, noteDepthMode, noteDepthPreset])
 
   const activeFilters = activeFilterIds
     .map(id => namedFilters.find(filter => filter.id === id))
@@ -2292,6 +2414,8 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
         onMaxGridColsChange={setMaxGridCols}
         singleColumnWidth={singleColumnWidth}
         onSingleColumnWidthChange={setSingleColumnWidth}
+        noteDepthMode={noteDepthMode}
+        onNoteDepthModeChange={setNoteDepthMode}
         noteDepthPreset={noteDepthPreset}
         onNoteDepthPresetChange={setNoteDepthPreset}
       />
@@ -2320,6 +2444,8 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
                 ])
               }}
               getNoteColor={getNoteLegendColor}
+              getNoteHierarchyNumber={noteId => hierarchyIndexByNoteId.get(noteId)?.number}
+              getNoteHierarchyPath={noteId => hierarchyIndexByNoteId.get(noteId)?.path}
               getNotePersonas={noteId => notePersonasMap[noteId] || []}
               onRemovePersona={(personaId, noteId) => {
                 api.unassignPersonaFromNote(personaId, noteId).then(() => onPeopleChanged?.()).catch(console.error)
@@ -2359,6 +2485,8 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
                 ])
               }}
               getNoteColor={getNoteLegendColor}
+              getNoteHierarchyNumber={noteId => hierarchyIndexByNoteId.get(noteId)?.number}
+              getNoteHierarchyPath={noteId => hierarchyIndexByNoteId.get(noteId)?.path}
               getNotePersonas={noteId => notePersonasMap[noteId] || []}
               onRemovePersona={(personaId, noteId) => {
                 api.unassignPersonaFromNote(personaId, noteId).then(() => onPeopleChanged?.()).catch(console.error)

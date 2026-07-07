@@ -212,6 +212,45 @@
   gap: 10px;
 }
 
+.childrenControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.depthControl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #64748b;
+  font: 700 11px Arial, sans-serif;
+}
+
+.depthControl span {
+  color: #9aa0a6;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 9px;
+}
+
+.depthControl select {
+  min-height: 25px;
+  padding: 2px 23px 2px 8px;
+  border: 1px solid #c5d9f8;
+  border-radius: 6px;
+  background: #f4f8ff;
+  color: #1d4ed8;
+  font: 700 11px Arial, sans-serif;
+  cursor: pointer;
+  outline: none;
+}
+
+.depthControl select:hover,
+.depthControl select:focus {
+  border-color: #93b7ee;
+  background: #e8f0fe;
+}
+
 .childrenCount {
   min-width: 22px;
   padding: 3px 7px;

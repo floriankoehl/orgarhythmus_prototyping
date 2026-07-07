@@ -223,10 +223,24 @@
   align-items: center;
   height: 28px;
   padding: 2px;
+  gap: 2px;
   background: #f3f4f6;
   border: 1px solid #e1e3e6;
   border-radius: 7px;
   box-sizing: border-box;
+}
+
+.depthToggleGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.depthToggleDivider {
+  width: 1px;
+  height: 16px;
+  margin: 0 3px;
+  background: #d5d9df;
 }
 
 .depthToggle button {
@@ -1336,9 +1350,118 @@
   cursor: pointer; padding: 0; display: flex; align-items: center; flex-shrink: 0;
 }
 
+.rowHierarchyNumber {
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 24px;
+  max-width: 72px;
+  padding: 2px 5px;
+  color: #64748b;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font: 800 10px Arial, sans-serif;
+}
+
+.rowHierarchyNumberWithPath {
+  cursor: help;
+}
+
+.rowHierarchyTooltip {
+  position: fixed;
+  width: min(340px, 72vw);
+  padding: 8px 9px;
+  color: #263142;
+  background: rgba(255,255,255,0.98);
+  border: 1px solid #d9e2ee;
+  border-radius: 7px;
+  box-shadow: 0 8px 24px rgba(15,23,42,0.16);
+  white-space: normal;
+  text-align: left;
+  line-height: 1.35;
+  font: 700 11px Arial, sans-serif;
+  pointer-events: none;
+  z-index: 5000;
+  transform: translate(-50%, 10px);
+  animation: rowHierarchyTooltipIn 0.14s ease-out;
+}
+
+.rowHierarchyTooltip::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -5px;
+  width: 8px;
+  height: 8px;
+  background: rgba(255,255,255,0.98);
+  border-left: 1px solid #d9e2ee;
+  border-top: 1px solid #d9e2ee;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.rowHierarchyTooltipItem {
+  --path-depth: 0;
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 22px;
+  padding-left: calc(var(--path-depth) * 18px);
+}
+
+.rowHierarchyTooltipItem + .rowHierarchyTooltipItem {
+  margin-top: 3px;
+}
+
+.rowHierarchyTooltipItem:not(:first-child)::before {
+  content: '';
+  position: absolute;
+  left: calc((var(--path-depth) * 18px) - 9px);
+  top: -8px;
+  width: 9px;
+  height: 18px;
+  border-left: 1px solid #cbd5e1;
+  border-bottom: 1px solid #cbd5e1;
+  border-bottom-left-radius: 5px;
+}
+
+.rowHierarchyTooltipNumber {
+  min-width: 28px;
+  padding: 2px 5px;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 5px;
+  text-align: center;
+  font: 800 10px Arial, sans-serif;
+}
+
+.rowHierarchyTooltipTitle {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #263142;
+}
+
+@keyframes rowHierarchyTooltipIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 10px);
+  }
+}
+
 .rowTitle {
   font-size: 12px; font-weight: 600; color: #444;
-  font-family: Arial, sans-serif; flex: 1;
+  font-family: Arial, sans-serif; flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis;
 }
 
 .noteContent {
