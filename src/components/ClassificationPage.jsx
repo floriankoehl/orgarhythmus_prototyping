@@ -32,6 +32,91 @@ function makeFilterId() {
   return `filter-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 }
 
+function makeTimeRangeId() {
+  return `time-range-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+}
+
+function toDateTimeLocalValue(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value)
+  const safeDate = Number.isFinite(date.getTime()) ? date : new Date()
+  const pad = number => String(number).padStart(2, '0')
+  return [
+    safeDate.getFullYear(),
+    pad(safeDate.getMonth() + 1),
+    pad(safeDate.getDate()),
+  ].join('-') + `T${pad(safeDate.getHours())}:${pad(safeDate.getMinutes())}`
+}
+
+function parseDateTimeLocalValue(value) {
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function formatTimeRangeLabel(startAt, endAt, endMode = 'fixed') {
+  const startMs = parseDateTimeLocalValue(startAt)
+  const endMs = endMode === 'now' ? Date.now() : parseDateTimeLocalValue(endAt)
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return 'Custom time range'
+  const formatter = new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+  return `${formatter.format(new Date(startMs))} - ${endMode === 'now' ? 'now' : formatter.format(new Date(endMs))}`
+}
+
+function splitDateTimeLocalValue(value) {
+  const [date = '', time = ''] = String(value || '').split('T')
+  return { date, time: time.slice(0, 5) }
+}
+
+function combineDateAndTime(date, time) {
+  if (!date || !time) return ''
+  return `${date}T${time}`
+}
+
+function timeToTwelveHourParts(time = '00:00') {
+  const [rawHour = '0', rawMinute = '00'] = String(time || '00:00').split(':')
+  const hour24 = Math.max(0, Math.min(23, Number(rawHour) || 0))
+  const hour12 = hour24 % 12 || 12
+  return {
+    hour: String(hour12),
+    minute: String(Math.max(0, Math.min(59, Number(rawMinute) || 0))).padStart(2, '0'),
+    period: hour24 >= 12 ? 'PM' : 'AM',
+  }
+}
+
+function twelveHourPartsToTime(hour, minute, period) {
+  const hour12 = Math.max(1, Math.min(12, Number(hour) || 12))
+  const minuteValue = String(Math.max(0, Math.min(59, Number(minute) || 0))).padStart(2, '0')
+  const hour24 = period === 'PM' ? (hour12 % 12) + 12 : hour12 % 12
+  return `${String(hour24).padStart(2, '0')}:${minuteValue}`
+}
+
+function normalizeCustomTimeRanges(ranges = []) {
+  return (Array.isArray(ranges) ? ranges : [])
+    .map((range, index) => {
+      const startAt = range?.startAt || ''
+      const endAt = range?.endAt || ''
+      const endMode = range?.endMode === 'now' || range?.dynamicEnd ? 'now' : 'fixed'
+      return {
+        id: range?.id || makeTimeRangeId(),
+        startAt,
+        endAt,
+        endMode,
+        color: range?.color || PRESET_COLORS[index % PRESET_COLORS.length],
+        startMs: parseDateTimeLocalValue(startAt),
+        endMs: endMode === 'now' ? Date.now() : parseDateTimeLocalValue(endAt),
+      }
+    })
+    .filter(range => range.startAt && (range.endMode === 'now' || range.endAt) && range.startMs !== null && range.endMs !== null && range.startMs < range.endMs)
+    .map(({ startMs, endMs, ...range }) => range)
+}
+
+function customTimeCategoryId(rangeId) {
+  return `time:custom:${rangeId}`
+}
+
 function normalizeFilter(filter) {
   const selections = {}
   Object.entries(filter?.selections ?? {}).forEach(([dimId, catIds]) => {
@@ -110,7 +195,7 @@ function specialDimensionRules(dim) {
     return 'Filters are saved rules. A note appears in a filter lane when it matches that filter. Filters are computed, not assigned directly.'
   }
   if (dim.id === TIME_DIMENSION_ID || dim.dynamicType === 'time') {
-    return 'Time groups notes by when they were created: last hour, last day, last week, or older than a week. This is computed from the note creation timestamp.'
+    return 'Time groups notes by when they were created. The built-in lanes are computed from age, and custom lanes show notes created inside the selected start and end time.'
   }
   if (dim.id === TYPE_DIMENSION_ID || dim.dynamicType === 'type') {
     return 'Type is computed from the note role: Thought means no children and no time slot; Task means scheduled but not a project; Project means it contains child notes.'
@@ -131,7 +216,10 @@ function categoryRules(cat, dimension = null, unassignedLabel = 'Unassigned') {
   }
   if (cat.dynamicType === 'all_notes') return 'All notes is a convenience lane for seeing every note that belongs to this current computed or assigned view.'
   if (cat.dynamicType === 'filter') return 'This lane contains notes that match this saved filter. Edit the filter to change the rule.'
-  if (cat.dynamicType === 'time') return `This lane contains notes whose creation time falls into "${cat.name}". The app computes this automatically.`
+  if (cat.dynamicType === 'time') {
+    if (cat.customTimeRange) return `This lane contains notes created between the selected start and end time for "${cat.name}".`
+    return `This lane contains notes whose creation time falls into "${cat.name}". The app computes this automatically.`
+  }
   if (cat.dynamicType === 'type') {
     if (cat.typeRole === 'thought') return 'Thoughts have no child notes and no time slot.'
     if (cat.typeRole === 'task') return 'Tasks have a time slot but do not contain child notes.'
@@ -146,6 +234,14 @@ function categoryRules(cat, dimension = null, unassignedLabel = 'Unassigned') {
   }
   if (dimension?.system || dimension?.dynamic) return specialDimensionRules(dimension)
   return 'This lane contains notes manually assigned to this category.'
+}
+
+function categoryRuleText(cat, dimension = null, unassignedLabel = 'Unassigned') {
+  if (!cat) {
+    return (isDynamicDimensionId(dimension?.id) || isSystemDimension(dimension)) ? categoryRules(cat, dimension, unassignedLabel) : ''
+  }
+  const isSpecialCategory = cat.dynamic || cat.system || cat.systemType || isDynamicDimensionId(cat.dimensionId)
+  return isSpecialCategory ? categoryRules(cat, dimension, unassignedLabel) : ''
 }
 
 function RuleHint({ text, label = 'Rule' }) {
@@ -553,18 +649,19 @@ function ClassificationGroupScroller({
             )}
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
           </button>
-          <button
-            type="button"
-            className={styles.groupScrollerClear}
-            disabled={!activeDimId}
-            title="Clear dimension"
-            onClick={() => {
-              onDimensionChange('')
-              setDimensionMenuOpen(false)
-            }}
-          >
-            ×
-          </button>
+          {activeDimId && (
+            <button
+              type="button"
+              className={styles.groupScrollerClear}
+              title="Clear dimension"
+              onClick={() => {
+                onDimensionChange('')
+                setDimensionMenuOpen(false)
+              }}
+            >
+              ×
+            </button>
+          )}
           <button className={styles.groupScrollerArrow} onClick={nextDimension} disabled={!canCycleDimension} title="Next dimension">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M9 18l6-6-6-6"/></svg>
           </button>
@@ -1494,6 +1591,173 @@ function FilterEditorModal({ filter, dimensions, categories, onSave, onDelete, o
   )
 }
 
+function TimeRangeModal({ onSave, onClose, rangeCount = 0 }) {
+  const initialEnd = toDateTimeLocalValue(new Date())
+  const initialStart = toDateTimeLocalValue(new Date(Date.now() - 24 * 60 * 60 * 1000))
+  const [startAt, setStartAt] = useState(initialStart)
+  const [endAt, setEndAt] = useState(initialEnd)
+  const [endMode, setEndMode] = useState('now')
+  const [nowAt, setNowAt] = useState(Date.now())
+  const startMs = parseDateTimeLocalValue(startAt)
+  const endMs = endMode === 'now' ? nowAt : parseDateTimeLocalValue(endAt)
+  const isValid = startMs !== null && endMs !== null && startMs < endMs
+  const startParts = splitDateTimeLocalValue(startAt)
+  const endParts = splitDateTimeLocalValue(endAt)
+  const startTimeParts = timeToTwelveHourParts(startParts.time)
+  const endTimeParts = timeToTwelveHourParts(endParts.time)
+  const hourOptions = Array.from({ length: 12 }, (_, index) => String(index + 1))
+  const minuteOptions = Array.from({ length: 60 }, (_, index) => String(index).padStart(2, '0'))
+
+  useEffect(() => {
+    if (endMode !== 'now') return undefined
+    const timer = window.setInterval(() => setNowAt(Date.now()), 30000)
+    return () => window.clearInterval(timer)
+  }, [endMode])
+
+  const presets = [
+    { label: 'Today', getStart: now => new Date(now.getFullYear(), now.getMonth(), now.getDate()) },
+    { label: 'Yesterday', getStart: now => new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1), getEnd: now => new Date(now.getFullYear(), now.getMonth(), now.getDate()) },
+    { label: 'Last 7 days', getStart: now => new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) },
+    { label: 'Last 30 days', getStart: now => new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) },
+  ]
+
+  const setStartPart = (part, value) => {
+    setStartAt(combineDateAndTime(part === 'date' ? value : startParts.date, part === 'time' ? value : startParts.time))
+  }
+
+  const setEndPart = (part, value) => {
+    setEndMode('fixed')
+    setEndAt(combineDateAndTime(part === 'date' ? value : endParts.date, part === 'time' ? value : endParts.time))
+  }
+
+  const setStartTimePart = (part, value) => {
+    const next = { ...startTimeParts, [part]: value }
+    setStartPart('time', twelveHourPartsToTime(next.hour, next.minute, next.period))
+  }
+
+  const setEndTimePart = (part, value) => {
+    const next = { ...endTimeParts, [part]: value }
+    setEndPart('time', twelveHourPartsToTime(next.hour, next.minute, next.period))
+  }
+
+  const applyPreset = preset => {
+    const now = new Date()
+    const start = preset.getStart(now)
+    const end = preset.getEnd?.(now) ?? now
+    setStartAt(toDateTimeLocalValue(start))
+    setEndAt(toDateTimeLocalValue(end))
+    setEndMode(preset.getEnd ? 'fixed' : 'now')
+  }
+
+  const save = () => {
+    if (!isValid) return
+    onSave({
+      id: makeTimeRangeId(),
+      startAt,
+      endAt,
+      endMode,
+      color: PRESET_COLORS[(rangeCount + 3) % PRESET_COLORS.length],
+    })
+  }
+
+  return createPortal(
+    <div className={styles.modalBackdrop} onClick={onClose}>
+      <div className={`${styles.modal} ${styles.timeRangeModal}`} onClick={e => e.stopPropagation()}>
+        <div className={styles.timeRangeHeader}>
+          <h3 className={styles.timeRangeTitle}>Created between</h3>
+          <p className={styles.timeRangeSubtitle}>Show notes whose creation date falls inside this window.</p>
+        </div>
+
+        <div className={styles.timeRangePresets}>
+          {presets.map(preset => (
+            <button key={preset.label} type="button" onClick={() => applyPreset(preset)}>
+              {preset.label}
+            </button>
+          ))}
+        </div>
+
+        <div className={styles.timeRangeFields}>
+          <label className={styles.timeRangeField}>
+            <span className={styles.timeRangeFieldLabel}>From</span>
+            <div className={styles.timeRangeInputRow}>
+              <input
+                type="date"
+                value={startParts.date}
+                onChange={e => setStartPart('date', e.target.value)}
+                autoFocus
+              />
+              <div className={styles.timeRangeClock}>
+                <select value={startTimeParts.hour} onChange={e => setStartTimePart('hour', e.target.value)} aria-label="Start hour">
+                  {hourOptions.map(hour => <option key={hour} value={hour}>{hour}</option>)}
+                </select>
+                <span>:</span>
+                <select value={startTimeParts.minute} onChange={e => setStartTimePart('minute', e.target.value)} aria-label="Start minute">
+                  {minuteOptions.map(minute => <option key={minute} value={minute}>{minute}</option>)}
+                </select>
+                <select value={startTimeParts.period} onChange={e => setStartTimePart('period', e.target.value)} aria-label="Start period">
+                  <option value="AM">AM</option>
+                  <option value="PM">PM</option>
+                </select>
+              </div>
+            </div>
+          </label>
+          <label
+            className={`${styles.timeRangeField} ${endMode === 'now' ? styles.timeRangeFieldMuted : ''}`}
+            onMouseDown={() => {
+              if (endMode === 'now') setEndMode('fixed')
+            }}
+          >
+            <span className={styles.timeRangeFieldLabel}>To</span>
+            <div className={styles.timeRangeInputRow}>
+              <input
+                type="date"
+                value={endParts.date}
+                onChange={e => setEndPart('date', e.target.value)}
+              />
+              <div className={styles.timeRangeClock}>
+                <select value={endTimeParts.hour} onChange={e => setEndTimePart('hour', e.target.value)} aria-label="End hour">
+                  {hourOptions.map(hour => <option key={hour} value={hour}>{hour}</option>)}
+                </select>
+                <span>:</span>
+                <select value={endTimeParts.minute} onChange={e => setEndTimePart('minute', e.target.value)} aria-label="End minute">
+                  {minuteOptions.map(minute => <option key={minute} value={minute}>{minute}</option>)}
+                </select>
+                <select value={endTimeParts.period} onChange={e => setEndTimePart('period', e.target.value)} aria-label="End period">
+                  <option value="AM">AM</option>
+                  <option value="PM">PM</option>
+                </select>
+              </div>
+            </div>
+          </label>
+          <button
+            type="button"
+            className={`${styles.timeRangeNowToggle} ${endMode === 'now' ? styles.timeRangeNowToggleActive : ''}`}
+            onClick={() => {
+              if (endMode === 'now') return
+                setEndMode('now')
+                setEndAt(toDateTimeLocalValue(new Date()))
+                setNowAt(Date.now())
+            }}
+          >
+            Constantly update to current time
+          </button>
+        </div>
+
+        <div className={isValid ? styles.timeRangePreview : styles.timeRangeError}>
+          {isValid ? `Will show notes created ${formatTimeRangeLabel(startAt, endAt, endMode)}` : 'Choose an end that is after the start.'}
+        </div>
+
+        <div className={styles.modalActions}>
+          <div style={{ flex: 1 }} />
+          <button className={styles.cancelBtn} onClick={onClose}>Cancel</button>
+          <button className={styles.submitBtn} onClick={save} disabled={!isValid}>Add range</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
 // ── Legend widget (floating, collapsible) ─────────────────────────────────────
 function LegendWidget({
   dimensions, categories, legendDimId, onLegend,
@@ -1655,6 +1919,9 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
   const [noteDepthPreset, setNoteDepthPreset] = useState(1)
   const [peopleVisibleNoteIds, setPeopleVisibleNoteIds] = useState(null)
   const [editingFilter, setEditingFilter] = useState(null)
+  const [editingTimeRange, setEditingTimeRange] = useState(false)
+  const [customTimeRanges, setCustomTimeRanges] = useState([])
+  const [dynamicTimeNow, setDynamicTimeNow] = useState(Date.now())
   const [maxGridCols, setMaxGridCols] = useState(6)
   const [singleColumnWidth, setSingleColumnWidth] = useState(800)
   const [paintCat, setPaintCat]             = useState(null)
@@ -1786,6 +2053,12 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
   }, [statusNotice])
 
   useEffect(() => {
+    if (!customTimeRanges.some(range => range?.endMode === 'now')) return undefined
+    const timer = window.setInterval(() => setDynamicTimeNow(Date.now()), 30000)
+    return () => window.clearInterval(timer)
+  }, [customTimeRanges])
+
+  useEffect(() => {
     setPaintCat(null)
     setQuickFilters([])
     if (legendDimId !== FILTER_DIMENSION_ID) setActiveFilterIds([])
@@ -1816,6 +2089,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
         unassignedCollapsed: false,
         activeFilterIds: [],
         quickFilters: [],
+        customTimeRanges: [],
         noteDepthMode: 'depth',
         noteDepthPreset: 1,
       },
@@ -1834,6 +2108,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     unassignedCollapsed,
     activeFilterIds,
     quickFilters,
+    customTimeRanges,
     noteDepthMode,
     noteDepthPreset,
   })
@@ -1850,6 +2125,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     setUnassignedCollapsed(Boolean(state.unassignedCollapsed))
     setActiveFilterIds(Array.isArray(state.activeFilterIds) ? state.activeFilterIds : [])
     setQuickFilters(Array.isArray(state.quickFilters) ? state.quickFilters : [])
+    setCustomTimeRanges(normalizeCustomTimeRanges(state.customTimeRanges))
     setNoteDepthMode(state.noteDepthMode === 'leaves' ? 'leaves' : 'depth')
     setNoteDepthPreset(state.noteDepthPreset === 'all' ? 'all' : Math.max(1, Math.min(3, Number(state.noteDepthPreset) || 1)))
     setPeopleVisibleNoteIds(null)
@@ -2067,6 +2343,20 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     } catch (e) { console.error(e) }
   }
 
+  const saveCustomTimeRange = range => {
+    const normalized = normalizeCustomTimeRanges([range])[0]
+    if (!normalized) return
+    const catId = customTimeCategoryId(normalized.id)
+    if (normalized.endMode === 'now') setDynamicTimeNow(Date.now())
+    setCustomTimeRanges(prev => normalizeCustomTimeRanges([...prev, normalized]))
+    setCollapsedCatIds(prev => {
+      const next = new Set(prev)
+      next.delete(catId)
+      return next
+    })
+    setEditingTimeRange(false)
+  }
+
   const deleteNamedFilter = async id => {
     try {
       await api.deleteFilter(id)
@@ -2209,6 +2499,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
   }
 
   // ── Derived (needed by reorder handlers below) ───────────────────────────────
+  const normalizedCustomTimeRanges = normalizeCustomTimeRanges(customTimeRanges)
   const filterCategories = namedFilters.map((filter, idx) => ({
     id: filterCategoryId(filter.id),
     dimensionId: FILTER_DIMENSION_ID,
@@ -2219,13 +2510,28 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     dynamicLabel: 'Filter',
     filterId: filter.id,
   }))
-  const timeCategories = TIME_DYNAMIC_CATEGORIES.map(cat => ({
+  const standardTimeCategories = TIME_DYNAMIC_CATEGORIES.map(cat => ({
     ...cat,
     dimensionId: TIME_DIMENSION_ID,
     dynamic: true,
     dynamicType: 'time',
     dynamicLabel: 'Time',
   }))
+  const customTimeCategories = normalizedCustomTimeRanges.map((range, idx) => ({
+    id: customTimeCategoryId(range.id),
+    dimensionId: TIME_DIMENSION_ID,
+    name: formatTimeRangeLabel(range.startAt, range.endMode === 'now' ? toDateTimeLocalValue(new Date(dynamicTimeNow)) : range.endAt, range.endMode),
+    color: range.color || PRESET_COLORS[(idx + 3) % PRESET_COLORS.length],
+    dynamic: true,
+    dynamicType: 'time',
+    dynamicLabel: 'Time',
+    filterable: true,
+    customTimeRange: true,
+    startAt: range.startAt,
+    endAt: range.endAt,
+    endMode: range.endMode,
+  }))
+  const timeCategories = [...standardTimeCategories, ...customTimeCategories]
   const typeCategories = TYPE_DYNAMIC_CATEGORIES.map(cat => ({
     ...cat,
     dimensionId: TYPE_DIMENSION_ID,
@@ -2316,6 +2622,24 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
   }
 
   // ── Derived ─────────────────────────────────────────────────────────────────
+  const noteMatchesTimeCategory = (note, catId) => {
+    const cat = timeCategories.find(category => category.id === catId)
+    if (!cat) return false
+    if (!cat.customTimeRange) return timeCategoryIdForNote(note) === catId
+    const createdAt = noteCreatedAtMs(note)
+    const startMs = parseDateTimeLocalValue(cat.startAt)
+    const endMs = cat.endMode === 'now' ? dynamicTimeNow : parseDateTimeLocalValue(cat.endAt)
+    return startMs !== null && endMs !== null && createdAt >= startMs && createdAt <= endMs
+  }
+
+  const timeCategoryIdsForNote = note => {
+    const ids = customTimeCategories
+      .filter(cat => noteMatchesTimeCategory(note, cat.id))
+      .map(cat => cat.id)
+    const standardId = timeCategoryIdForNote(note)
+    return ids.includes(standardId) ? ids : [...ids, standardId]
+  }
+
   const getNoteLegendColor = noteId => {
     if (!legendDimId) return null
     if (legendDimId === FILTER_DIMENSION_ID) {
@@ -2324,7 +2648,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     }
     if (legendDimId === TIME_DIMENSION_ID) {
       const note = notes.find(g => g.id === noteId)
-      const catId = timeCategoryIdForNote(note)
+      const catId = timeCategoryIdsForNote(note)[0]
       return timeCategories.find(cat => cat.id === catId)?.color ?? null
     }
     if (legendDimId === TYPE_DIMENSION_ID) {
@@ -2417,7 +2741,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     .filter(Boolean)
 
   const hasActiveFiltering = activeFilters.length > 0 || quickFilters.length > 0
-  const typeContext = { notes, timeSlots }
+  const typeContext = { notes, timeSlots, timeCategoryIdsForNote }
   const matchesQuickFilter = note => quickFilterMatchesNote(quickFilters, note, (id, dimensionId) => assignments[id]?.[dimensionId], typeContext)
 
   const filterMatchedNotes = hasActiveFiltering
@@ -2453,7 +2777,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     }
     if (containerDimId === TIME_DIMENSION_ID) {
       return visibleNotes
-        .filter(g => timeCategoryIdForNote(g) === catId)
+        .filter(g => noteMatchesTimeCategory(g, catId))
         .sort((a, b) => noteCreatedAtMs(b) - noteCreatedAtMs(a))
     }
     if (containerDimId === TYPE_DIMENSION_ID) {
@@ -2585,6 +2909,16 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
             <span>Add filter</span>
           </button>
         )}
+        {containerDimId === TIME_DIMENSION_ID && (
+          <button
+            type="button"
+            className={`${styles.canvasAddFilter} ${styles.canvasAddTimeRange}`}
+            onClick={() => setEditingTimeRange(true)}
+          >
+            <span className={styles.canvasAddFilterIcon}>+</span>
+            <span>Add time range</span>
+          </button>
+        )}
         <div className={styles.canvas} style={gridStyle}
           onDragOver={e => {
             if (e.dataTransfer.types.includes('catdrag') || e.dataTransfer.types.includes('persona-drag')) e.preventDefault()
@@ -2619,7 +2953,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
               }}
               catPersonas={[]}
               onBulkPaint={undefined}
-              ruleText={categoryRules(null, containerDim, unassignedLabel)}
+              ruleText={categoryRuleText(null, containerDim, unassignedLabel)}
               onNoteOpen={onNoteOpen} />
           )}
           {containerCats.filter(c => !collapsedCatIds.has(c.id)).map(cat => (
@@ -2659,7 +2993,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
               onBulkPaint={requestBulkPaint}
               dynamic={cat.dynamic}
               readOnlyCategory={cat.system}
-              ruleText={categoryRules(cat, containerDim, unassignedLabel)}
+              ruleText={categoryRuleText(cat, containerDim, unassignedLabel)}
               onNoteOpen={onNoteOpen}
             />
           ))}
@@ -2690,7 +3024,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
               }}
               catPersonas={[]}
               onBulkPaint={requestBulkPaint}
-              ruleText={categoryRules(null, containerDim, unassignedLabel)}
+              ruleText={categoryRuleText(null, containerDim, unassignedLabel)}
               onNoteOpen={onNoteOpen} />
           )}
           {containerDimId && !isLockedContainerStructure && <AddCatBox onAdd={name => createCategory(containerDimId, name, PRESET_COLORS[containerCats.length % PRESET_COLORS.length])} />}
@@ -2788,6 +3122,14 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
           onSave={saveNamedFilter}
           onDelete={deleteNamedFilter}
           onClose={() => setEditingFilter(null)}
+        />
+      )}
+
+      {editingTimeRange && (
+        <TimeRangeModal
+          rangeCount={customTimeRanges.length}
+          onSave={saveCustomTimeRange}
+          onClose={() => setEditingTimeRange(false)}
         />
       )}
 

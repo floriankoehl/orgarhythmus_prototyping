@@ -425,121 +425,13 @@ export default function Header({ view, onNavigate, onQuickAdd, projectName, onBa
         </button>
       )}
       {projectName && (
-        <div ref={contextWrapRef} className={styles.projectCenter}>
+        <div className={styles.projectCenter}>
           <button
             className={`${styles.projectNameBtn} ${view === 0 ? styles.projectNameBtnActive : ''}`}
             onClick={() => { playSound('viewChange'); onNavigate(0) }}
             title="Open project overview">
             {projectName}
           </button>
-          <div className={styles.contextSwitcher} onWheel={cycleContext}>
-            <button
-              type="button"
-              className={styles.contextArrowBtn}
-              onClick={() => selectAdjacentContext(-1)}
-              disabled={!contexts.length}
-              title="Previous context"
-              aria-label="Previous context">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M15 18l-6-6 6-6"/></svg>
-            </button>
-            <button
-              type="button"
-              className={`${styles.contextBtn} ${contextOpen ? styles.contextBtnActive : ''}`}
-              onClick={openContextMenu}
-              title="Scroll to switch context; click to manage contexts">
-              {activeContextName}
-            </button>
-            <button
-              type="button"
-              className={styles.contextArrowBtn}
-              onClick={() => selectAdjacentContext(1)}
-              disabled={!contexts.length}
-              title="Next context"
-              aria-label="Next context">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M9 18l6-6-6-6"/></svg>
-            </button>
-          </div>
-          {contextOpen && (
-            <div className={styles.contextPanel}>
-              {!contextFormOpen && (
-                <button type="button" className={styles.contextNewBtn} onClick={startContextCreate}>
-                  + New context
-                </button>
-              )}
-              {contextFormOpen && <div className={styles.contextCreate}>
-                <input
-                  value={contextName}
-                  onChange={event => setContextName(event.target.value)}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter') saveContextEdit()
-                    if (event.key === 'Escape') cancelContextEdit()
-                  }}
-                  placeholder="Context name"
-                />
-                {editingContextId && CONTEXT_PAGES.map(page => (
-                  <label key={page.id}>
-                    <span>{page.label}</span>
-                    <select
-                      value={contextChoices[page.id]}
-                      onChange={event => setContextChoices(prev => ({ ...prev, [page.id]: event.target.value }))}>
-                      <option value={NONE_PERSPECTIVE_ID}>None</option>
-                      {contextPerspectives[page.id].map(perspective => (
-                        <option key={perspective.id} value={perspective.id}>{perspective.name}</option>
-                      ))}
-                    </select>
-                  </label>
-                ))}
-                <div className={styles.contextArchiveBlock}>
-                  <span className={styles.contextArchiveTitle}>Shown dimensions</span>
-                  <div className={styles.contextArchiveList}>
-                    {contextDimensions.length ? contextDimensions.map(dim => (
-                      <label key={dim.id} className={styles.contextArchiveItem}>
-                        <input
-                          type="checkbox"
-                          checked={!(contextChoices.archivedDimensionIds || []).includes(dim.id)}
-                          onChange={() => toggleContextDimensionShown(dim.id)}
-                        />
-                        <span>{dim.name}</span>
-                      </label>
-                    )) : (
-                      <span className={styles.contextArchiveEmpty}>No dimensions yet</span>
-                    )}
-                  </div>
-                </div>
-                <div className={styles.contextFormActions}>
-                  <button type="button" onClick={saveContextEdit}>
-                    {editingContextId ? 'Save context' : 'Create context'}
-                  </button>
-                  <button type="button" className={styles.contextSecondaryBtn} onClick={cancelContextEdit}>Cancel</button>
-                </div>
-              </div>}
-              <div className={styles.contextList}>
-                {contexts.length ? contexts.map(context => (
-                  <div key={context.id} className={`${styles.contextItem} ${editingContextId === context.id ? styles.contextItemEditing : ''} ${activeContextId === context.id ? styles.contextItemActive : ''}`}>
-                    <button type="button" className={styles.contextApplyBtn} onClick={() => applyContext(context)}>
-                      <strong>{context.name}</strong>
-                      <span>
-                        {CONTEXT_PAGES.map(page => {
-                          const id = context.state?.[`${page.id}PerspectiveId`]
-                          const name = contextPerspectives[page.id].find(p => p.id === id)?.name || 'None'
-                          return `${page.label}: ${name}`
-                        }).join(' · ')}
-                        {(context.state?.archivedDimensionIds || []).length
-                          ? ` · ${(context.state?.archivedDimensionIds || []).length} archived`
-                          : ''}
-                      </span>
-                    </button>
-                    <button type="button" className={styles.contextEditBtn} onClick={() => editContext(context)}>Edit</button>
-                    <button type="button" className={styles.contextDeleteBtn} onClick={() => deleteContext(context)} title={`Delete ${context.name}`} aria-label={`Delete ${context.name}`}>
-                      ×
-                    </button>
-                  </div>
-                )) : (
-                  <div className={styles.contextEmpty}>No contexts yet</div>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       )}
 

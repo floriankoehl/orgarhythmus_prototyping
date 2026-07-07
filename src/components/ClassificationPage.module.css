@@ -813,6 +813,19 @@
   border-color: #1a73e8;
 }
 
+.canvasAddTimeRange {
+  color: #14532d;
+  background: linear-gradient(180deg, #f0fdf4, #dcfce7);
+  border-color: #bbf7d0;
+  box-shadow: 0 2px 12px rgba(34,197,94,0.10);
+}
+
+.canvasAddTimeRange:hover {
+  color: #fff;
+  background: #16a34a;
+  border-color: #16a34a;
+}
+
 .canvasAddFilterIcon {
   width: 20px;
   height: 20px;
@@ -881,6 +894,10 @@
   cursor: pointer; white-space: nowrap; flex-shrink: 0;
 }
 .submitBtn:hover { background: #1558b0; }
+.submitBtn:disabled {
+  background: #cbd5e1;
+  cursor: default;
+}
 
 .cancelBtn {
   background: none; border: none; color: #bbb; font-size: 13px;
@@ -1299,7 +1316,7 @@
 .modalBackdrop {
   position: fixed; inset: 0;
   background: rgba(0,0,0,0.35);
-  z-index: 2000;
+  z-index: 7000;
   display: flex; align-items: center; justify-content: center;
 }
 
@@ -1318,11 +1335,57 @@
   max-height: calc(100vh - 80px);
 }
 
+.timeRangeModal {
+  width: min(680px, calc(100vw - 48px));
+  max-width: 680px;
+  gap: 16px;
+}
+
 .filterModalHeader {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
+}
+
+.timeRangeHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.timeRangeTitle {
+  margin: 0;
+  color: #1f2937;
+  font: 900 20px Arial, sans-serif;
+}
+
+.timeRangeSubtitle {
+  margin: 0;
+  color: #64748b;
+  font: 700 12px/1.45 Arial, sans-serif;
+}
+
+.timeRangePresets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.timeRangePresets button {
+  padding: 7px 10px;
+  color: #166534;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  font: 900 12px Arial, sans-serif;
+  cursor: pointer;
+}
+
+.timeRangePresets button:hover {
+  color: #fff;
+  background: #16a34a;
+  border-color: #16a34a;
 }
 
 .filterNameInput {
@@ -1463,6 +1526,147 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.timeRangeFields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.timeRangeField {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  background: #fafafa;
+  border: 1px solid #e5e7eb;
+  border-radius: 9px;
+}
+
+.timeRangeFieldLabel {
+  color: #334155;
+  font: 900 13px Arial, sans-serif;
+}
+
+.timeRangeInputRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 0.9fr);
+  gap: 8px;
+}
+
+.timeRangeInputRow input,
+.timeRangeClock select {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 11px;
+  color: #222;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 7px;
+  font: 800 13px Arial, sans-serif;
+  outline: none;
+  color-scheme: light;
+}
+
+.timeRangeInputRow input:focus,
+.timeRangeClock select:focus {
+  border-color: #16a34a;
+  box-shadow: 0 0 0 3px rgba(22,163,74,0.12);
+}
+
+.timeRangeInputRow input:disabled,
+.timeRangeClock select:disabled {
+  color: #94a3b8;
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  cursor: default;
+}
+
+.timeRangeFieldMuted {
+  opacity: 0.72;
+  cursor: pointer;
+}
+
+.timeRangeFieldMuted .timeRangeFieldLabel {
+  color: #94a3b8;
+}
+
+.timeRangeFieldMuted input,
+.timeRangeFieldMuted select {
+  color: #94a3b8;
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+}
+
+.timeRangeClock {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(48px, 1fr) auto minmax(54px, 1fr) minmax(68px, 1fr);
+  gap: 5px;
+  align-items: center;
+}
+
+.timeRangeClock span {
+  color: #64748b;
+  font: 900 14px Arial, sans-serif;
+}
+
+.timeRangeNowToggle {
+  align-self: flex-end;
+  padding: 8px 13px;
+  color: #166534;
+  background: #fff;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  cursor: pointer;
+  font: 900 12px Arial, sans-serif;
+}
+
+.timeRangeNowToggle:hover {
+  color: #fff;
+  background: #16a34a;
+  border-color: #16a34a;
+}
+
+.timeRangeNowToggleActive {
+  color: #fff;
+  background: #16a34a;
+  border-color: #16a34a;
+  box-shadow: 0 2px 8px rgba(22,163,74,0.22);
+  cursor: default;
+}
+
+.timeRangePreview,
+.timeRangeError {
+  padding: 11px 12px;
+  border-radius: 8px;
+  font: 800 12px/1.4 Arial, sans-serif;
+}
+
+.timeRangePreview {
+  color: #14532d;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+}
+
+.timeRangeError {
+  color: #991b1b;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+@media (max-width: 560px) {
+  .timeRangeField {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .timeRangeInputRow {
+    grid-template-columns: 1fr;
+  }
 }
 
 .modalHeader { display: flex; align-items: center; gap: 12px; }
