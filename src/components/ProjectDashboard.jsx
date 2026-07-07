@@ -4,6 +4,8 @@ import styles from './ProjectDashboard.module.css'
 import { playSound } from '../sounds/sound_registry'
 import { useConfirmDialog } from './ConfirmDialog'
 import NoteHierarchyTree, { buildNoteHierarchyRows } from './NoteHierarchyTree'
+import StandardColorPicker from './StandardColorPicker'
+import { COLOR_UNASSIGNED_CATEGORY_ID } from './colorPickerCategories'
 
 const STAT_LABELS = {
   notes:        'Notes',
@@ -270,7 +272,13 @@ function HierarchyTypeIcon({ hasChildren }) {
   )
 }
 
-export default function ProjectDashboard({ project, notes = [], workspaceRootNote = null, workspaceNote = null, onUpdate, onWorkspaceNoteUpdated, onWorkspaceOpen, onNoteOpen, onNotesChanged, onProjectDeleted, isActive }) {
+function makeColorCursor(color) {
+  const safeColor = /^#[0-9a-f]{3,8}$/i.test(String(color)) ? color : '#1a73e8'
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="10" fill="${safeColor}" stroke="white" stroke-width="2"/></svg>`
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, crosshair`
+}
+
+export default function ProjectDashboard({ project, notes = [], workspaceRootNote = null, workspaceNote = null, onUpdate, onWorkspaceNoteUpdated, onWorkspaceOpen, onNoteOpen, onNotesChanged, onProjectDeleted, isActive, structureOnly = false }) {
   const isNoteWorkspace = Boolean(workspaceNote)
   const workspaceName = workspaceNote?.title || project.name
   const workspaceDesc = isNoteWorkspace ? (workspaceNote?.html ?? '') : (project.description || '')
@@ -298,6 +306,12 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
   const [selectedHierarchyNoteIds, setSelectedHierarchyNoteIds] = useState(() => new Set())
   const [newNoteDraft, setNewNoteDraft] = useState(null)
   const [creatingHierarchyNote, setCreatingHierarchyNote] = useState(false)
+  const [structureDimensions, setStructureDimensions] = useState([])
+  const [structureCategories, setStructureCategories] = useState([])
+  const [structureAssignments, setStructureAssignments] = useState([])
+  const [structureColorDimId, setStructureColorDimId] = useState('')
+  const [structurePaintCat, setStructurePaintCat] = useState(null)
+  const [structureColorExpanded, setStructureColorExpanded] = useState(false)
   const nameInputRef = useRef()
   const saveTimerRef = useRef(null)
   const hierarchyWarningTimerRef = useRef(null)
@@ -330,8 +344,8 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     deriveWorkspaceWindow({ project, notes, timeSlots, rootNoteId: workspaceRootNoteId })
   ), [project, notes, timeSlots, workspaceRootNoteId])
   const hierarchyRows = useMemo(
-    () => buildNoteHierarchyRows(notes, workspaceRootNoteId, { includeAncestors: true }),
-    [notes, workspaceRootNoteId],
+    () => buildNoteHierarchyRows(notes, workspaceRootNoteId, { includeAncestors: !structureOnly }),
+    [notes, structureOnly, workspaceRootNoteId],
   )
   const currentHierarchyDepth = hierarchyRows.find(row => row.relation === 'current')?.depth ?? 0
   const localHierarchyBaseDepth = Math.max(0, currentHierarchyDepth - 1)
@@ -360,6 +374,18 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     }
     return parentId === workspaceRootNoteId && isHierarchyNodeExpanded(workspaceRootNoteId)
   })
+  const structureColorByNoteId = useMemo(() => {
+    if (!structureColorDimId) return {}
+    const categoriesById = new Map(structureCategories.map(category => [category.id, category]))
+    const colors = {}
+    structureAssignments.forEach(assignment => {
+      if (assignment.dimensionId !== structureColorDimId) return
+      const color = categoriesById.get(assignment.categoryId)?.color
+      if (color) colors[assignment.noteId] = color
+    })
+    return colors
+  }, [structureAssignments, structureCategories, structureColorDimId])
+  const structurePaintCursor = structurePaintCat ? makeColorCursor(structurePaintCat.color) : ''
 
   useEffect(() => {
     setName(workspaceName)
@@ -390,21 +416,44 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     setCollapsedHierarchyNoteIds(new Set())
   }, [])
 
+  const cycleDescendantDepth = useCallback(deltaY => {
+    const options = [1, 2, 3, 'all']
+    const currentIndex = Math.max(0, options.findIndex(option => option === descendantDepth))
+    const direction = deltaY > 0 ? 1 : -1
+    changeDescendantDepth(options[(currentIndex + direction + options.length) % options.length])
+  }, [changeDescendantDepth, descendantDepth])
+
+  const hierarchyDescendantIds = useCallback(noteId => collectDescendantIdsForNote(notes, noteId), [notes])
+
   const toggleHierarchyNode = useCallback(noteId => {
     const currentlyExpanded = isHierarchyNodeExpanded(noteId)
+    const descendantIds = hierarchyDescendantIds(noteId)
     setExpandedHierarchyNoteIds(previous => {
       const next = new Set(previous)
+      descendantIds.forEach(id => next.delete(id))
       if (currentlyExpanded) next.delete(noteId)
       else next.add(noteId)
       return next
     })
     setCollapsedHierarchyNoteIds(previous => {
       const next = new Set(previous)
+      descendantIds.forEach(id => next.delete(id))
       if (currentlyExpanded) next.add(noteId)
       else next.delete(noteId)
       return next
     })
-  }, [isHierarchyNodeExpanded])
+  }, [hierarchyDescendantIds, isHierarchyNodeExpanded])
+
+  const expandHierarchySubtree = useCallback(noteId => {
+    const ids = new Set([noteId, ...hierarchyDescendantIds(noteId)])
+    setCollapsedHierarchyNoteIds(previous => {
+      const next = new Set(previous)
+      ids.forEach(id => next.delete(id))
+      return next
+    })
+    setExpandedHierarchyNoteIds(previous => new Set([...previous, ...ids]))
+    playSound('collapseToggle')
+  }, [hierarchyDescendantIds])
 
   useEffect(() => () => {
     if (hierarchyWarningTimerRef.current) window.clearTimeout(hierarchyWarningTimerRef.current)
@@ -712,6 +761,28 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     if (editingName) nameInputRef.current?.focus()
   }, [editingName])
 
+  const reloadStructureColorData = useCallback(() => {
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments()])
+      .then(([dims, cats, assignments]) => {
+        setStructureDimensions(dims)
+        setStructureCategories(cats)
+        setStructureAssignments(assignments)
+      })
+      .catch(console.error)
+  }, [])
+
+  useEffect(() => {
+    if (!isActive || !structureOnly) return
+    reloadStructureColorData()
+  }, [isActive, reloadStructureColorData, structureOnly])
+
+  useEffect(() => {
+    if (structureColorDimId && !structureDimensions.some(dim => dim.id === structureColorDimId)) {
+      setStructureColorDimId('')
+      setStructurePaintCat(null)
+    }
+  }, [structureColorDimId, structureDimensions])
+
   const persist = useCallback((patch) => {
     clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(async () => {
@@ -775,12 +846,121 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     }
   }
 
+  const changeStructureColorDim = dimId => {
+    setStructureColorDimId(dimId)
+    setStructurePaintCat(null)
+  }
+
+  const activateStructurePaint = (catId, color) => {
+    const deactivating = structurePaintCat?.id === catId
+    playSound(deactivating ? 'paintModeDeactivate' : 'paintModeActivate')
+    setStructurePaintCat(previous => previous?.id === catId ? null : { id: catId, color })
+  }
+
+  const applyStructurePaint = async noteId => {
+    if (!structurePaintCat || !structureColorDimId || !noteId) return
+    playSound('paintApply')
+    try {
+      if (structurePaintCat.id === COLOR_UNASSIGNED_CATEGORY_ID) {
+        await api.unassign(noteId, structureColorDimId)
+        setStructureAssignments(previous => previous.filter(assignment => !(assignment.noteId === noteId && assignment.dimensionId === structureColorDimId)))
+        return
+      }
+      await api.assign(noteId, structureColorDimId, structurePaintCat.id)
+      setStructureAssignments(previous => [
+        ...previous.filter(assignment => !(assignment.noteId === noteId && assignment.dimensionId === structureColorDimId)),
+        { noteId, dimensionId: structureColorDimId, categoryId: structurePaintCat.id },
+      ])
+    } catch (error) {
+      console.error(error)
+      showHierarchyWarning('Category not assigned', error?.message || 'The category could not be assigned to this note.')
+    }
+  }
+
+  const hierarchySection = hierarchyRows.length > 0 && (
+    <div className={`${styles.section} ${structureOnly ? styles.structureSection : ''}`}>
+      <div className={styles.sectionHeader}>
+        <label className={styles.sectionLabel}>Hierarchy</label>
+        <label className={styles.hierarchyDepthControl}>
+          <span>Descendant depth</span>
+          <select
+            value={descendantDepth}
+            onWheel={event => {
+              event.preventDefault()
+              cycleDescendantDepth(event.deltaY)
+            }}
+            onChange={event => changeDescendantDepth(event.target.value === 'all' ? 'all' : Number(event.target.value))}>
+            <option value={1}>1 hop</option>
+            <option value={2}>2 hops</option>
+            <option value={3}>3 hops</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+      </div>
+      <div className={styles.hierarchyTree}>
+        <NoteHierarchyTree
+          rows={visibleHierarchyRows}
+          rootNoteId={workspaceRootNoteId}
+          projectRootNoteId={project.rootNoteId}
+          project={project}
+          localBaseDepth={localHierarchyBaseDepth}
+          selectedIds={selectedHierarchyNoteIds}
+          draggedIds={draggedHierarchyNoteIds}
+          dropTargetId={hierarchyDropTargetId}
+          reorderDragId={hierarchyReorderDragId}
+          reorderTarget={hierarchyReorderTarget}
+          isExpanded={isHierarchyNodeExpanded}
+          onToggle={toggleHierarchyNode}
+          onSelect={(event, noteId) => {
+            if (structureOnly && structurePaintCat) {
+              event.stopPropagation()
+              applyStructurePaint(noteId)
+              return
+            }
+            handleHierarchyNodeClick(event, noteId)
+          }}
+          onOpenWorkspace={noteId => { playSound('viewChange'); onWorkspaceOpen?.(noteId) }}
+          onOpenDetails={noteId => { playSound('noteOpen'); onNoteOpen?.(noteId) }}
+          onContextMenu={openHierarchyContextMenu}
+          onMove={moveHierarchyNotes}
+          onReorder={reorderHierarchyNote}
+          onDragStartIds={noteId => selectedHierarchyNoteIds.has(noteId)
+            ? [...selectedHierarchyNoteIds].filter(selectedId => selectedId !== project.rootNoteId)
+            : [noteId]}
+          onDragStateChange={({ draggedIds, selectedId, dropTargetId, onlyIfDropTargetId }) => {
+            if (draggedIds) setDraggedHierarchyNoteIds(draggedIds)
+            if (selectedId && !selectedHierarchyNoteIds.has(selectedId)) setSelectedHierarchyNoteIds(new Set([selectedId]))
+            if (dropTargetId !== undefined) {
+              if (onlyIfDropTargetId) setHierarchyDropTargetId(current => current === onlyIfDropTargetId ? dropTargetId : current)
+              else setHierarchyDropTargetId(dropTargetId)
+            }
+          }}
+          onReorderDragStateChange={({ dragId, target, onlyIfTargetId }) => {
+            if (dragId !== undefined) setHierarchyReorderDragId(dragId)
+            if (target !== undefined) {
+              if (onlyIfTargetId) setHierarchyReorderTarget(current => current?.noteId === onlyIfTargetId ? target : current)
+              else setHierarchyReorderTarget(target)
+            }
+          }}
+          onClearSelection={() => setSelectedHierarchyNoteIds(new Set())}
+          colorByNoteId={structureOnly ? structureColorByNoteId : {}}
+          paintCategoryId={structureOnly ? structurePaintCat?.id : ''}
+          paintCursor={structureOnly ? structurePaintCursor : ''}
+          ariaLabel="Project, ancestors, and child notes"
+        />
+      </div>
+    </div>
+  )
+
   return (
-    <div className={styles.note}>
-      <div className={styles.content}>
+    <div
+      className={`${styles.note} ${structurePaintCursor ? styles.paintMode : ''}`}
+      style={structurePaintCursor ? { '--paint-cursor': structurePaintCursor, cursor: structurePaintCursor } : undefined}
+      onClick={structurePaintCat ? () => setStructurePaintCat(null) : undefined}>
+      <div className={`${styles.content} ${structureOnly ? styles.structureContent : ''}`}>
 
         {/* Project name */}
-        <div className={styles.nameRow}>
+        {!structureOnly && <div className={styles.nameRow}>
           {editingName ? (
             <input
               ref={nameInputRef}
@@ -796,79 +976,22 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
               <span className={styles.nameEditIcon}>✎</span>
             </h1>
           )}
-        </div>
+        </div>}
 
-        {/* Note-as-project ancestry */}
-        {hierarchyRows.length > 0 && (
-          <div className={styles.section}>
-            <div className={styles.sectionHeader}>
-              <label className={styles.sectionLabel}>Hierarchy</label>
-              <label className={styles.hierarchyDepthControl}>
-                <span>Descendant depth</span>
-                <select
-                  value={descendantDepth}
-                  onChange={event => changeDescendantDepth(event.target.value === 'all' ? 'all' : Number(event.target.value))}>
-                  <option value={1}>1 hop</option>
-                  <option value={2}>2 hops</option>
-                  <option value={3}>3 hops</option>
-                  <option value="all">All</option>
-                </select>
-              </label>
-            </div>
-            <NoteHierarchyTree
-              rows={visibleHierarchyRows}
-              rootNoteId={workspaceRootNoteId}
-              projectRootNoteId={project.rootNoteId}
-              project={project}
-              localBaseDepth={localHierarchyBaseDepth}
-              selectedIds={selectedHierarchyNoteIds}
-              draggedIds={draggedHierarchyNoteIds}
-              dropTargetId={hierarchyDropTargetId}
-              reorderDragId={hierarchyReorderDragId}
-              reorderTarget={hierarchyReorderTarget}
-              isExpanded={isHierarchyNodeExpanded}
-              onToggle={toggleHierarchyNode}
-              onSelect={handleHierarchyNodeClick}
-              onOpenWorkspace={noteId => { playSound('viewChange'); onWorkspaceOpen?.(noteId) }}
-              onContextMenu={openHierarchyContextMenu}
-              onMove={moveHierarchyNotes}
-              onReorder={reorderHierarchyNote}
-              onDragStartIds={noteId => selectedHierarchyNoteIds.has(noteId)
-                ? [...selectedHierarchyNoteIds].filter(selectedId => selectedId !== project.rootNoteId)
-                : [noteId]}
-              onDragStateChange={({ draggedIds, selectedId, dropTargetId, onlyIfDropTargetId }) => {
-                if (draggedIds) setDraggedHierarchyNoteIds(draggedIds)
-                if (selectedId && !selectedHierarchyNoteIds.has(selectedId)) setSelectedHierarchyNoteIds(new Set([selectedId]))
-                if (dropTargetId !== undefined) {
-                  if (onlyIfDropTargetId) setHierarchyDropTargetId(current => current === onlyIfDropTargetId ? dropTargetId : current)
-                  else setHierarchyDropTargetId(dropTargetId)
-                }
-              }}
-              onReorderDragStateChange={({ dragId, target, onlyIfTargetId }) => {
-                if (dragId !== undefined) setHierarchyReorderDragId(dragId)
-                if (target !== undefined) {
-                  if (onlyIfTargetId) setHierarchyReorderTarget(current => current?.noteId === onlyIfTargetId ? target : current)
-                  else setHierarchyReorderTarget(target)
-                }
-              }}
-              onClearSelection={() => setSelectedHierarchyNoteIds(new Set())}
-              ariaLabel="Project, ancestors, and child notes"
-            />
-          </div>
-        )}
+        {structureOnly ? hierarchySection : null}
 
         {/* Stats */}
-        <div className={styles.section}>
+        {!structureOnly && <div className={styles.section}>
           <label className={styles.sectionLabel}>Overview</label>
           <div className={styles.statsGrid}>
             {Object.entries(STAT_LABELS).map(([key, label]) => (
               <StatCard key={key} label={label} value={displayedStats?.[key]} />
             ))}
           </div>
-        </div>
+        </div>}
 
         {/* Timeline dates */}
-        <div className={styles.section}>
+        {!structureOnly && <div className={styles.section}>
           <label className={styles.sectionLabel}>Timeline</label>
           {scheduleWindow ? (
             <div className={styles.dateRow}>
@@ -895,10 +1018,10 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
           ) : (
             <p className={styles.descText}>No scheduled time yet.</p>
           )}
-        </div>
+        </div>}
 
         {/* Description */}
-        <div className={styles.section}>
+        {!structureOnly && <div className={styles.section}>
           <div className={styles.sectionHeader}>
             <label className={styles.sectionLabel}>Description</label>
             {!editingDesc && (
@@ -927,10 +1050,10 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
               {displayedDesc || <span className={styles.descPlaceholder}>No description yet.</span>}
             </p>
           )}
-        </div>
+        </div>}
 
         {/* Footer row: export */}
-        <div className={styles.footerRow}>
+        {!structureOnly && <div className={styles.footerRow}>
           <button
             className={styles.exportBtn}
             onClick={handleExport}
@@ -939,9 +1062,26 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
           >
             {exporting ? 'Saving…' : 'Save project'}
           </button>
-        </div>
+        </div>}
 
       </div>
+
+      {structureOnly && (
+        <div className={styles.structureFloatingTools}>
+          <StandardColorPicker
+            dimensions={structureDimensions}
+            categories={structureCategories}
+            colorDimensionId={structureColorDimId}
+            onColorDimensionChange={changeStructureColorDim}
+            onDimensionDataChanged={reloadStructureColorData}
+            paintCategoryId={structurePaintCat?.id}
+            onPaintCategory={activateStructurePaint}
+            expanded={structureColorExpanded}
+            onExpandedChange={setStructureColorExpanded}
+            hint="Assign note categories"
+          />
+        </div>
+      )}
 
       {hierarchyWarning && (
         <div className={styles.hierarchyWarning} role="alert">
@@ -971,12 +1111,20 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
             }}>
               New note inside
             </button>
+            {hasChildren && (
+              <button type="button" role="menuitem" onClick={() => {
+                setHierarchyContextMenu(null)
+                expandHierarchySubtree(contextNote.id)
+              }}>
+                Expand all
+              </button>
+            )}
             <button type="button" role="menuitem" onClick={() => {
               setHierarchyContextMenu(null)
-              playSound('noteOpen')
-              onNoteOpen?.(contextNote.id)
+              playSound('viewChange')
+              onWorkspaceOpen?.(contextNote.id)
             }}>
-              Open details
+              Open as project
             </button>
             <div className={styles.hierarchyContextDivider} />
             <button type="button" role="menuitem" className={styles.hierarchyContextDanger} onClick={() => {

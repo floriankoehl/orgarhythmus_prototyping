@@ -398,6 +398,22 @@ export default function App() {
             isActive={view === 0}
           />
         </div>
+        <div className={styles.view} style={{ display: view === 7 ? 'flex' : 'none' }}>
+          <ProjectDashboard
+            project={activeProject}
+            notes={notes}
+            workspaceRootNote={activeWorkspaceRoot}
+            workspaceNote={activeWorkspaceRootId !== activeProject.rootNoteId ? activeWorkspaceRoot : null}
+            onUpdate={handleProjectUpdate}
+            onWorkspaceNoteUpdated={handleNoteUpdated}
+            onWorkspaceOpen={noteId => openNoteAsWorkspace(noteId, { view: 7 })}
+            onNoteOpen={openNotePopup}
+            onNotesChanged={handleNotesChanged}
+            onProjectDeleted={backToHome}
+            isActive={view === 7}
+            structureOnly
+          />
+        </div>
         <div className={styles.view} style={{ display: view === 1 ? 'flex' : 'none' }}>
           <NotesPage
             notes={visibleNotes}

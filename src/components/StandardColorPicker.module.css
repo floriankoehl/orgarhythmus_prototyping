@@ -21,6 +21,8 @@
 .widget:hover .hint { opacity: 1; visibility: visible; transform: translateX(0); }
 .hint strong { font: 800 11px Arial,sans-serif; }
 .hint small { color: #888; font: 10px Arial,sans-serif; }
-.selector { border-top: 1px solid #e5e7eb; display: flex; align-items: center; }
-.swapBtn { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin: 4px 6px 4px 0; padding: 0; color: #94a3b8; background: transparent; border: 1px solid transparent; border-radius: 6px; cursor: pointer; }
+.selector { position: relative; border-top: 1px solid #e5e7eb; }
+.selectorWithSwap {}
+.selectorDrop { width: 100%; min-width: 0; }
+.swapBtn { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin: 0; padding: 0; color: #94a3b8; background: rgba(255,255,255,.92); border: 1px solid transparent; border-radius: 6px; cursor: pointer; }
 .swapBtn:hover { color: #1a73e8; background: #e8f0fe; border-color: #c7d9fd; }

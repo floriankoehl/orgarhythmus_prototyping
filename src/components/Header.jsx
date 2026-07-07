@@ -9,6 +9,7 @@ import { playSound } from '../sounds/sound_registry'
 
 const PAGES = [
   { name: 'Notes', view: 1 },
+  { name: 'Structure', view: 7 },
   { name: 'Classification', view: 2 },
   { name: 'Schedule', view: 3 },
   { name: 'Calendar', view: 6 },

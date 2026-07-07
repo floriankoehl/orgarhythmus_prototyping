@@ -20,6 +20,17 @@
   cursor: grabbing;
 }
 
+.hierarchyTreePaintMode,
+.hierarchyTreePaintMode .hierarchyRow,
+.hierarchyTreePaintMode .hierarchyRow[draggable="true"],
+.hierarchyTreePaintMode .hierarchyRow[draggable="true"]:active,
+.hierarchyTreePaintMode .hierarchyNodeLine,
+.hierarchyTreePaintMode .hierarchyExpandBtn,
+.hierarchyTreePaintMode .hierarchyNode,
+.hierarchyTreePaintMode .hierarchyNode * {
+  cursor: var(--paint-cursor) !important;
+}
+
 .hierarchyRow + .hierarchyRow {
   margin-top: 5px;
 }
@@ -90,6 +101,7 @@
   align-items: center;
   gap: 8px;
   border: 1px solid transparent;
+  border-left: 3px solid transparent;
   border-radius: 7px;
   background: transparent;
   color: #374151;
@@ -98,24 +110,35 @@
   cursor: pointer;
 }
 
+.hierarchyNodePaintMode {
+  cursor: var(--paint-cursor, crosshair);
+}
+
+.hierarchyNodePaintMode * {
+  cursor: var(--paint-cursor, crosshair) !important;
+}
+
 .hierarchyTreeReordering .hierarchyRow {
   transition: opacity 0.14s ease, transform 0.14s ease;
 }
 
 .hierarchyNode:hover {
   border-color: #c5d9f8;
+  border-left-color: var(--hierarchy-color, #c5d9f8);
   background: #f4f8ff;
   color: #1d4ed8;
 }
 
 .hierarchyRowCurrent .hierarchyNode {
   border-color: #bfdbfe;
+  border-left-color: var(--hierarchy-color, #bfdbfe);
   background: #eff6ff;
   color: #1e40af;
 }
 
 .hierarchyRowSelected .hierarchyNode {
   border-color: #2563eb;
+  border-left-color: var(--hierarchy-color, #2563eb);
   background: #dbeafe;
   color: #1e3a8a;
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.14);
@@ -123,6 +146,7 @@
 
 .hierarchyRowDropTarget .hierarchyNode {
   border-color: #2563eb;
+  border-left-color: var(--hierarchy-color, #2563eb);
   background: #dbeafe;
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.16);
 }

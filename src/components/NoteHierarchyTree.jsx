@@ -128,6 +128,7 @@ export default function NoteHierarchyTree({
   onToggle,
   onSelect,
   onOpenWorkspace,
+  onOpenDetails,
   onContextMenu,
   onMove,
   onReorder,
@@ -135,13 +136,21 @@ export default function NoteHierarchyTree({
   onDragStateChange,
   onReorderDragStateChange,
   onClearSelection,
+  colorByNoteId = null,
+  paintCategoryId = '',
+  paintCursor = '',
   ariaLabel = 'Note hierarchy',
 }) {
   const rowById = new Map(rows.map(row => [row.note.id, row]))
   const reorderDragParentId = reorderDragId ? (rowById.get(reorderDragId)?.note.parentNoteId || '') : null
   return (
     <div
-      className={`${styles.hierarchyTree} ${reorderDragId ? styles.hierarchyTreeReordering : ''}`}
+      className={[
+        styles.hierarchyTree,
+        reorderDragId && styles.hierarchyTreeReordering,
+        paintCursor && styles.hierarchyTreePaintMode,
+      ].filter(Boolean).join(' ')}
+      style={paintCursor ? { '--paint-cursor': paintCursor, cursor: paintCursor } : undefined}
       role="tree"
       aria-multiselectable="true"
       aria-label={ariaLabel}
@@ -160,9 +169,10 @@ export default function NoteHierarchyTree({
         const reorderSibling = reorderDragId && (note.parentNoteId || '') === reorderDragParentId
         const reorderPosition = reorderTarget?.noteId === note.id ? reorderTarget.position : null
         const createdLabel = formatCreatedAt(note.createdAt || (isProjectRoot ? project?.createdAt : ''))
+        const color = colorByNoteId?.[note.id]
         const hoverTitle = [
           createdLabel ? `Created ${createdLabel}` : '',
-          hoverDescription || (isCurrent ? 'Current note' : `Double-click to open ${displayTitle || 'Untitled'}`),
+          hoverDescription || `Double-click to open ${displayTitle || 'Untitled'} details`,
         ].filter(Boolean).join('\n')
         return (
           <div
@@ -178,11 +188,14 @@ export default function NoteHierarchyTree({
               reorderPosition === 'before' && styles.hierarchyRowReorderBefore,
               reorderPosition === 'after' && styles.hierarchyRowReorderAfter,
             ].filter(Boolean).join(' ')}
-            style={{ '--tree-depth': displayDepth }}
+            style={{
+              '--tree-depth': displayDepth,
+              ...(paintCursor ? { cursor: paintCursor } : {}),
+            }}
             role="treeitem"
             aria-current={isCurrent ? 'page' : undefined}
             aria-level={displayDepth + 1}
-            draggable={!isProjectRoot}
+            draggable={!isProjectRoot && !paintCursor}
             onContextMenu={event => onContextMenu?.(event, note.id)}
             onDragStart={event => {
               if (event.dataTransfer.types.includes('hierarchy-note-reorder-id')) return
@@ -243,11 +256,12 @@ export default function NoteHierarchyTree({
               onReorderDragStateChange?.({ dragId: null, target: null })
             }}>
             <span className={styles.hierarchyBranch} aria-hidden="true" />
-            <div className={styles.hierarchyNodeLine}>
+            <div className={styles.hierarchyNodeLine} style={paintCursor ? { cursor: paintCursor } : undefined}>
               {hasChildren ? (
                 <button
                   type="button"
                   className={`${styles.hierarchyExpandBtn} ${expanded ? styles.hierarchyExpandBtnOpen : ''}`}
+                  style={paintCursor ? { cursor: paintCursor } : undefined}
                   aria-label={expanded ? `Collapse ${displayTitle || 'project'}` : `Expand ${displayTitle || 'project'}`}
                   aria-expanded={expanded}
                   draggable={false}
@@ -265,13 +279,20 @@ export default function NoteHierarchyTree({
               )}
               <button
                 type="button"
-                className={styles.hierarchyNode}
+                className={[
+                  styles.hierarchyNode,
+                  (paintCategoryId || paintCursor) && styles.hierarchyNodePaintMode,
+                ].filter(Boolean).join(' ')}
+                style={{
+                  ...(color ? { '--hierarchy-color': color } : {}),
+                  ...(color ? { borderLeftColor: color, background: `${color}28` } : {}),
+                  ...(paintCursor ? { cursor: paintCursor } : {}),
+                }}
                 aria-selected={selected}
                 onClick={event => onSelect?.(event, note.id)}
                 onDoubleClick={event => {
                   event.stopPropagation()
-                  if (isCurrent) return
-                  onOpenWorkspace?.(note.id)
+                  onOpenDetails?.(note.id)
                 }}
                 title={hoverTitle}>
                 <span
@@ -284,11 +305,11 @@ export default function NoteHierarchyTree({
                   aria-label="Reorder note"
                   onMouseDown={event => {
                     event.stopPropagation()
-                    if (isProjectRoot || isCurrent) event.preventDefault()
+                    if (isProjectRoot || isCurrent || paintCursor) event.preventDefault()
                   }}
                   onClick={event => event.stopPropagation()}
                   onDragStart={event => {
-                    if (isProjectRoot || isCurrent) {
+                    if (isProjectRoot || isCurrent || paintCursor) {
                       event.preventDefault()
                       return
                     }

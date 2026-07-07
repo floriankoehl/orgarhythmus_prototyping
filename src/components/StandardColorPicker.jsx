@@ -61,8 +61,10 @@ export default function StandardColorPicker({
               </div>
             )
           })}
-          <div className={styles.selector}>
-            <DimensionDropUp dimensions={dimensions} categories={categories} value={colorDimensionId} onChange={onColorDimensionChange} onDimDataChanged={onDimensionDataChanged} emptyLabel={emptyLabel} />
+          <div className={`${styles.selector} ${onSwapWithCanvasDim ? styles.selectorWithSwap : ''}`}>
+            <div className={styles.selectorDrop}>
+              <DimensionDropUp dimensions={dimensions} categories={categories} value={colorDimensionId} onChange={onColorDimensionChange} onDimDataChanged={onDimensionDataChanged} emptyLabel={emptyLabel} />
+            </div>
             {onSwapWithCanvasDim && (
               <button type="button" className={styles.swapBtn} onClick={onSwapWithCanvasDim} title="Swap color dimension with canvas dimension">
                 <SwapIcon />
