@@ -228,6 +228,17 @@ def _init_db():
             )
         """)
         con.execute("""
+            CREATE TABLE IF NOT EXISTS custom_time_ranges (
+                id         TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL DEFAULT 'default',
+                name       TEXT NOT NULL DEFAULT '',
+                color      TEXT NOT NULL DEFAULT '#64748b',
+                start_at   TEXT NOT NULL,
+                end_at     TEXT NOT NULL DEFAULT '',
+                end_mode   TEXT NOT NULL DEFAULT 'fixed'
+            )
+        """)
+        con.execute("""
             CREATE TABLE IF NOT EXISTS schedule_perspectives (
                 id         TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL DEFAULT 'default',
@@ -474,7 +485,7 @@ def _migrate():
             con.execute("ALTER TABLE users ADD COLUMN is_superuser INTEGER NOT NULL DEFAULT 0")
 
         # Add project_id to tables that need it
-        for table in ['notes', 'dimensions', 'saved_filters', 'schedule_perspectives', 'classification_perspectives', 'calendar_perspectives']:
+        for table in ['notes', 'dimensions', 'saved_filters', 'custom_time_ranges', 'schedule_perspectives', 'classification_perspectives', 'calendar_perspectives']:
             cols = [r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()]
             if 'project_id' not in cols:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default'")
@@ -881,6 +892,21 @@ class SavedFilterPatch(BaseModel):
     selections: Optional[dict[str, list[str]]] = None
     quickKey: Optional[str] = None
 
+class CustomTimeRangeIn(BaseModel):
+    id: Optional[str] = None
+    name: str = ''
+    color: str = "#64748b"
+    startAt: str
+    endAt: str = ''
+    endMode: str = 'fixed'
+
+class CustomTimeRangePatch(BaseModel):
+    name: Optional[str] = None
+    color: Optional[str] = None
+    startAt: Optional[str] = None
+    endAt: Optional[str] = None
+    endMode: Optional[str] = None
+
 class PersonaIn(BaseModel):
     id:        Optional[str] = None
     name:      str
@@ -1124,6 +1150,17 @@ def _filter(row) -> dict:
         "color": d["color"],
         "selections": selections,
         "quickKey": d["quick_key"],
+    }
+
+def _custom_time_range(row) -> dict:
+    d = dict(row)
+    return {
+        "id": d["id"],
+        "name": d.get("name") or "",
+        "color": d.get("color") or "#64748b",
+        "startAt": d.get("start_at") or "",
+        "endAt": d.get("end_at") or "",
+        "endMode": d.get("end_mode") or "fixed",
     }
 
 def _schedule_perspective(row) -> dict:
@@ -1389,6 +1426,12 @@ def _project_id_for_filter(con, filter_id: str) -> str:
     row = con.execute("SELECT project_id FROM saved_filters WHERE id = ?", (filter_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Filter not found")
+    return row["project_id"]
+
+def _project_id_for_custom_time_range(con, range_id: str) -> str:
+    row = con.execute("SELECT project_id FROM custom_time_ranges WHERE id = ?", (range_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Custom time range not found")
     return row["project_id"]
 
 def _project_id_for_schedule_perspective(con, perspective_id: str) -> str:
@@ -3664,6 +3707,66 @@ def delete_filter(filter_id: str, user: dict = Depends(current_user)):
     with _db() as con:
         assert_project_access(_project_id_for_filter(con, filter_id), user)
         con.execute("DELETE FROM saved_filters WHERE id = ?", (filter_id,))
+
+
+# ── Custom time ranges ────────────────────────────────────────────────────────
+@app.get("/custom-time-ranges")
+def list_custom_time_ranges(project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    with _db() as con:
+        rows = con.execute(
+            "SELECT * FROM custom_time_ranges WHERE project_id = ? ORDER BY rowid", (project_id,)
+        ).fetchall()
+    return [_custom_time_range(row) for row in rows]
+
+@app.post("/custom-time-ranges", status_code=201)
+def create_custom_time_range(data: CustomTimeRangeIn, project_id: str = Query(default='default'), user: dict = Depends(current_user)):
+    assert_project_access(project_id, user)
+    range_id = data.id or str(uuid.uuid4())
+    end_mode = "now" if data.endMode == "now" else "fixed"
+    with _db() as con:
+        if con.execute("SELECT id FROM custom_time_ranges WHERE id = ?", (range_id,)).fetchone():
+            raise HTTPException(409, "Custom time range already exists")
+        con.execute(
+            """
+            INSERT INTO custom_time_ranges (id, project_id, name, color, start_at, end_at, end_mode)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (range_id, project_id, data.name.strip(), data.color or "#64748b", data.startAt, data.endAt or "", end_mode),
+        )
+        row = con.execute("SELECT * FROM custom_time_ranges WHERE id = ?", (range_id,)).fetchone()
+    return _custom_time_range(row)
+
+@app.patch("/custom-time-ranges/{range_id}")
+def update_custom_time_range(range_id: str, data: CustomTimeRangePatch, user: dict = Depends(current_user)):
+    with _db() as con:
+        assert_project_access(_project_id_for_custom_time_range(con, range_id), user)
+        fields, values = [], []
+        if data.name is not None:
+            fields.append("name = ?")
+            values.append(data.name.strip())
+        if data.color is not None:
+            fields.append("color = ?")
+            values.append(data.color or "#64748b")
+        if data.startAt is not None:
+            fields.append("start_at = ?")
+            values.append(data.startAt)
+        if data.endAt is not None:
+            fields.append("end_at = ?")
+            values.append(data.endAt or "")
+        if data.endMode is not None:
+            fields.append("end_mode = ?")
+            values.append("now" if data.endMode == "now" else "fixed")
+        if fields:
+            con.execute(f"UPDATE custom_time_ranges SET {', '.join(fields)} WHERE id = ?", (*values, range_id))
+        row = con.execute("SELECT * FROM custom_time_ranges WHERE id = ?", (range_id,)).fetchone()
+    return _custom_time_range(row)
+
+@app.delete("/custom-time-ranges/{range_id}", status_code=204)
+def delete_custom_time_range(range_id: str, user: dict = Depends(current_user)):
+    with _db() as con:
+        assert_project_access(_project_id_for_custom_time_range(con, range_id), user)
+        con.execute("DELETE FROM custom_time_ranges WHERE id = ?", (range_id,))
 
 
 # ── Schedule perspectives ─────────────────────────────────────────────────────

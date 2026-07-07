@@ -1388,6 +1388,29 @@
   border-color: #16a34a;
 }
 
+.timeRangeNameField {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.timeRangeNameField input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 11px;
+  color: #222;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 7px;
+  font: 800 14px Arial, sans-serif;
+  outline: none;
+}
+
+.timeRangeNameField input:focus {
+  border-color: #16a34a;
+  box-shadow: 0 0 0 3px rgba(22,163,74,0.12);
+}
+
 .filterNameInput {
   min-width: 0;
   padding: 8px 10px;

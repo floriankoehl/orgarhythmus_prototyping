@@ -101,6 +101,7 @@ function normalizeCustomTimeRanges(ranges = []) {
       const endMode = range?.endMode === 'now' || range?.dynamicEnd ? 'now' : 'fixed'
       return {
         id: range?.id || makeTimeRangeId(),
+        name: (range?.name || '').trim(),
         startAt,
         endAt,
         endMode,
@@ -217,7 +218,7 @@ function categoryRules(cat, dimension = null, unassignedLabel = 'Unassigned') {
   if (cat.dynamicType === 'all_notes') return 'All notes is a convenience lane for seeing every note that belongs to this current computed or assigned view.'
   if (cat.dynamicType === 'filter') return 'This lane contains notes that match this saved filter. Edit the filter to change the rule.'
   if (cat.dynamicType === 'time') {
-    if (cat.customTimeRange) return `This lane contains notes created between the selected start and end time for "${cat.name}".`
+    if (cat.customTimeRange) return `This lane contains notes created during "${cat.timeRangeLabel || cat.name}".`
     return `This lane contains notes whose creation time falls into "${cat.name}". The app computes this automatically.`
   }
   if (cat.dynamicType === 'type') {
@@ -1017,8 +1018,11 @@ function CategoryEditModal({ cat, onClose, onSave, onDelete }) {
       {confirm ? (
         <div className={styles.modal} onClick={e => e.stopPropagation()}>
           <p className={styles.confirmText}>
-            All notes assigned to <strong>"{cat.name}"</strong> will be unassigned.
-            The notes themselves won't be deleted.
+            {cat.customTimeRange ? (
+              <>The custom time category <strong>"{cat.name}"</strong> will be removed. The notes themselves won't be deleted.</>
+            ) : (
+              <>All notes assigned to <strong>"{cat.name}"</strong> will be unassigned. The notes themselves won't be deleted.</>
+            )}
           </p>
           <div className={styles.modalActions}>
             <button className={styles.dangerBtn}
@@ -1598,6 +1602,7 @@ function TimeRangeModal({ onSave, onClose, rangeCount = 0 }) {
   const [endAt, setEndAt] = useState(initialEnd)
   const [endMode, setEndMode] = useState('now')
   const [nowAt, setNowAt] = useState(Date.now())
+  const [name, setName] = useState('')
   const startMs = parseDateTimeLocalValue(startAt)
   const endMs = endMode === 'now' ? nowAt : parseDateTimeLocalValue(endAt)
   const isValid = startMs !== null && endMs !== null && startMs < endMs
@@ -1653,6 +1658,7 @@ function TimeRangeModal({ onSave, onClose, rangeCount = 0 }) {
     if (!isValid) return
     onSave({
       id: makeTimeRangeId(),
+      name: name.trim(),
       startAt,
       endAt,
       endMode,
@@ -1667,6 +1673,15 @@ function TimeRangeModal({ onSave, onClose, rangeCount = 0 }) {
           <h3 className={styles.timeRangeTitle}>Created between</h3>
           <p className={styles.timeRangeSubtitle}>Show notes whose creation date falls inside this window.</p>
         </div>
+
+        <label className={styles.timeRangeNameField}>
+          <span className={styles.sectionLabel}>Name</span>
+          <input
+            value={name}
+            onChange={event => setName(event.target.value)}
+            placeholder="Morning notes, deep work, today so far..."
+          />
+        </label>
 
         <div className={styles.timeRangePresets}>
           {presets.map(preset => (
@@ -1841,7 +1856,7 @@ function LegendWidget({
                 else if (cat.dynamic) return
                 else onPaintActivate(cat.id, cat.color)
               }}
-              onDoubleClick={() => cat.colorPickerSpecial ? undefined : cat.dynamicType === 'filter' ? onEditFilter(namedFilters.find(f => f.id === cat.filterId)) : cat.dynamic || cat.system ? undefined : onEditCat(cat)}>
+              onDoubleClick={() => cat.colorPickerSpecial ? undefined : cat.dynamicType === 'filter' ? onEditFilter(namedFilters.find(f => f.id === cat.filterId)) : cat.customTimeRange ? onEditCat(cat) : cat.dynamic || cat.system ? undefined : onEditCat(cat)}>
               <span className={styles.legendDot} style={{ background: cat.color }} />
               <span className={styles.legendName}>{cat.name}</span>
               {(cat.dynamic || cat.system) && <span className={styles.dynamicBadge}>{dynamicDimensionLabel(cat)}</span>}
@@ -1968,12 +1983,13 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
   }
 
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getFilters(), api.getClassificationPerspectives(activeContextId), api.getTimeSlots(), api.getPersonas(), api.getDirectPersonaNoteAssignments(), api.getDirectPersonaAssignments()])
-      .then(([dims, cats, assigns, filters, loadedPerspectives, loadedTimeSlots, ps, pnas, pcas]) => {
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getFilters(), api.getCustomTimeRanges(), api.getClassificationPerspectives(activeContextId), api.getTimeSlots(), api.getPersonas(), api.getDirectPersonaNoteAssignments(), api.getDirectPersonaAssignments()])
+      .then(([dims, cats, assigns, filters, loadedTimeRanges, loadedPerspectives, loadedTimeSlots, ps, pnas, pcas]) => {
         setDimensions(dims)
         setCategories(cats)
         setTimeSlots(loadedTimeSlots)
         setNamedFilters(filters.map(normalizeFilter))
+        setCustomTimeRanges(normalizeCustomTimeRanges(loadedTimeRanges))
         setPerspectives(loadedPerspectives.map(normalizePerspective))
         applyAssignments(assigns)
         setPersonas(ps)
@@ -2089,7 +2105,6 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
         unassignedCollapsed: false,
         activeFilterIds: [],
         quickFilters: [],
-        customTimeRanges: [],
         noteDepthMode: 'depth',
         noteDepthPreset: 1,
       },
@@ -2108,7 +2123,6 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     unassignedCollapsed,
     activeFilterIds,
     quickFilters,
-    customTimeRanges,
     noteDepthMode,
     noteDepthPreset,
   })
@@ -2125,7 +2139,6 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     setUnassignedCollapsed(Boolean(state.unassignedCollapsed))
     setActiveFilterIds(Array.isArray(state.activeFilterIds) ? state.activeFilterIds : [])
     setQuickFilters(Array.isArray(state.quickFilters) ? state.quickFilters : [])
-    setCustomTimeRanges(normalizeCustomTimeRanges(state.customTimeRanges))
     setNoteDepthMode(state.noteDepthMode === 'leaves' ? 'leaves' : 'depth')
     setNoteDepthPreset(state.noteDepthPreset === 'all' ? 'all' : Math.max(1, Math.min(3, Number(state.noteDepthPreset) || 1)))
     setPeopleVisibleNoteIds(null)
@@ -2343,18 +2356,57 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     } catch (e) { console.error(e) }
   }
 
-  const saveCustomTimeRange = range => {
+  const saveCustomTimeRange = async range => {
     const normalized = normalizeCustomTimeRanges([range])[0]
     if (!normalized) return
-    const catId = customTimeCategoryId(normalized.id)
-    if (normalized.endMode === 'now') setDynamicTimeNow(Date.now())
-    setCustomTimeRanges(prev => normalizeCustomTimeRanges([...prev, normalized]))
-    setCollapsedCatIds(prev => {
-      const next = new Set(prev)
-      next.delete(catId)
-      return next
-    })
-    setEditingTimeRange(false)
+    try {
+      const saved = normalizeCustomTimeRanges([await api.createCustomTimeRange(normalized)])[0]
+      if (!saved) return
+      const catId = customTimeCategoryId(saved.id)
+      if (saved.endMode === 'now') setDynamicTimeNow(Date.now())
+      playSound('categoryCreate')
+      setCustomTimeRanges(prev => normalizeCustomTimeRanges([...prev, saved]))
+      setCollapsedCatIds(prev => {
+        const next = new Set(prev)
+        next.delete(catId)
+        return next
+      })
+      setEditingTimeRange(false)
+    } catch (error) { console.error(error) }
+  }
+
+  const updateCustomTimeRange = async (catId, patch) => {
+    const rangeId = catId?.startsWith('time:custom:') ? catId.slice('time:custom:'.length) : null
+    if (!rangeId) return
+    try {
+      const saved = normalizeCustomTimeRanges([await api.updateCustomTimeRange(rangeId, patch)])[0]
+      if (!saved) return
+      playSound(patch.name ? 'categoryRename' : 'categoryColorChange')
+      setCustomTimeRanges(prev => normalizeCustomTimeRanges(prev.map(range => range.id === rangeId ? saved : range)))
+    } catch (error) { console.error(error) }
+  }
+
+  const deleteCustomTimeRange = async catId => {
+    const rangeId = catId?.startsWith('time:custom:') ? catId.slice('time:custom:'.length) : null
+    if (!rangeId) return
+    try {
+      await api.deleteCustomTimeRange(rangeId)
+      playSound('categoryDelete')
+      setCustomTimeRanges(prev => prev.filter(range => range.id !== rangeId))
+      setCollapsedCatIds(prev => {
+        const next = new Set(prev)
+        next.delete(catId)
+        return next
+      })
+      setQuickFilters(prev => prev.filter(filter => filter.catId !== catId))
+      setNamedFilters(prev => prev.map(filter => normalizeFilter({
+        ...filter,
+        selections: Object.fromEntries(
+          Object.entries(filter.selections).map(([dimId, catIds]) => [dimId, catIds.filter(id => id !== catId)])
+        ),
+      })))
+      if (paintCat?.id === catId) setPaintCat(null)
+    } catch (error) { console.error(error) }
   }
 
   const deleteNamedFilter = async id => {
@@ -2520,13 +2572,15 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
   const customTimeCategories = normalizedCustomTimeRanges.map((range, idx) => ({
     id: customTimeCategoryId(range.id),
     dimensionId: TIME_DIMENSION_ID,
-    name: formatTimeRangeLabel(range.startAt, range.endMode === 'now' ? toDateTimeLocalValue(new Date(dynamicTimeNow)) : range.endAt, range.endMode),
+    name: range.name || formatTimeRangeLabel(range.startAt, range.endMode === 'now' ? toDateTimeLocalValue(new Date(dynamicTimeNow)) : range.endAt, range.endMode),
     color: range.color || PRESET_COLORS[(idx + 3) % PRESET_COLORS.length],
     dynamic: true,
     dynamicType: 'time',
     dynamicLabel: 'Time',
     filterable: true,
     customTimeRange: true,
+    timeRangeId: range.id,
+    timeRangeLabel: formatTimeRangeLabel(range.startAt, range.endMode === 'now' ? toDateTimeLocalValue(new Date(dynamicTimeNow)) : range.endAt, range.endMode),
     startAt: range.startAt,
     endAt: range.endAt,
     endMode: range.endMode,
@@ -2959,7 +3013,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
           {containerCats.filter(c => !collapsedCatIds.has(c.id)).map(cat => (
             <ContainerBox key={cat.id} cat={cat} notes={notesForCat(cat.id)}
               onDrop={cat.dynamic ? undefined : noteId => assignNote(noteId, cat.id)}
-              onEdit={cat.dynamicType === 'filter' ? () => setEditingFilter(namedFilters.find(f => f.id === cat.filterId)) : cat.dynamic || cat.system ? undefined : () => setEditCat(cat)}
+              onEdit={cat.dynamicType === 'filter' ? () => setEditingFilter(namedFilters.find(f => f.id === cat.filterId)) : cat.customTimeRange ? () => setEditCat(cat) : cat.dynamic || cat.system ? undefined : () => setEditCat(cat)}
               onCollapse={() => { playSound('categoryLaneCollapse'); setCollapsedCatIds(prev => new Set([...prev, cat.id])) }}
               paintCat={paintCat} onPaint={paintNote}
               paintPersona={paintPersonaId ? true : null}
@@ -3109,8 +3163,8 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
         <CategoryEditModal
           cat={editCat}
           onClose={() => setEditCat(null)}
-          onSave={updateCategory}
-          onDelete={deleteCategory}
+          onSave={editCat.customTimeRange ? updateCustomTimeRange : updateCategory}
+          onDelete={editCat.customTimeRange ? deleteCustomTimeRange : deleteCategory}
         />
       )}
 

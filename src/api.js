@@ -185,6 +185,12 @@ export const api = {
   updateFilter:  (id, patch)  => req('PATCH',  `/filters/${id}`, patch),
   deleteFilter:  (id)         => req('DELETE', `/filters/${id}`),
 
+  // Custom time ranges
+  getCustomTimeRanges:    ()          => req('GET',    '/custom-time-ranges'),
+  createCustomTimeRange:  (range)     => req('POST',   '/custom-time-ranges', range),
+  updateCustomTimeRange:  (id, patch) => req('PATCH',  `/custom-time-ranges/${id}`, patch),
+  deleteCustomTimeRange:  (id)        => req('DELETE', `/custom-time-ranges/${id}`),
+
   // Schedule perspectives
   getSchedulePerspectives:    (contextId)     => req('GET',    qContext('/schedule-perspectives', contextId)),
   createSchedulePerspective:  (perspective, contextId) => req('POST', qContext('/schedule-perspectives', contextId), perspective),
