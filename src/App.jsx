@@ -58,6 +58,7 @@ export default function App() {
   const [notes, setNotes]             = useState([])
   const [refreshKey, setRefreshKey]   = useState(0)
   const [noteDataVersion, setNoteDataVersion] = useState(0)
+  const [scheduleDataVersion, setScheduleDataVersion] = useState(0)
   const [dimVersion, setDimVersion]   = useState(0)
   const [peopleVersion, setPeopleVersion] = useState(0)
   const [calendarResolveRequest, setCalendarResolveRequest] = useState(null)
@@ -175,6 +176,7 @@ export default function App() {
     setView(0)
     setRefreshKey(0)
     setNoteDataVersion(0)
+    setScheduleDataVersion(0)
     setCalendarResolveRequest(null)
     setCalendarRestoreRequest(null)
     setContextDefaults({})
@@ -195,6 +197,7 @@ export default function App() {
     setView(0)
     setRefreshKey(0)
     setNoteDataVersion(0)
+    setScheduleDataVersion(0)
     setCalendarResolveRequest(null)
     setCalendarRestoreRequest(null)
     setContextDefaults({})
@@ -214,6 +217,7 @@ export default function App() {
     setView(0)
     setRefreshKey(0)
     setNoteDataVersion(0)
+    setScheduleDataVersion(0)
     setCalendarResolveRequest(null)
     setCalendarRestoreRequest(null)
     setContextDefaults({})
@@ -231,6 +235,7 @@ export default function App() {
     setToast(null)
     setPopupNoteId(null)
     setNoteDataVersion(0)
+    setScheduleDataVersion(0)
     setCalendarResolveRequest(null)
     setCalendarRestoreRequest(null)
     setContextDefaults({})
@@ -286,6 +291,10 @@ export default function App() {
 
   const handleNoteAssignmentsChanged = () => {
     setNoteDataVersion(v => v + 1)
+  }
+
+  const handleScheduleDataChanged = () => {
+    setScheduleDataVersion(v => v + 1)
   }
 
   const handleNoteDeleted = (noteId) => {
@@ -434,7 +443,7 @@ export default function App() {
             workspaceRootNoteId={activeWorkspaceRootId}
             isActive={view === 2}
             onNoteOpen={openNotePopup}
-            refreshKey={noteDataVersion}
+            refreshKey={noteDataVersion + scheduleDataVersion}
             dimRefreshKey={dimVersion}
             peopleRefreshKey={peopleVersion}
             onDimChanged={() => setDimVersion(v => v + 1)}
@@ -456,6 +465,7 @@ export default function App() {
             onProjectUpdate={handleProjectUpdate}
             onNoteCreated={handleNoteCreated}
             onNotesChanged={handleNotesChanged}
+            onScheduleChanged={handleScheduleDataChanged}
             refreshKey={noteDataVersion}
             dimRefreshKey={dimVersion}
             peopleRefreshKey={peopleVersion}
@@ -494,6 +504,7 @@ export default function App() {
             refreshKey={refreshKey}
             peopleRefreshKey={peopleVersion}
             onPeopleChanged={() => setPeopleVersion(v => v + 1)}
+            onScheduleChanged={handleScheduleDataChanged}
             restoreRequest={calendarRestoreRequest}
             onRestoreConsumed={() => setCalendarRestoreRequest(null)}
             onRequestScheduleResolve={openScheduleResolverFromCalendar}
@@ -511,6 +522,7 @@ export default function App() {
         <NotePopup
           note={popupNote}
           notes={notes}
+          project={activeProject}
           initiallyEditTitle={popupEditTitle}
           isProjectRootNote={popupNote.id === activeProject?.rootNoteId}
           onClose={closeNotePopup}

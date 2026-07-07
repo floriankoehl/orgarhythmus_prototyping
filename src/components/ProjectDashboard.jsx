@@ -6,6 +6,7 @@ import { useConfirmDialog } from './ConfirmDialog'
 import NoteHierarchyTree, { buildNoteHierarchyRows } from './NoteHierarchyTree'
 import StandardColorPicker from './StandardColorPicker'
 import { COLOR_UNASSIGNED_CATEGORY_ID } from './colorPickerCategories'
+import { TYPE_DIMENSION_ID, TYPE_DYNAMIC_CATEGORIES, typeCategoryIdForNote } from './typeCategories'
 
 const STAT_LABELS = {
   notes:        'Notes',
@@ -374,8 +375,30 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     }
     return parentId === workspaceRootNoteId && isHierarchyNodeExpanded(workspaceRootNoteId)
   })
+  const structureTypeCategories = useMemo(() => TYPE_DYNAMIC_CATEGORIES.map(category => ({
+    ...category,
+    dimensionId: TYPE_DIMENSION_ID,
+    dynamic: true,
+    dynamicType: 'type',
+    dynamicLabel: 'Type',
+  })), [])
+  const structureDynamicDimensions = useMemo(() => [
+    ...structureDimensions,
+    { id: TYPE_DIMENSION_ID, name: 'Type', dynamic: true, dynamicType: 'type', dynamicLabel: 'Type' },
+  ], [structureDimensions])
+  const structureDynamicCategories = useMemo(
+    () => [...structureCategories, ...structureTypeCategories],
+    [structureCategories, structureTypeCategories]
+  )
   const structureColorByNoteId = useMemo(() => {
     if (!structureColorDimId) return {}
+    if (structureColorDimId === TYPE_DIMENSION_ID) {
+      const typeCategoriesById = new Map(structureTypeCategories.map(category => [category.id, category]))
+      return Object.fromEntries(notes.map(note => {
+        const categoryId = typeCategoryIdForNote(note, { notes, timeSlots })
+        return [note.id, typeCategoriesById.get(categoryId)?.color || '#94a3b8']
+      }))
+    }
     const categoriesById = new Map(structureCategories.map(category => [category.id, category]))
     const colors = {}
     structureAssignments.forEach(assignment => {
@@ -384,7 +407,7 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
       if (color) colors[assignment.noteId] = color
     })
     return colors
-  }, [structureAssignments, structureCategories, structureColorDimId])
+  }, [notes, structureAssignments, structureCategories, structureColorDimId, structureTypeCategories, timeSlots])
   const structurePaintCursor = structurePaintCat ? makeColorCursor(structurePaintCat.color) : ''
 
   useEffect(() => {
@@ -777,11 +800,11 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
   }, [isActive, reloadStructureColorData, structureOnly])
 
   useEffect(() => {
-    if (structureColorDimId && !structureDimensions.some(dim => dim.id === structureColorDimId)) {
+    if (structureColorDimId && !structureDynamicDimensions.some(dim => dim.id === structureColorDimId)) {
       setStructureColorDimId('')
       setStructurePaintCat(null)
     }
-  }, [structureColorDimId, structureDimensions])
+  }, [structureColorDimId, structureDynamicDimensions])
 
   const persist = useCallback((patch) => {
     clearTimeout(saveTimerRef.current)
@@ -858,7 +881,7 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
   }
 
   const applyStructurePaint = async noteId => {
-    if (!structurePaintCat || !structureColorDimId || !noteId) return
+    if (!structurePaintCat || !structureColorDimId || structureColorDimId === TYPE_DIMENSION_ID || !noteId) return
     playSound('paintApply')
     try {
       if (structurePaintCat.id === COLOR_UNASSIGNED_CATEGORY_ID) {
@@ -1069,8 +1092,8 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
       {structureOnly && (
         <div className={styles.structureFloatingTools}>
           <StandardColorPicker
-            dimensions={structureDimensions}
-            categories={structureCategories}
+            dimensions={structureDynamicDimensions}
+            categories={structureDynamicCategories}
             colorDimensionId={structureColorDimId}
             onColorDimensionChange={changeStructureColorDim}
             onDimensionDataChanged={reloadStructureColorData}

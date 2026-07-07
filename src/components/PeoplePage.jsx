@@ -15,6 +15,7 @@ import StandardColorPicker from './StandardColorPicker'
 import SavedFilterEditorModal from './SavedFilterEditorModal'
 import { FILTER_DIMENSION_ID, filterCategoryId, filterMatchesNote, normalizeSavedFilter, quickFilterMatchesNote } from './savedFilterUtils'
 import { TIME_DIMENSION_ID, TIME_DYNAMIC_CATEGORIES, timeCategoryIdForNote } from './timeCategories'
+import { TYPE_DIMENSION_ID, TYPE_DYNAMIC_CATEGORIES, typeCategoryIdForNote } from './typeCategories'
 
 const CHAR_KEYS = 'abcdefghijklmnopqr'.split('')
 const RETRO_KEY_FALLBACKS = {
@@ -2141,6 +2142,7 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
   const [categories, setCategories]   = useState([])
   const [personas, setPersonas]         = useState([])
   const [notes, setNotes]               = useState([])
+  const [timeSlots, setTimeSlots]       = useState([])
   const [noteAssignments, setNoteAssignments] = useState([])
   const [personaNoteAssignments, setPersonaNoteAssignments] = useState([])
   const [categoryLeaders, setCategoryLeaders] = useState([])
@@ -2176,14 +2178,15 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
   }, [])
 
   useEffect(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getDirectPersonaAssignments(), api.getNotes(), api.getAssignments(), api.getDirectPersonaNoteAssignments(), api.getCategoryLeaders(), api.getFilters()])
-      .then(([dims, cats, pers, personaAsns, notesList, noteAsns, pnAsns, leaders, filters]) => {
+    Promise.all([api.getDimensions(), api.getAllCategories(), api.getPersonas(), api.getDirectPersonaAssignments(), api.getNotes(), api.getAssignments(), api.getDirectPersonaNoteAssignments(), api.getCategoryLeaders(), api.getFilters(), api.getTimeSlots()])
+      .then(([dims, cats, pers, personaAsns, notesList, noteAsns, pnAsns, leaders, filters, slots]) => {
         setDimensions(dims)
         setCategories(cats)
         setDimIndex(0)
         setPersonas(pers)
         replacePersonaAssignments(personaAsns, { revise: true })
         setNotes(notesList)
+        setTimeSlots(slots || [])
         setNoteAssignments(noteAsns)
         setPersonaNoteAssignments(pnAsns)
         setCategoryLeaders(leaders)
@@ -2213,11 +2216,13 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
     color: filter.color || '#64748b', dynamic: true, dynamicType: 'filter', dynamicLabel: 'Filter', filterId: filter.id,
   })), [savedFilters])
   const timeCategories = useMemo(() => TIME_DYNAMIC_CATEGORIES.map(category => ({ ...category, dimensionId: TIME_DIMENSION_ID, dynamic: true, dynamicType: 'time', dynamicLabel: 'Time' })), [])
+  const typeCategories = useMemo(() => TYPE_DYNAMIC_CATEGORIES.map(category => ({ ...category, dimensionId: TYPE_DIMENSION_ID, dynamic: true, dynamicType: 'type', dynamicLabel: 'Type' })), [])
   const colorDimensions = useMemo(() => [...dimensions,
     { id: FILTER_DIMENSION_ID, name: 'Filters', dynamic: true, dynamicType: 'filter', dynamicLabel: 'Filter' },
     { id: TIME_DIMENSION_ID, name: 'Time', dynamic: true, dynamicType: 'time', dynamicLabel: 'Time' },
+    { id: TYPE_DIMENSION_ID, name: 'Type', dynamic: true, dynamicType: 'type', dynamicLabel: 'Type' },
   ], [dimensions])
-  const colorCategories = useMemo(() => [...categories, ...filterCategories, ...timeCategories], [categories, filterCategories, timeCategories])
+  const colorCategories = useMemo(() => [...categories, ...filterCategories, ...timeCategories, ...typeCategories], [categories, filterCategories, timeCategories, typeCategories])
 
   useEffect(() => {
     if (colorDimId && !colorDimensions.some(d => d.id === colorDimId)) {
@@ -2317,19 +2322,23 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
     const note = notes.find(item => item.id === noteId)
     const assignmentForDimension = (id, dimensionId) => noteAssignments.find(assignment => assignment.noteId === id && assignment.dimensionId === dimensionId)?.categoryId
     if (colorDimId === FILTER_DIMENSION_ID) {
-      return filterCategories.find(category => filterMatchesNote(savedFilters.find(filter => filter.id === category.filterId), note, assignmentForDimension))?.color ?? null
+      return filterCategories.find(category => filterMatchesNote(savedFilters.find(filter => filter.id === category.filterId), note, assignmentForDimension, { notes, timeSlots }))?.color ?? null
     }
     if (colorDimId === TIME_DIMENSION_ID) {
       const categoryId = timeCategoryIdForNote(note)
       return timeCategories.find(category => category.id === categoryId)?.color ?? null
     }
+    if (colorDimId === TYPE_DIMENSION_ID) {
+      const categoryId = typeCategoryIdForNote(note, { notes, timeSlots })
+      return typeCategories.find(category => category.id === categoryId)?.color ?? null
+    }
     const catId = noteAssignments.find(a => a.noteId === noteId && a.dimensionId === colorDimId)?.categoryId
     if (!catId) return null
     return categories.find(c => c.id === catId)?.color ?? null
-  }, [categories, colorDimId, noteAssignments, notes, filterCategories, savedFilters, timeCategories])
+  }, [categories, colorDimId, noteAssignments, notes, filterCategories, savedFilters, timeCategories, timeSlots, typeCategories])
 
   const paintNote = useCallback(async noteId => {
-    if (!paintCat || !colorDimId) return
+    if (!paintCat || !colorDimId || colorDimId === TYPE_DIMENSION_ID) return
     if (paintCat.id === COLOR_UNASSIGNED_CATEGORY_ID) {
       setNoteAssignments(prev => prev.filter(a => !(a.noteId === noteId && a.dimensionId === colorDimId)))
       try {
@@ -2600,8 +2609,8 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
     const activeSavedFilters = activeFilterIds.map(id => savedFilters.find(filter => filter.id === id)).filter(Boolean)
     if (!activeSavedFilters.length && !quickFilters.length) return notes
     const assignmentForDimension = (noteId, dimensionId) => noteAssignments.find(assignment => assignment.noteId === noteId && assignment.dimensionId === dimensionId)?.categoryId
-    return notes.filter(note => activeSavedFilters.some(filter => filterMatchesNote(filter, note, assignmentForDimension)) || quickFilterMatchesNote(quickFilters, note, assignmentForDimension))
-  }, [activeFilterIds, noteAssignments, notes, quickFilters, savedFilters])
+    return notes.filter(note => activeSavedFilters.some(filter => filterMatchesNote(filter, note, assignmentForDimension, { notes, timeSlots })) || quickFilterMatchesNote(quickFilters, note, assignmentForDimension, { notes, timeSlots }))
+  }, [activeFilterIds, noteAssignments, notes, quickFilters, savedFilters, timeSlots])
 
   const editPersona = editPersonaId ? personas.find(p => p.id === editPersonaId) : null
 

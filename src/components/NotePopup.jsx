@@ -78,8 +78,87 @@ function compareHierarchyNoteOrder(a, b) {
   return String(a.title || '').localeCompare(String(b.title || ''))
 }
 
+const DAY_MINUTES = 60 * 24
+const MONTH_MINUTES = DAY_MINUTES * 30
+
+function timeSlotScale(slot) {
+  const duration = Math.max(1, Number(slot?.duration) || 1)
+  if (duration < DAY_MINUTES) return 'Minute'
+  if (duration < MONTH_MINUTES) return 'Day'
+  return 'Month'
+}
+
+function formatDuration(minutes) {
+  const value = Math.max(1, Number(minutes) || 1)
+  if (value < 60) return `${value} min`
+  if (value < DAY_MINUTES) return `${Number((value / 60).toFixed(value % 60 === 0 ? 0 : 1))} h`
+  if (value < MONTH_MINUTES) return `${Number((value / DAY_MINUTES).toFixed(value % DAY_MINUTES === 0 ? 0 : 1))} d`
+  return `${Number((value / MONTH_MINUTES).toFixed(value % MONTH_MINUTES === 0 ? 0 : 1))} mo`
+}
+
+function timelineAnchorFromProject(project) {
+  if (!project?.createdAt) {
+    const fallback = new Date()
+    fallback.setHours(0, 0, 0, 0)
+    return fallback
+  }
+  const date = new Date(String(project.createdAt).replace(' ', 'T'))
+  if (Number.isNaN(date.getTime())) {
+    const fallback = new Date()
+    fallback.setHours(0, 0, 0, 0)
+    return fallback
+  }
+  date.setHours(0, 0, 0, 0)
+  return date
+}
+
+function dateFromTimelineMinute(anchor, minute) {
+  return new Date(anchor.getTime() + (Number(minute) || 0) * 60 * 1000)
+}
+
+function formatTimelineDate(anchor, minute, scale) {
+  const date = dateFromTimelineMinute(anchor, Math.max(0, Number(minute) || 0))
+  if (scale === 'Month') return date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
+  if (scale === 'Day') return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function schedulePreviewForSlot(slot, project) {
+  if (!slot) return null
+  const anchor = timelineAnchorFromProject(project)
+  const start = Math.max(0, Number(slot.startCol) || 0)
+  const duration = Math.max(1, Number(slot.duration) || 1)
+  const end = start + duration
+  const scale = timeSlotScale(slot)
+  const unit = scale === 'Month' ? MONTH_MINUTES : scale === 'Day' ? DAY_MINUTES : 60
+  const rawStart = start / unit
+  const rawEnd = end / unit
+  const axisStart = Math.max(0, Math.floor(rawStart))
+  const axisEnd = Math.max(axisStart + 3, Math.ceil(rawEnd))
+  const span = axisEnd - axisStart
+  const tickPositions = Array.from({ length: Math.min(7, span + 1) }, (_, index) =>
+    span <= 6 ? axisStart + index : Math.round(axisStart + (span * index) / 6)
+  )
+  return {
+    scale,
+    startLabel: formatTimelineDate(anchor, start, scale),
+    endLabel: formatTimelineDate(anchor, end, scale),
+    durationLabel: formatDuration(duration),
+    title: slot.title || 'Scheduled time',
+    color: slot.color || '#3b82f6',
+    left: Math.max(0, Math.min(96, ((rawStart - axisStart) / span) * 100)),
+    width: Math.max(4, Math.min(100, ((rawEnd - rawStart) / span) * 100)),
+    ticks: tickPositions.map(position => {
+      const tickMinute = position * unit
+      if (scale === 'Month') return formatTimelineDate(anchor, tickMinute, scale)
+      if (scale === 'Day') return dateFromTimelineMinute(anchor, tickMinute).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+      return dateFromTimelineMinute(anchor, tickMinute).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    }),
+  }
+}
+
 // ── Main popup ────────────────────────────────────────────────────────────────
-export default function NotePopup({ note, notes = [], isProjectRootNote = false, initiallyEditTitle = false, onClose, onNoteUpdated, onAssignmentsChanged, onPeopleChanged, onNoteDeleted, onNoteOpen, onOpenAsWorkspace, onNotesChanged }) {
+export default function NotePopup({ note, notes = [], project = null, isProjectRootNote = false, initiallyEditTitle = false, onClose, onNoteUpdated, onAssignmentsChanged, onPeopleChanged, onNoteDeleted, onNoteOpen, onOpenAsWorkspace, onNotesChanged }) {
   const [expanded, setExpanded]           = useState(false)
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false)
   const [headlineMode, setHeadlineMode]   = useState(false)
@@ -106,6 +185,7 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
   const [assignments, setAssignments] = useState({}) // { dimId: catId }
   const [personas, setPersonas] = useState([])
   const [personaNoteAssignments, setPersonaNoteAssignments] = useState([])
+  const [timeSlots, setTimeSlots] = useState([])
 
   const editorRef      = useRef(null)
   const popupRef       = useRef(null)
@@ -181,12 +261,14 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
       api.getAssignments(),
       api.getPersonas(),
       api.getDirectPersonaNoteAssignments(),
+      api.getTimeSlots(),
     ])
-      .then(([dims, cats, asns, pers, pnAsns]) => {
+      .then(([dims, cats, asns, pers, pnAsns, slots]) => {
         setDimensions(dims)
         setCategories(cats)
         setPersonas(pers)
         setPersonaNoteAssignments(pnAsns)
+        setTimeSlots(slots || [])
         // asns is array of { noteId, dimensionId, categoryId }
         const myAsns = asns.filter(a => a.noteId === note.id)
         const map = {}
@@ -295,6 +377,10 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
       return cat ? { dim, cat } : null
     })
     .filter(Boolean)
+  const noteTimeSlot = [...timeSlots]
+    .filter(slot => slot.noteId === note.id)
+    .sort((a, b) => (Number(a.startCol) || 0) - (Number(b.startCol) || 0))[0]
+  const schedulePreview = schedulePreviewForSlot(noteTimeSlot, project)
 
   const notePersonas = personaNoteAssignments
     .filter(a => a.noteId === note.id)
@@ -526,6 +612,37 @@ export default function NotePopup({ note, notes = [], isProjectRootNote = false,
             </div>
           )}
         </div>
+
+        {schedulePreview && (
+          <div className={styles.scheduleSection}>
+            <div className={styles.scheduleHeader}>
+              <span className={styles.sectionLabel}>Schedule</span>
+              <span className={styles.scheduleScale}>{schedulePreview.scale} scale</span>
+            </div>
+            <div className={styles.scheduleMeta}>
+              <span>{schedulePreview.startLabel}</span>
+              <strong>{schedulePreview.durationLabel}</strong>
+              <span>{schedulePreview.endLabel}</span>
+            </div>
+            <div className={styles.scheduleMiniChart} aria-label={`${schedulePreview.title}, ${schedulePreview.startLabel} to ${schedulePreview.endLabel}`}>
+              <div className={styles.scheduleTicks}>
+                {schedulePreview.ticks.map((tick, index) => <span key={`${tick}-${index}`}>{tick}</span>)}
+              </div>
+              <div className={styles.scheduleTrack}>
+                <div
+                  className={styles.scheduleBlock}
+                  style={{
+                    left: `${schedulePreview.left}%`,
+                    width: `${schedulePreview.width}%`,
+                    background: schedulePreview.color,
+                  }}
+                >
+                  <span>{schedulePreview.title}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className={styles.peopleSection}>
           <div className={styles.peopleSectionHeader}>

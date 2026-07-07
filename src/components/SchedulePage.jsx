@@ -15,6 +15,7 @@ import FilterDimensionSelector from './FilterDimensionSelector'
 import StandardColorPicker from './StandardColorPicker'
 import { filterMatchesNote as matchesSavedFilter, quickFilterMatchesNote } from './savedFilterUtils'
 import { TIME_DIMENSION_ID, TIME_DYNAMIC_CATEGORIES, timeCategoryIdForNote } from './timeCategories'
+import { TYPE_DIMENSION_ID, TYPE_DYNAMIC_CATEGORIES, typeCategoryIdForNote } from './typeCategories'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const HEADER_H     = 64
@@ -337,8 +338,8 @@ function makeColorCursor(color) {
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, crosshair`
 }
 
-function filterMatchesNote(filter, noteId, assignments, note = null) {
-  return matchesSavedFilter(filter, note, (id, dimensionId) => assignments[id]?.[dimensionId])
+function filterMatchesNote(filter, noteId, assignments, note = null, context = {}) {
+  return matchesSavedFilter(filter, note, (id, dimensionId) => assignments[id]?.[dimensionId], context)
 }
 
 function filterCategoryId(filterId) {
@@ -999,7 +1000,7 @@ function TreeGutter({ tree, collapsed, onToggle }) {
   )
 }
 
-function buildRowItems(notes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds = new Set(), hiddenNotesByLane = {}, filterAsLane = null, collapsedTreeNoteIds = new Set(), treeContextNotes = notes, treeRootNoteId = null) {
+function buildRowItems(notes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds = new Set(), hiddenNotesByLane = {}, filterAsLane = null, collapsedTreeNoteIds = new Set(), treeContextNotes = notes, treeRootNoteId = null, typeContext = {}) {
   const { rowH, rowGap, laneGap } = spacing
   const slotH = rowH + rowGap
   const tree = buildNoteTreeMeta(treeContextNotes, treeRootNoteId)
@@ -1013,8 +1014,8 @@ function buildRowItems(notes, categories, assignments, assignmentOrders, activeD
   // Filter-as-lane: two lanes — notes matching the filter, and the rest
   if (filterAsLane) {
     const matchCat   = { id: filterAsLane.id, name: filterAsLane.name, color: filterAsLane.color }
-    const matchNotes = notes.filter(g => filterMatchesNote(filterAsLane, g.id, assignments, g))
-    const otherNotes = notes.filter(g => !filterMatchesNote(filterAsLane, g.id, assignments, g))
+    const matchNotes = notes.filter(g => filterMatchesNote(filterAsLane, g.id, assignments, g, typeContext))
+    const otherNotes = notes.filter(g => !filterMatchesNote(filterAsLane, g.id, assignments, g, typeContext))
     const items = []; let top = 0
     const addFilterLane = (cat, laneNotes, key, first) => {
       const hiddenNoteIds = hiddenNotesByLane[key] ?? new Set()
@@ -2452,7 +2453,7 @@ function ScheduleColorLegendWidget({
               }}>
               <span className={styles.legendDot} style={{ background: cat.color }} />
               <span className={styles.legendName}>{cat.name}</span>
-              {cat.dynamic && <span className={styles.dynamicBadge}>{cat.dynamicType === 'time' ? 'Time' : 'Filter'}</span>}
+              {cat.dynamic && <span className={styles.dynamicBadge}>{cat.dynamicLabel || (cat.dynamicType === 'time' ? 'Time' : cat.dynamicType === 'type' ? 'Type' : 'Filter')}</span>}
               {cat.colorPickerSpecial ? (
                 <ColorPickerCategoryBadge>{cat.specialLabel}</ColorPickerCategoryBadge>
               ) : isSavedFilter ? (
@@ -2509,7 +2510,7 @@ function ScheduleColorLegendWidget({
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function SchedulePage({ notes = [], allNotes = notes, project = null, isActive = false, onNoteOpen, onWorkspaceOpen, onProjectUpdate, onNoteCreated, onNotesChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, externalResolveRequest = null, onExternalResolveReturn, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [], onSetContextDefaultPerspective, workspaceRootNoteId = null, workspaceRootNote = null }) {
+export default function SchedulePage({ notes = [], allNotes = notes, project = null, isActive = false, onNoteOpen, onWorkspaceOpen, onProjectUpdate, onNoteCreated, onNotesChanged, onScheduleChanged, refreshKey = 0, dimRefreshKey = 0, peopleRefreshKey = 0, onDimChanged, onPeopleChanged, externalResolveRequest = null, onExternalResolveReturn, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [], onSetContextDefaultPerspective, workspaceRootNoteId = null, workspaceRootNote = null }) {
   // ── Timeline anchor ────────────────────────────────────────────────────────
   // Keep the module-level anchor in sync with the project's creation date so that
   // col 0 = project creation date (fixed, immutable left boundary of the timeline).
@@ -3123,7 +3124,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       const next = new Set(prev)
       noteIds.forEach(noteId => {
         if (activeLaneFilter) {
-          if (filterMatchesNote(activeLaneFilter, noteId, assignments, notes.find(note => note.id === noteId))) next.delete(activeLaneFilter.id)
+          if (filterMatchesNote(activeLaneFilter, noteId, assignments, notes.find(note => note.id === noteId), { notes, timeSlots })) next.delete(activeLaneFilter.id)
         } else if (activeDimId) {
           const catId = assignments[noteId]?.[activeDimId]
           if (catId) next.delete(catId)
@@ -3133,9 +3134,12 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     })
     if (colorDimId && colorDimId !== FILTER_DIMENSION_ID) {
       const colorFilterAdds = noteIds
-        .map(noteId => colorDimId === TIME_DIMENSION_ID
-          ? timeCategoryIdForNote(notes.find(note => note.id === noteId))
-          : assignments[noteId]?.[colorDimId])
+        .map(noteId => {
+          const note = notes.find(item => item.id === noteId)
+          if (colorDimId === TIME_DIMENSION_ID) return timeCategoryIdForNote(note)
+          if (colorDimId === TYPE_DIMENSION_ID) return typeCategoryIdForNote(note, { notes, timeSlots })
+          return assignments[noteId]?.[colorDimId]
+        })
         .filter(Boolean)
       if (colorFilterAdds.length > 0) {
         setQuickFilters(prev => {
@@ -3227,7 +3231,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         .catch(console.error)
       return
     }
-    if (!paintCat || !colorDimId || colorDimId === FILTER_DIMENSION_ID || colorDimId === TIME_DIMENSION_ID) return
+    if (!paintCat || !colorDimId || colorDimId === FILTER_DIMENSION_ID || colorDimId === TIME_DIMENSION_ID || colorDimId === TYPE_DIMENSION_ID) return
     try {
       if (paintCat.id === COLOR_UNASSIGNED_CATEGORY_ID) {
         await api.unassign(noteId, colorDimId)
@@ -3579,6 +3583,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       const result = await api.applyTransaction({ ...transaction, before, after })
       setTransactionHistory(result.history)
       await refreshGanttTransactions()
+      onScheduleChanged?.()
       const txSoundMap = {
         'timeSlot.create':    'timeSlotCreate',
         'timeSlot.move':      'timeSlotMove',
@@ -3630,7 +3635,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       }
       return false
     }
-  }, [applyTransactionState, refreshGanttTransactions, showDeadlineViolationPrompt, showEarliestStartViolationPrompt, showTransactionFailure, showWarningPrompt])
+  }, [applyTransactionState, onScheduleChanged, refreshGanttTransactions, showDeadlineViolationPrompt, showEarliestStartViolationPrompt, showTransactionFailure, showWarningPrompt])
 
   const undoGanttTransaction = useCallback(async () => {
     try {
@@ -3640,11 +3645,12 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         refreshGanttTransactions(),
         onNotesChanged?.(),
       ])
+      onScheduleChanged?.()
     } catch (err) {
       console.error(err)
       showTransactionFailure(err)
     }
-  }, [onNotesChanged, refreshGanttTransactions, showTransactionFailure])
+  }, [onNotesChanged, onScheduleChanged, refreshGanttTransactions, showTransactionFailure])
 
   const redoGanttTransaction = useCallback(async () => {
     try {
@@ -3654,11 +3660,12 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
         refreshGanttTransactions(),
         onNotesChanged?.(),
       ])
+      onScheduleChanged?.()
     } catch (err) {
       console.error(err)
       showTransactionFailure(err)
     }
-  }, [onNotesChanged, refreshGanttTransactions, showTransactionFailure])
+  }, [onNotesChanged, onScheduleChanged, refreshGanttTransactions, showTransactionFailure])
 
   // ── Virtual-render state ───────────────────────────────────────────────────
   const [vpSize,      setVpSize]      = useState({ w: 0, h: 0 })
@@ -3683,6 +3690,17 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       dimensionId: TIME_DIMENSION_ID,
       dynamic: true,
       dynamicType: 'time',
+      dynamicLabel: 'Time',
+    })),
+    []
+  )
+  const typeCategories = useMemo(
+    () => TYPE_DYNAMIC_CATEGORIES.map(category => ({
+      ...category,
+      dimensionId: TYPE_DIMENSION_ID,
+      dynamic: true,
+      dynamicType: 'type',
+      dynamicLabel: 'Type',
     })),
     []
   )
@@ -3690,14 +3708,16 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     () => [
       ...visibleDimensions,
       { id: FILTER_DIMENSION_ID, name: 'Filters', dynamic: true, dynamicType: 'filter' },
-      { id: TIME_DIMENSION_ID, name: 'Time', dynamic: true, dynamicType: 'time' },
+      { id: TIME_DIMENSION_ID, name: 'Time', dynamic: true, dynamicType: 'time', dynamicLabel: 'Time' },
+      { id: TYPE_DIMENSION_ID, name: 'Type', dynamic: true, dynamicType: 'type', dynamicLabel: 'Type' },
     ],
     [visibleDimensions]
   )
   const colorCategories = useMemo(
-    () => [...categories, ...filterCategories, ...timeCategories],
-    [categories, filterCategories, timeCategories]
+    () => [...categories, ...filterCategories, ...timeCategories, ...typeCategories],
+    [categories, filterCategories, timeCategories, typeCategories]
   )
+  const typeContext = useMemo(() => ({ notes, timeSlots }), [notes, timeSlots])
 
   const visibleNotes = useMemo(
     () => {
@@ -3713,8 +3733,8 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       notes.forEach(note => {
         if (
           revealedConflictNoteIds.has(note.id) ||
-          activeSavedFilters.some(filter => filterMatchesNote(filter, note.id, assignments, note)) ||
-          quickFilterMatchesNote(quickFilters, note, (id, dimensionId) => assignments[id]?.[dimensionId])
+          activeSavedFilters.some(filter => filterMatchesNote(filter, note.id, assignments, note, typeContext)) ||
+          quickFilterMatchesNote(quickFilters, note, (id, dimensionId) => assignments[id]?.[dimensionId], typeContext)
         ) {
           directMatches.add(note.id)
         }
@@ -3735,7 +3755,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       })
       return notes.filter(note => visibleIds.has(note.id))
     },
-    [activeFilterIds, allNotes, assignments, notes, quickFilters, revealedConflictNoteIds, savedFilters, visibleNoteFilterIds]
+    [activeFilterIds, allNotes, assignments, notes, quickFilters, revealedConflictNoteIds, savedFilters, typeContext, visibleNoteFilterIds]
   )
 
   // ── Row model ──────────────────────────────────────────────────────────────
@@ -3745,9 +3765,9 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       const renderedNotes = workspaceRootNote
         ? [workspaceRootNote, ...visibleNotes.filter(note => note.id !== workspaceRootNote.id)]
         : visibleNotes
-      return buildRowItems(renderedNotes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenNotesByLane, activeLaneFilter, collapsedTreeNoteIds, treeContextNotes, workspaceRootNoteId)
+      return buildRowItems(renderedNotes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenNotesByLane, activeLaneFilter, collapsedTreeNoteIds, treeContextNotes, workspaceRootNoteId, typeContext)
     },
-    [visibleNotes, allNotes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenNotesByLane, activeLaneFilter, collapsedTreeNoteIds, workspaceRootNote, workspaceRootNoteId]
+    [visibleNotes, allNotes, categories, assignments, assignmentOrders, activeDimId, spacing, hiddenCatIds, hiddenNotesByLane, activeLaneFilter, collapsedTreeNoteIds, workspaceRootNote, workspaceRootNoteId, typeContext]
   )
   const rowItemsRef = useRef([])
   rowItemsRef.current = rowItems
@@ -4096,7 +4116,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       let hasMatch = false
       let hasOther = false
       noteIds.forEach(noteId => {
-        if (filterMatchesNote(activeLaneFilter, noteId, assignments, notes.find(note => note.id === noteId))) hasMatch = true
+        if (filterMatchesNote(activeLaneFilter, noteId, assignments, notes.find(note => note.id === noteId), { notes, timeSlots })) hasMatch = true
         else hasOther = true
       })
       const nextHidden = new Set()
@@ -4307,8 +4327,8 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
     if (activeLaneFilter) {
       const key = laneKeyForCat(cat)
       return key === UNASSIGNED_LANE
-        ? visibleNotes.filter(g => !filterMatchesNote(activeLaneFilter, g.id, assignments, g))
-        : visibleNotes.filter(g => filterMatchesNote(activeLaneFilter, g.id, assignments, g))
+        ? visibleNotes.filter(g => !filterMatchesNote(activeLaneFilter, g.id, assignments, g, { notes, timeSlots }))
+        : visibleNotes.filter(g => filterMatchesNote(activeLaneFilter, g.id, assignments, g, { notes, timeSlots }))
     }
     if (!activeDimId) return visibleNotes
     const key = laneKeyForCat(cat)
@@ -4432,7 +4452,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const getTimeSlotColor = useCallback(timeSlot => {
     if (!colorDimId) return timeSlot.color
     if (colorDimId === FILTER_DIMENSION_ID) {
-      const match = filterCategories.find(cat => filterMatchesNote(savedFilters.find(f => f.id === cat.filterId), timeSlot.noteId, assignments, notes.find(note => note.id === timeSlot.noteId)))
+      const match = filterCategories.find(cat => filterMatchesNote(savedFilters.find(f => f.id === cat.filterId), timeSlot.noteId, assignments, notes.find(note => note.id === timeSlot.noteId), typeContext))
       return match?.color ?? null
     }
     if (colorDimId === TIME_DIMENSION_ID) {
@@ -4440,16 +4460,21 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       const catId = timeCategoryIdForNote(note)
       return timeCategories.find(category => category.id === catId)?.color ?? null
     }
+    if (colorDimId === TYPE_DIMENSION_ID) {
+      const note = notes.find(item => item.id === timeSlot.noteId)
+      const catId = typeCategoryIdForNote(note, typeContext)
+      return typeCategories.find(category => category.id === catId)?.color ?? null
+    }
     const catId = assignments[timeSlot.noteId]?.[colorDimId]
     if (!catId) return null
     return categories.find(c => c.id === catId)?.color ?? null
-  }, [assignments, categories, colorDimId, filterCategories, notes, savedFilters, timeCategories])
+  }, [assignments, categories, colorDimId, filterCategories, notes, savedFilters, timeCategories, typeCategories, typeContext])
 
   // Color for the note row indicator dot — same logic as timeSlots but returns null when unassigned
   const getNoteColor = useCallback(noteId => {
     if (!colorDimId) return null
     if (colorDimId === FILTER_DIMENSION_ID) {
-      const match = filterCategories.find(cat => filterMatchesNote(savedFilters.find(f => f.id === cat.filterId), noteId, assignments, notes.find(note => note.id === noteId)))
+      const match = filterCategories.find(cat => filterMatchesNote(savedFilters.find(f => f.id === cat.filterId), noteId, assignments, notes.find(note => note.id === noteId), typeContext))
       return match?.color ?? null
     }
     if (colorDimId === TIME_DIMENSION_ID) {
@@ -4457,10 +4482,15 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       const catId = timeCategoryIdForNote(note)
       return timeCategories.find(category => category.id === catId)?.color ?? null
     }
+    if (colorDimId === TYPE_DIMENSION_ID) {
+      const note = notes.find(item => item.id === noteId)
+      const catId = typeCategoryIdForNote(note, typeContext)
+      return typeCategories.find(category => category.id === catId)?.color ?? null
+    }
     const catId = assignments[noteId]?.[colorDimId]
     if (!catId) return null
     return categories.find(c => c.id === catId)?.color ?? null
-  }, [assignments, categories, colorDimId, filterCategories, notes, savedFilters, timeCategories])
+  }, [assignments, categories, colorDimId, filterCategories, notes, savedFilters, timeCategories, typeCategories, typeContext])
 
   const getDependencyPathD = useCallback((dep, overrides = {}) => {
     const from = overrides[dep.fromId] ?? timeSlotsRef.current.find(m => m.id === dep.fromId)

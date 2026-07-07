@@ -29,9 +29,9 @@ KANBAN_DIMENSION_PREFIX = "system:kanban:"
 KANBAN_STATES = [
     ("scheduled", "Scheduled", "#3b82f6"),
     ("in_progress", "In progress", "#f97316"),
-    ("review", "Review", "#8b5cf6"),
     ("done", "Done", "#22c55e"),
 ]
+KANBAN_TIME_SLOT_REQUIRED_STATES = {"scheduled", "in_progress", "done"}
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_MINUTES = 30
 REFRESH_TOKEN_DAYS = 30
@@ -721,7 +721,6 @@ _ensure_superuser()
 
 def _seed_defaults(project_id: str = 'default'):
     defaults = [
-        ("Group",    [("All",    "#94a3b8")]),
         ("Priority", [("High",   "#ef4444"), ("Medium", "#eab308"), ("Low", "#94a3b8")]),
         ("Type",     [("Idea",   "#8b5cf6"), ("Goal",   "#22c55e"), ("Task", "#1a73e8")]),
     ]
@@ -1306,6 +1305,18 @@ def _ensure_kanban_dimension(con, project_id: str):
     )
     con.execute("UPDATE dimensions SET name = ?, project_id = ? WHERE id = ?", ("Kanban", project_id, dim_id))
 
+    valid_cat_ids = {_kanban_category_id(project_id, state) for state, _, _ in KANBAN_STATES}
+    stale_rows = con.execute(
+        "SELECT id FROM categories WHERE dimension_id = ? AND id LIKE ?",
+        (dim_id, f"{dim_id}:%"),
+    ).fetchall()
+    stale_ids = [row["id"] for row in stale_rows if row["id"] not in valid_cat_ids]
+    if stale_ids:
+        placeholders = ",".join("?" for _ in stale_ids)
+        con.execute(f"DELETE FROM assignments WHERE category_id IN ({placeholders})", stale_ids)
+        con.execute(f"DELETE FROM persona_assignments WHERE category_id IN ({placeholders})", stale_ids)
+        con.execute(f"DELETE FROM categories WHERE id IN ({placeholders})", stale_ids)
+
     for idx, (state, name, color) in enumerate(KANBAN_STATES):
         cat_id = _kanban_category_id(project_id, state)
         con.execute(
@@ -1317,15 +1328,50 @@ def _ensure_kanban_dimension(con, project_id: str):
             (dim_id, name, color, idx, cat_id),
         )
 
-def _unassign_scheduled_if_unslotted(con, note_id: str, project_id: str | None = None):
+def _unassign_kanban_time_slot_states_if_unslotted(con, note_id: str, project_id: str | None = None):
     if project_id is None:
         project_id = _project_id_for_note(con, note_id)
     if con.execute("SELECT 1 FROM time_slots WHERE note_id = ? LIMIT 1", (note_id,)).fetchone():
         return
+    blocked_category_ids = [_kanban_category_id(project_id, state) for state in KANBAN_TIME_SLOT_REQUIRED_STATES]
+    placeholders = ",".join("?" for _ in blocked_category_ids)
     con.execute(
-        "DELETE FROM assignments WHERE note_id = ? AND dimension_id = ? AND category_id = ?",
-        (note_id, _kanban_dimension_id(project_id), _kanban_category_id(project_id, "scheduled")),
+        f"DELETE FROM assignments WHERE note_id = ? AND dimension_id = ? AND category_id IN ({placeholders})",
+        (note_id, _kanban_dimension_id(project_id), *blocked_category_ids),
     )
+
+def _assign_kanban_scheduled_if_unset(con, note_id: str, project_id: str | None = None):
+    if project_id is None:
+        project_id = _project_id_for_note(con, note_id)
+    _ensure_kanban_dimension(con, project_id)
+    dim_id = _kanban_dimension_id(project_id)
+    if con.execute(
+        "SELECT 1 FROM assignments WHERE note_id = ? AND dimension_id = ? LIMIT 1",
+        (note_id, dim_id),
+    ).fetchone():
+        return
+    cat_id = _kanban_category_id(project_id, "scheduled")
+    order_idx = con.execute(
+        "SELECT COALESCE(MAX(order_idx), -1) + 1 FROM assignments WHERE dimension_id = ? AND category_id = ?",
+        (dim_id, cat_id),
+    ).fetchone()[0]
+    con.execute(
+        "INSERT OR REPLACE INTO assignments (note_id, dimension_id, category_id, order_idx) VALUES (?, ?, ?, ?)",
+        (note_id, dim_id, cat_id, order_idx),
+    )
+
+def _delete_time_slot_and_sync_kanban(con, time_slot_id: str):
+    row = con.execute(
+        "SELECT m.note_id, n.project_id FROM time_slots m JOIN notes n ON n.id = m.note_id WHERE m.id = ?",
+        (time_slot_id,),
+    ).fetchone()
+    if not row:
+        return None
+    con.execute("DELETE FROM dependencies WHERE from_id = ? OR to_id = ?", (time_slot_id, time_slot_id))
+    con.execute("DELETE FROM persona_time_slot_assignments WHERE time_slot_id = ?", (time_slot_id,))
+    con.execute("DELETE FROM time_slots WHERE id = ?", (time_slot_id,))
+    _unassign_kanban_time_slot_states_if_unslotted(con, row["note_id"], row["project_id"])
+    return row
 
 def _project_id_for_dependency(con, dep_id: str) -> str:
     row = con.execute(
@@ -1835,17 +1881,11 @@ def _apply_transaction_rows(con, before: dict, after: dict):
     after_ms = {m["id"]: m for m in after["time_slots"]}
     before_deps = {d["id"]: d for d in before["dependencies"]}
     after_deps = {d["id"]: d for d in after["dependencies"]}
-    deleted_slot_notes: list[tuple[str, str]] = []
 
     for dep_id in before_deps.keys() - after_deps.keys():
         con.execute("DELETE FROM dependencies WHERE id = ?", (dep_id,))
     for ms_id in before_ms.keys() - after_ms.keys():
-        deleted_time_slot = before_ms[ms_id]
-        row = con.execute("SELECT project_id FROM notes WHERE id = ?", (deleted_time_slot["noteId"],)).fetchone()
-        con.execute("DELETE FROM dependencies WHERE from_id = ? OR to_id = ?", (ms_id, ms_id))
-        con.execute("DELETE FROM time_slots WHERE id = ?", (ms_id,))
-        if row:
-            deleted_slot_notes.append((deleted_time_slot["noteId"], row["project_id"]))
+        _delete_time_slot_and_sync_kanban(con, ms_id)
     for m in after_ms.values():
         if m["id"] in before_ms:
             con.execute(
@@ -1857,6 +1897,7 @@ def _apply_transaction_rows(con, before: dict, after: dict):
                 "INSERT INTO time_slots (id, note_id, start_col, duration, title, color) VALUES (?,?,?,?,?,?)",
                 (m["id"], m["noteId"], m["startCol"], m["duration"], m["title"], m["color"]),
             )
+            _assign_kanban_scheduled_if_unset(con, m["noteId"])
     for d in after_deps.values():
         if d["id"] in before_deps:
             con.execute(
@@ -1868,9 +1909,6 @@ def _apply_transaction_rows(con, before: dict, after: dict):
                 "INSERT INTO dependencies (id, from_id, to_id, reason) VALUES (?, ?, ?, ?)",
                 (d["id"], d["fromId"], d["toId"], d["reason"]),
             )
-    for note_id, project_id in deleted_slot_notes:
-        _unassign_scheduled_if_unslotted(con, note_id, project_id)
-
 def _assert_transaction_project_scope(con, project_id: str, before: dict, after: dict):
     for time_slot in before["time_slots"] + after["time_slots"]:
         note_id = time_slot.get("noteId")
@@ -3491,13 +3529,15 @@ def assign_category(note_id: str, dim_id: str, data: AssignIn, user: dict = Depe
         cat_row = con.execute("SELECT dimension_id FROM categories WHERE id = ?", (data.categoryId,)).fetchone()
         if not cat_row or cat_row["dimension_id"] != dim_id:
             raise HTTPException(400, "Category does not belong to dimension")
-        if dim_id == _kanban_dimension_id(note_project_id) and data.categoryId == _kanban_category_id(note_project_id, "scheduled"):
+        kanban_state = _kanban_state_from_category_id(data.categoryId)
+        if dim_id == _kanban_dimension_id(note_project_id) and kanban_state in KANBAN_TIME_SLOT_REQUIRED_STATES:
             if not con.execute("SELECT 1 FROM time_slots WHERE note_id = ? LIMIT 1", (note_id,)).fetchone():
+                state_name = next((name for state, name, _ in KANBAN_STATES if state == kanban_state), "this Kanban state")
                 raise HTTPException(
                     422,
                     {
-                        "message": "A note needs a time slot before it can be moved to Scheduled",
-                        "type": "kanban_scheduled_requires_time_slot",
+                        "message": f"A note needs a time slot before it can be moved to {state_name}",
+                        "type": "kanban_time_slot_required",
                         "noteId": note_id,
                     },
                 )
@@ -3951,6 +3991,7 @@ def create_time_slot(data: TimeSlotIn, user: dict = Depends(current_user)):
             "INSERT INTO time_slots (id, note_id, start_col, duration, title, color) VALUES (?,?,?,?,?,?)",
             (mid, data.noteId, data.startCol, duration, data.title, data.color),
         )
+        _assign_kanban_scheduled_if_unset(con, data.noteId, project_id)
     return time_slot
 
 # Registered before /{time_slot_id} so "batch" is not captured as a path param
@@ -4017,9 +4058,7 @@ def delete_time_slot(time_slot_id: str, user: dict = Depends(current_user)):
         if not row:
             raise HTTPException(404, "Time slot not found")
         assert_project_access(row["project_id"], user)
-        con.execute("DELETE FROM persona_time_slot_assignments WHERE time_slot_id = ?", (time_slot_id,))
-        con.execute("DELETE FROM time_slots WHERE id = ?", (time_slot_id,))
-        _unassign_scheduled_if_unslotted(con, row["note_id"], row["project_id"])
+        _delete_time_slot_and_sync_kanban(con, time_slot_id)
 
 
 # ── Dependencies ──────────────────────────────────────────────────────────────

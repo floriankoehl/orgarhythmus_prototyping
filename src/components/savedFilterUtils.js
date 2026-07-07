@@ -1,5 +1,6 @@
 import { COLOR_ALL_CATEGORY_ID, COLOR_UNASSIGNED_CATEGORY_ID } from './colorPickerCategories'
 import { TIME_DIMENSION_ID, timeCategoryIdForNote } from './timeCategories'
+import { TYPE_DIMENSION_ID, typeCategoryIdForNote } from './typeCategories'
 
 export const FILTER_DIMENSION_ID = '__filters__'
 export const FILTER_CATEGORY_PREFIX = 'filter:'
@@ -23,7 +24,7 @@ export function filterCategoryId(filterId) {
   return `${FILTER_CATEGORY_PREFIX}${filterId}`
 }
 
-export function filterMatchesNote(filter, note, assignmentForDimension) {
+export function filterMatchesNote(filter, note, assignmentForDimension, context = {}) {
   if (!filter || !note) return false
   const entries = Object.entries(filter.selections ?? {}).filter(([, ids]) => ids.length)
   if (!entries.length) return false
@@ -31,17 +32,21 @@ export function filterMatchesNote(filter, note, assignmentForDimension) {
     if (categoryIds.includes(COLOR_ALL_CATEGORY_ID)) return true
     const value = dimensionId === TIME_DIMENSION_ID
       ? timeCategoryIdForNote(note)
+      : dimensionId === TYPE_DIMENSION_ID
+      ? typeCategoryIdForNote(note, context)
       : assignmentForDimension(note.id, dimensionId)
     return categoryIds.includes(value) || (!value && categoryIds.includes(COLOR_UNASSIGNED_CATEGORY_ID))
   }
   return filter.gate === 'OR' ? entries.some(matchesDimension) : entries.every(matchesDimension)
 }
 
-export function quickFilterMatchesNote(filters, note, assignmentForDimension) {
+export function quickFilterMatchesNote(filters, note, assignmentForDimension, context = {}) {
   return filters.some(filter => {
     if (filter.catId === COLOR_ALL_CATEGORY_ID) return true
     const value = filter.dimId === TIME_DIMENSION_ID
       ? timeCategoryIdForNote(note)
+      : filter.dimId === TYPE_DIMENSION_ID
+      ? typeCategoryIdForNote(note, context)
       : assignmentForDimension(note.id, filter.dimId)
     return filter.catId === COLOR_UNASSIGNED_CATEGORY_ID ? !value : value === filter.catId
   })

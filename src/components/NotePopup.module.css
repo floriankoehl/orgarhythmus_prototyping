@@ -165,6 +165,117 @@
   letter-spacing: 0.04em;
 }
 
+.scheduleSection {
+  padding: 12px 18px;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scheduleHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.scheduleScale {
+  padding: 3px 7px;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  font: 800 10px Arial, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.scheduleMeta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: #64748b;
+  font: 700 11px Arial, sans-serif;
+}
+
+.scheduleMeta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduleMeta span:last-child {
+  text-align: right;
+}
+
+.scheduleMeta strong {
+  padding: 3px 7px;
+  color: #334155;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font: 800 11px Arial, sans-serif;
+}
+
+.scheduleMiniChart {
+  padding: 8px 9px 10px;
+  background:
+    linear-gradient(90deg, rgba(148,163,184,0.18) 1px, transparent 1px),
+    #fbfdff;
+  background-size: calc(100% / 6) 100%;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+}
+
+.scheduleTicks {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 6px;
+  color: #94a3b8;
+  font: 800 9px Arial, sans-serif;
+}
+
+.scheduleTicks span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduleTrack {
+  position: relative;
+  height: 28px;
+  background: #f1f5f9;
+  border: 1px solid #e5edf5;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.scheduleBlock {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  min-width: 8px;
+  display: flex;
+  align-items: center;
+  padding: 0 7px;
+  color: #fff;
+  border-radius: 5px;
+  box-shadow: 0 4px 10px rgba(15,23,42,0.18);
+  font: 800 10px Arial, sans-serif;
+}
+
+.scheduleBlock span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .peopleSection {
   padding: 12px 18px;
   border-bottom: 1px solid #f0f0f0;

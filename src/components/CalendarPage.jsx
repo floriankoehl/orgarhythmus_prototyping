@@ -13,6 +13,7 @@ import StandardColorPicker from './StandardColorPicker'
 import SavedFilterEditorModal from './SavedFilterEditorModal'
 import { FILTER_DIMENSION_ID, filterCategoryId, filterMatchesNote, normalizeSavedFilter, quickFilterMatchesNote } from './savedFilterUtils'
 import { TIME_DIMENSION_ID, TIME_DYNAMIC_CATEGORIES, timeCategoryIdForNote } from './timeCategories'
+import { TYPE_DIMENSION_ID, TYPE_DYNAMIC_CATEGORIES, typeCategoryIdForNote } from './typeCategories'
 
 const DAY_MINUTES = 24 * 60
 const DEFAULT_HOUR_HEIGHT = 54
@@ -815,7 +816,7 @@ function SpanningEvent({ event, start, end, lane = null, onNoteOpen, paintCat, o
   )
 }
 
-export default function CalendarPage({ notes = [], project = null, isActive = false, onNoteOpen, onNoteCreated, onNoteUpdated, refreshKey = 0, peopleRefreshKey = 0, onPeopleChanged, restoreRequest = null, onRestoreConsumed, onRequestScheduleResolve, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [], onSetContextDefaultPerspective, workspaceRootNoteId = null }) {
+export default function CalendarPage({ notes = [], project = null, isActive = false, onNoteOpen, onNoteCreated, onNoteUpdated, onScheduleChanged, refreshKey = 0, peopleRefreshKey = 0, onPeopleChanged, restoreRequest = null, onRestoreConsumed, onRequestScheduleResolve, contextDefaultPerspectiveId, contextApplyToken, activeContextId = '', archivedDimensionIds = [], onSetContextDefaultPerspective, workspaceRootNoteId = null }) {
   const dateWheelAtRef = useRef(0)
   const [view, setView] = useState('today')
   const [focusDate, setFocusDate] = useState(() => localMidnight())
@@ -851,11 +852,13 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     color: filter.color || '#64748b', dynamic: true, dynamicType: 'filter', dynamicLabel: 'Filter', filterId: filter.id,
   })), [savedFilters])
   const timeCategories = useMemo(() => TIME_DYNAMIC_CATEGORIES.map(category => ({ ...category, dimensionId: TIME_DIMENSION_ID, dynamic: true, dynamicType: 'time', dynamicLabel: 'Time' })), [])
+  const typeCategories = useMemo(() => TYPE_DYNAMIC_CATEGORIES.map(category => ({ ...category, dimensionId: TYPE_DIMENSION_ID, dynamic: true, dynamicType: 'type', dynamicLabel: 'Type' })), [])
   const colorDimensions = useMemo(() => [...visibleDimensions,
     { id: FILTER_DIMENSION_ID, name: 'Filters', dynamic: true, dynamicType: 'filter', dynamicLabel: 'Filter' },
     { id: TIME_DIMENSION_ID, name: 'Time', dynamic: true, dynamicType: 'time', dynamicLabel: 'Time' },
+    { id: TYPE_DIMENSION_ID, name: 'Type', dynamic: true, dynamicType: 'type', dynamicLabel: 'Type' },
   ], [visibleDimensions])
-  const colorCategories = useMemo(() => [...categories, ...filterCategories, ...timeCategories], [categories, filterCategories, timeCategories])
+  const colorCategories = useMemo(() => [...categories, ...filterCategories, ...timeCategories, ...typeCategories], [categories, filterCategories, timeCategories, typeCategories])
   const [legendOpen, setLegendOpen] = useState(false)
   const [hiddenCatIds, setHiddenCatIds] = useState(() => new Set())
   const [visibleScales, setVisibleScales] = useState(() => new Set(SCALE_OPTIONS.map(option => option.id)))
@@ -1021,10 +1024,13 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
       : categoriesById.get(locationCatId)
     let colorCategory = null
     if (colorDimId === FILTER_DIMENSION_ID) {
-      colorCategory = filterCategories.find(category => filterMatchesNote(savedFilters.find(filter => filter.id === category.filterId), note, (noteId, dimensionId) => assignments[noteId]?.[dimensionId])) || null
+      colorCategory = filterCategories.find(category => filterMatchesNote(savedFilters.find(filter => filter.id === category.filterId), note, (noteId, dimensionId) => assignments[noteId]?.[dimensionId], { notes, timeSlots })) || null
     } else if (colorDimId === TIME_DIMENSION_ID) {
       const categoryId = timeCategoryIdForNote(note)
       colorCategory = timeCategories.find(category => category.id === categoryId) || null
+    } else if (colorDimId === TYPE_DIMENSION_ID) {
+      const categoryId = typeCategoryIdForNote(note, { notes, timeSlots })
+      colorCategory = typeCategories.find(category => category.id === categoryId) || null
     } else {
       const colorCatId = colorDimId ? assignments[slot.noteId]?.[colorDimId] : ''
       colorCategory = colorCatId ? categoriesById.get(colorCatId) : null
@@ -1047,7 +1053,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
       start,
       end,
     }
-  }).sort((a, b) => a.start - b.start), [timeSlots, notesById, anchor, assignments, canvasDimId, colorDimId, categoriesById, notePersonasMap, editPreview, filterCategories, savedFilters, timeCategories])
+  }).sort((a, b) => a.start - b.start), [timeSlots, notes, notesById, anchor, assignments, canvasDimId, colorDimId, categoriesById, notePersonasMap, editPreview, filterCategories, savedFilters, timeCategories, typeCategories])
 
   const events = useMemo(() => {
     const visibleEvents = canvasDimId
@@ -1062,9 +1068,9 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
     return scaledEvents.filter(event => {
       const note = notesById.get(event.noteId)
       const assignmentForDimension = (noteId, dimensionId) => assignments[noteId]?.[dimensionId]
-      return activeSavedFilters.some(filter => filterMatchesNote(filter, note, assignmentForDimension)) || quickFilterMatchesNote(quickFilters, note, assignmentForDimension)
+      return activeSavedFilters.some(filter => filterMatchesNote(filter, note, assignmentForDimension, { notes, timeSlots })) || quickFilterMatchesNote(quickFilters, note, assignmentForDimension, { notes, timeSlots })
     })
-  }, [allEvents, focusedCatId, hiddenCatIds, canvasDimId, visibleScales, activeFilterIds, savedFilters, quickFilters, notesById, assignments])
+  }, [allEvents, focusedCatId, hiddenCatIds, canvasDimId, visibleScales, activeFilterIds, savedFilters, quickFilters, notesById, assignments, notes, timeSlots])
 
   const toggleScale = scale => {
     setVisibleScales(prev => {
@@ -1146,7 +1152,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   }
 
   const paintNote = async noteId => {
-    if (!paintCat || !colorDimId || !noteId) return
+    if (!paintCat || !colorDimId || colorDimId === TYPE_DIMENSION_ID || !noteId) return
     playSound('paintApply')
     if (paintCat.id === COLOR_UNASSIGNED_CATEGORY_ID) {
       setAssignments(prev => {
@@ -1459,6 +1465,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
       }
       onNoteCreated?.(savedNote)
       setTimeSlots(prev => [...prev, savedSlot])
+      onScheduleChanged?.()
       setVisibleScales(prev => new Set([...prev, 'minute']))
       if (!title.trim()) setInlineTitleEdit({ slotId: savedSlot.id, noteId: savedNote.id, value: '' })
       playSound('timeSlotCreate')
@@ -1553,6 +1560,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
         after: { timeSlots: [after], dependencies: [] },
       })
       setTimeSlots(prev => prev.map(item => item.id === slot.id ? after : item))
+      onScheduleChanged?.()
       playSound(label === 'Resize time slot' ? 'calendarEventResize' : 'calendarEventMove')
       setCalendarWarning(null)
       return true

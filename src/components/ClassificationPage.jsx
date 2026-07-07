@@ -14,6 +14,7 @@ import FilterDimensionSelector from './FilterDimensionSelector'
 import StandardColorPicker from './StandardColorPicker'
 import { filterMatchesNote as matchesSavedFilter, quickFilterMatchesNote } from './savedFilterUtils'
 import { TIME_DIMENSION_ID, TIME_DYNAMIC_CATEGORIES, noteCreatedAtMs, timeCategoryIdForNote } from './timeCategories'
+import { TYPE_DIMENSION_ID, TYPE_DYNAMIC_CATEGORIES, typeCategoryIdForNote } from './typeCategories'
 
 const PRESET_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#94a3b8']
 const FILTER_DIMENSION_ID = '__filters__'
@@ -47,8 +48,8 @@ function normalizeFilter(filter) {
   }
 }
 
-function filterMatchesNote(filter, noteId, assignments, note = null) {
-  return matchesSavedFilter(filter, note, (id, dimensionId) => assignments[id]?.[dimensionId])
+function filterMatchesNote(filter, noteId, assignments, note = null, context = {}) {
+  return matchesSavedFilter(filter, note, (id, dimensionId) => assignments[id]?.[dimensionId], context)
 }
 
 function filterCategoryId(filterId) {
@@ -68,7 +69,7 @@ function dimensionIdFromAllNotesCategoryId(catId) {
 }
 
 function isDynamicDimensionId(dimId) {
-  return dimId === FILTER_DIMENSION_ID || dimId === TIME_DIMENSION_ID
+  return dimId === FILTER_DIMENSION_ID || dimId === TIME_DIMENSION_ID || dimId === TYPE_DIMENSION_ID
 }
 
 function isSystemDimension(dim) {
@@ -83,6 +84,10 @@ function isKanbanDimension(dim) {
   return dim?.systemType === 'kanban'
 }
 
+function kanbanCategoryRequiresTimeSlot(cat) {
+  return cat?.systemType === 'kanban' && ['scheduled', 'in_progress', 'done'].includes(cat.kanbanState)
+}
+
 function compareHierarchyNoteOrder(a, b) {
   const aOrder = a.orderIdx ?? a.order_idx ?? Number.MIN_SAFE_INTEGER
   const bOrder = b.orderIdx ?? b.order_idx ?? Number.MIN_SAFE_INTEGER
@@ -95,7 +100,62 @@ function dynamicDimensionLabel(cat) {
   if (cat?.systemType === 'kanban') return 'Status'
   if (cat?.dynamicType === 'filter') return 'Filter'
   if (cat?.dynamicType === 'time') return 'Time'
+  if (cat?.dynamicType === 'type') return 'Type'
   return 'Dynamic'
+}
+
+function specialDimensionRules(dim) {
+  if (!dim) return ''
+  if (dim.id === FILTER_DIMENSION_ID || dim.dynamicType === 'filter') {
+    return 'Filters are saved rules. A note appears in a filter lane when it matches that filter. Filters are computed, not assigned directly.'
+  }
+  if (dim.id === TIME_DIMENSION_ID || dim.dynamicType === 'time') {
+    return 'Time groups notes by when they were created: last hour, last day, last week, or older than a week. This is computed from the note creation timestamp.'
+  }
+  if (dim.id === TYPE_DIMENSION_ID || dim.dynamicType === 'type') {
+    return 'Type is computed from the note role: Thought means no children and no time slot; Task means scheduled but not a project; Project means it contains child notes.'
+  }
+  if (isKanbanDimension(dim)) {
+    return 'Kanban reflects project process. Scheduled requires a time slot and can be implied by scheduling; In progress and Done also require a time slot; Unscheduled means no time slot and cannot be assigned from this page.'
+  }
+  if (dim.dynamic || dim.system) {
+    return 'This is a special dimension. Its values are controlled by app rules instead of normal manual category editing.'
+  }
+  return ''
+}
+
+function categoryRules(cat, dimension = null, unassignedLabel = 'Unassigned') {
+  if (!cat) {
+    if (isKanbanDimension(dimension)) return 'Unscheduled notes have no time slot. Moving a note here would delete schedule data, so use Schedule for that.'
+    return `${unassignedLabel} contains notes that have no category assignment in this dimension.`
+  }
+  if (cat.dynamicType === 'all_notes') return 'All notes is a convenience lane for seeing every note that belongs to this current computed or assigned view.'
+  if (cat.dynamicType === 'filter') return 'This lane contains notes that match this saved filter. Edit the filter to change the rule.'
+  if (cat.dynamicType === 'time') return `This lane contains notes whose creation time falls into "${cat.name}". The app computes this automatically.`
+  if (cat.dynamicType === 'type') {
+    if (cat.typeRole === 'thought') return 'Thoughts have no child notes and no time slot.'
+    if (cat.typeRole === 'task') return 'Tasks have a time slot but do not contain child notes.'
+    if (cat.typeRole === 'project') return 'Projects contain child notes. This wins even when the note also has a time slot.'
+    return 'Type is computed from whether a note has children and whether it is scheduled.'
+  }
+  if (cat.systemType === 'kanban') {
+    if (cat.kanbanState === 'scheduled') return 'Scheduled contains notes with a time slot unless they were explicitly moved to In progress or Done.'
+    if (cat.kanbanState === 'in_progress') return 'In progress is a real Kanban status, but only scheduled notes can be moved here.'
+    if (cat.kanbanState === 'done') return 'Done is a real Kanban status, but removing the note time slot automatically unschedules it.'
+    return 'Kanban status is constrained by the note schedule.'
+  }
+  if (dimension?.system || dimension?.dynamic) return specialDimensionRules(dimension)
+  return 'This lane contains notes manually assigned to this category.'
+}
+
+function RuleHint({ text, label = 'Rule' }) {
+  if (!text) return null
+  return (
+    <span className={styles.ruleHint}>
+      <span className={styles.rulePill}>{label}</span>
+      <span className={styles.ruleTooltip}>{text}</span>
+    </span>
+  )
 }
 
 function normalizePerspective(perspective) {
@@ -386,23 +446,28 @@ function ClassificationGroupScroller({
   const categoryPickerRef = useRef(null)
   const [dimensionMenuOpen, setDimensionMenuOpen] = useState(false)
   const [categoryMenuOpen, setCategoryMenuOpen] = useState(false)
+  const [hoveredRule, setHoveredRule] = useState(null)
 
-  const activeIndex = activeDimId ? dimensions.findIndex(dim => dim.id === activeDimId) : -1
-  const currentDim = activeIndex >= 0 ? dimensions[activeIndex] : null
+  const specialDimensions = dimensions.filter(dim => dim.dynamic || dim.system)
+  const regularDimensions = dimensions.filter(dim => !dim.dynamic && !dim.system)
+  const orderedDimensions = [...specialDimensions, ...regularDimensions]
+  const activeIndex = activeDimId ? orderedDimensions.findIndex(dim => dim.id === activeDimId) : -1
+  const currentDim = activeIndex >= 0 ? orderedDimensions[activeIndex] : null
   const visibleActiveCategories = activeCategories.filter(cat => !hiddenCatIds.has(cat.id))
   const focusedCategory = visibleActiveCategories.length === 1 ? visibleActiveCategories[0] : null
   const focusedCategoryIndex = focusedCategory
     ? activeCategories.findIndex(cat => cat.id === focusedCategory.id)
     : -1
-  const canCycleDimension = dimensions.length > 0
+  const canCycleDimension = orderedDimensions.length > 0
   const canCycleCategory = activeCategories.length > 0
   const dimensionSwatches = dim => categories.filter(cat => cat.dimensionId === dim.id).slice(0, 3)
+  const specialDimensionLabel = () => 'Special'
 
   const selectDimensionIndex = index => {
     if (!canCycleDimension) return
-    onDimensionChange(dimensions[(index + dimensions.length) % dimensions.length].id)
+    onDimensionChange(orderedDimensions[(index + orderedDimensions.length) % orderedDimensions.length].id)
   }
-  const prevDimension = () => selectDimensionIndex(activeIndex >= 0 ? activeIndex - 1 : dimensions.length - 1)
+  const prevDimension = () => selectDimensionIndex(activeIndex >= 0 ? activeIndex - 1 : orderedDimensions.length - 1)
   const nextDimension = () => selectDimensionIndex(activeIndex >= 0 ? activeIndex + 1 : 0)
   const selectCategoryIndex = index => {
     if (!canCycleCategory) return
@@ -437,22 +502,68 @@ function ClassificationGroupScroller({
     return () => document.removeEventListener('mousedown', close)
   }, [categoryMenuOpen, dimensionMenuOpen])
 
+  const renderDimensionOption = dim => (
+    <button key={dim.id}
+      className={dim.id === activeDimId ? styles.groupScrollerMenuItemActive : styles.groupScrollerMenuItem}
+      onClick={() => { onDimensionChange(dim.id); setDimensionMenuOpen(false) }}
+      aria-label={specialDimensionRules(dim) ? `${dim.name}: ${specialDimensionRules(dim)}` : dim.name}>
+      <span className={styles.groupScrollerMenuSwatches}>
+        {dimensionSwatches(dim).map(cat => <b key={cat.id} style={{ background: cat.color || '#aaa' }} />)}
+        {dimensionSwatches(dim).length === 0 && <b style={{ background: '#9ca3af' }} />}
+      </span>
+      <strong>{dim.name}</strong>
+      {(dim.dynamic || dim.system) && (
+        <span
+          className={styles.groupScrollerSpecialBadge}
+          onMouseEnter={event => {
+            const rule = specialDimensionRules(dim)
+            const rect = event.currentTarget.getBoundingClientRect()
+            const left = Math.max(172, Math.min(window.innerWidth - 172, rect.left + rect.width / 2))
+            if (rule) setHoveredRule({ text: rule, left, top: rect.bottom + 8 })
+          }}
+          onMouseLeave={() => setHoveredRule(null)}
+        >
+          {specialDimensionLabel(dim)}
+        </span>
+      )}
+    </button>
+  )
+
   return (
-    <div className={styles.groupScroller}>
-      <div className={styles.groupScrollerUnit} onWheel={cycleDimension}>
+    <>
+      <div className={styles.groupScroller}>
+        <div className={styles.groupScrollerUnit} onWheel={cycleDimension}>
         <span className={styles.groupScrollerLabel}>Dimension</span>
         <div ref={pickerRef} className={styles.groupScrollerRow}>
           <button className={styles.groupScrollerArrow} onClick={prevDimension} disabled={!canCycleDimension} title="Previous dimension">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M15 18l-6-6 6-6"/></svg>
           </button>
           <button className={styles.groupScrollerName} onClick={() => setDimensionMenuOpen(value => !value)}
-            disabled={!canCycleDimension} title="Pick dimension">
+            disabled={!canCycleDimension} aria-label={specialDimensionRules(currentDim) ? `${currentDim.name}: ${specialDimensionRules(currentDim)}` : 'Pick dimension'}>
             <span className={styles.groupScrollerSwatches}>
               {(currentDim ? dimensionSwatches(currentDim) : []).map(cat => <b key={cat.id} style={{ background: cat.color || '#aaa' }} />)}
               {(!currentDim || dimensionSwatches(currentDim).length === 0) && <b style={{ background: '#9ca3af' }} />}
             </span>
             <span className={styles.groupScrollerText}>{currentDim?.name ?? 'None'}</span>
+            {(currentDim?.dynamic || currentDim?.system) && (
+              <span className={styles.groupScrollerSelectedBadge}>
+                Special
+                <span className={styles.ruleTooltip}>{specialDimensionRules(currentDim)}</span>
+              </span>
+            )}
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+          </button>
+          <button
+            type="button"
+            className={styles.groupScrollerClear}
+            disabled={!activeDimId}
+            title="Clear dimension"
+            onClick={() => {
+              onDimensionChange('')
+              setDimensionMenuOpen(false)
+            }}
+          >
+            ×
           </button>
           <button className={styles.groupScrollerArrow} onClick={nextDimension} disabled={!canCycleDimension} title="Next dimension">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M9 18l6-6-6-6"/></svg>
@@ -464,31 +575,32 @@ function ClassificationGroupScroller({
                 <span className={styles.groupScrollerSingleSwatch}><b style={{ background: '#9ca3af' }} /></span>
                 <strong>None</strong>
               </button>
-              {dimensions.map(dim => (
-                <button key={dim.id}
-                  className={dim.id === activeDimId ? styles.groupScrollerMenuItemActive : styles.groupScrollerMenuItem}
-                  onClick={() => { onDimensionChange(dim.id); setDimensionMenuOpen(false) }}>
-                  <span>
-                    {dimensionSwatches(dim).map(cat => <b key={cat.id} style={{ background: cat.color || '#aaa' }} />)}
-                    {dimensionSwatches(dim).length === 0 && <b style={{ background: '#9ca3af' }} />}
-                  </span>
-                  <strong>{dim.name}</strong>
-                </button>
-              ))}
+              {specialDimensions.length > 0 && (
+                <>
+                  <div className={styles.groupScrollerMenuSection}>Special</div>
+                  {specialDimensions.map(renderDimensionOption)}
+                </>
+              )}
+              {regularDimensions.length > 0 && (
+                <>
+                  <div className={styles.groupScrollerMenuSection}>Custom dimensions</div>
+                  {regularDimensions.map(renderDimensionOption)}
+                </>
+              )}
             </div>
           )}
         </div>
         <div className={styles.groupScrollerDots}>
-          {dimensions.map(dim => (
+          {orderedDimensions.map(dim => (
             <button key={dim.id}
               className={`${styles.groupScrollerDot} ${dim.id === activeDimId ? styles.groupScrollerDotActive : ''}`}
               onClick={() => onDimensionChange(dim.id)} title={dim.name} />
           ))}
         </div>
-      </div>
+        </div>
 
-      {currentDim && (
-        <div className={styles.groupScrollerUnit} onWheel={cycleCategory}>
+        {currentDim && (
+          <div className={styles.groupScrollerUnit} onWheel={cycleCategory}>
           <span className={styles.groupScrollerLabel}>Category</span>
           <div ref={categoryPickerRef} className={styles.groupScrollerRow}>
             <button className={styles.groupScrollerArrow} onClick={prevCategory} disabled={!canCycleCategory} title="Previous category">
@@ -523,9 +635,19 @@ function ClassificationGroupScroller({
                 onClick={() => onShowOnlyCategory(cat.id)} title={cat.name} />
             ))}
           </div>
-        </div>
+          </div>
+        )}
+      </div>
+      {hoveredRule && createPortal(
+        <div
+          className={styles.fixedRuleTooltip}
+          style={{ left: hoveredRule.left, top: hoveredRule.top }}
+        >
+          {hoveredRule.text}
+        </div>,
+        document.body
       )}
-    </div>
+    </>
   )
 }
 
@@ -960,7 +1082,7 @@ function NoteRow({ note, paintCat, onPaint, paintPersona, onPersonaPaint, legend
 // ── Category container box ────────────────────────────────────────────────────
 function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, paintPersona, onPersonaCategoryPaint, onPersonaNotePaint, getNoteColor, getNotePersonas, onRemovePersona, catPersonas, onPersonaCatDrop, onRemoveCatPersona, onEdit, onCollapse,
   onCatDragStart, onCatDragEnd, onCatDragOver, onCatDrop, onReorderNote, insertSide, isDraggingCat, onNoteOpen,
-  getNoteHierarchyNumber, getNoteHierarchyPath, onBulkPaint, dynamic = false, readOnlyCategory = false, unassignedLabel = 'Unassigned' }) {
+  getNoteHierarchyNumber, getNoteHierarchyPath, onBulkPaint, dynamic = false, readOnlyCategory = false, unassignedLabel = 'Unassigned', ruleText = '' }) {
   const [isDragOver, setIsDragOver] = useState(false)
   const [isPersonaDragOver, setIsPersonaDragOver] = useState(false)
   const [allExpanded, setAllExpanded] = useState(false)
@@ -1096,9 +1218,10 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, paintPersona, onP
         )}
         <span className={styles.catBoxName}>
           {cat?.name ?? unassignedLabel}
-          {(dynamic || readOnlyCategory) && <span className={styles.dynamicBadge}>{dynamicDimensionLabel(cat)}</span>}
+          {cat && (dynamic || readOnlyCategory) && <span className={styles.dynamicBadge}>{dynamicDimensionLabel(cat)}</span>}
           <span className={styles.catBoxCount}> {notes.length}</span>
         </span>
+        <RuleHint text={ruleText} />
         {cat && !dynamic && !readOnlyCategory && catPersonas?.length > 0 && (
           <PersonaAvatarStack
             personas={catPersonas}
@@ -1589,9 +1712,8 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
         setPersonas(ps)
         setPersonaNoteAssignments(pnas)
         setPersonaCatAssignments(pcas)
-        const groupDim    = dims.find(d => d.name === 'Group')
         const priorityDim = dims.find(d => d.name === 'Priority')
-        if (groupDim)    setContainerDimId(groupDim.id)
+        setContainerDimId('')
         if (priorityDim) setLegendDimId(priorityDim.id)
       })
       .catch(console.error)
@@ -1674,12 +1796,12 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
       restoringPerspectiveRef.current = false
       return
     }
-    setCollapsedCatIds(containerDimId ? new Set([allNotesCategoryId(containerDimId)]) : new Set())
+    const isKanban = containerDimId?.startsWith('system:kanban:')
+    setCollapsedCatIds(containerDimId && !isKanban ? new Set([allNotesCategoryId(containerDimId)]) : new Set())
     setUnassignedCollapsed(false)
   }, [containerDimId])
 
   const makeNonePerspective = () => {
-    const groupDim = dimensions.find(d => d.name === 'Group')
     const priorityDim = dimensions.find(d => d.name === 'Priority')
     return normalizePerspective({
       id: NONE_PERSPECTIVE_ID,
@@ -1688,9 +1810,9 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
       state: {
         maxGridCols: 6,
         singleColumnWidth: 800,
-        containerDimId: groupDim?.id ?? '',
+        containerDimId: '',
         legendDimId: priorityDim?.id ?? '',
-        collapsedCatIds: groupDim?.id ? [allNotesCategoryId(groupDim.id)] : [],
+        collapsedCatIds: [],
         unassignedCollapsed: false,
         activeFilterIds: [],
         quickFilters: [],
@@ -1898,10 +2020,10 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     const legendDim = dynamicDimensions.find(d => d.id === legendDimId)
     const targetCat = dynamicCategories.find(c => c.id === paintCat.id)
     const noteIds = bulkPaintConfirm.noteIds
-    if (isKanbanDimension(legendDim) && targetCat?.kanbanState === 'scheduled') {
+    if (isKanbanDimension(legendDim) && kanbanCategoryRequiresTimeSlot(targetCat)) {
       const blocked = noteIds.filter(noteId => !timeSlotNoteIds.has(noteId))
       if (blocked.length) {
-        setStatusNotice(`${blocked.length} note${blocked.length === 1 ? '' : 's'} need a time slot before they can be moved to Scheduled.`)
+        setStatusNotice(`${blocked.length} note${blocked.length === 1 ? '' : 's'} need a time slot before they can be moved there.`)
         setBulkPaintConfirm(null)
         return
       }
@@ -1988,8 +2110,9 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
 
   const assignNote = async (noteId, catId) => {
     if (!containerDimId || isDynamicDimensionId(containerDimId)) return
-    if (catId && isKanbanContainerDimension && catId === scheduledCategory?.id && !timeSlotNoteIds.has(noteId)) {
-      setStatusNotice('A note needs a time slot before it can be moved to Scheduled.')
+    const targetCat = dynamicCategories.find(c => c.id === catId)
+    if (catId && isKanbanContainerDimension && kanbanCategoryRequiresTimeSlot(targetCat) && !timeSlotNoteIds.has(noteId)) {
+      setStatusNotice('A note needs a time slot before it can be moved there.')
       return
     }
     playSound('noteClassified')
@@ -2021,8 +2144,8 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     if (!paintCat || !legendDimId || isDynamicDimensionId(legendDimId)) return
     const legendDim = dynamicDimensions.find(d => d.id === legendDimId)
     const targetCat = dynamicCategories.find(c => c.id === paintCat.id)
-    if (isKanbanDimension(legendDim) && targetCat?.kanbanState === 'scheduled' && !timeSlotNoteIds.has(noteId)) {
-      setStatusNotice('A note needs a time slot before it can be moved to Scheduled.')
+    if (isKanbanDimension(legendDim) && kanbanCategoryRequiresTimeSlot(targetCat) && !timeSlotNoteIds.has(noteId)) {
+      setStatusNotice('A note needs a time slot before it can be moved there.')
       return
     }
     playSound('paintApply')
@@ -2103,9 +2226,18 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     dynamicType: 'time',
     dynamicLabel: 'Time',
   }))
+  const typeCategories = TYPE_DYNAMIC_CATEGORIES.map(cat => ({
+    ...cat,
+    dimensionId: TYPE_DIMENSION_ID,
+    dynamic: true,
+    dynamicType: 'type',
+    dynamicLabel: 'Type',
+    filterable: true,
+  }))
   const systemDynamicDimensions = [
     { id: FILTER_DIMENSION_ID, name: 'Filters', dynamic: true, dynamicType: 'filter', dynamicLabel: 'Filter' },
     { id: TIME_DIMENSION_ID, name: 'Time', dynamic: true, dynamicType: 'time', dynamicLabel: 'Time' },
+    { id: TYPE_DIMENSION_ID, name: 'Type', dynamic: true, dynamicType: 'type', dynamicLabel: 'Type' },
   ]
   const archivedDimensionSet = useMemo(() => new Set(archivedDimensionIds || []), [archivedDimensionIds])
   const visibleDimensions = useMemo(
@@ -2117,17 +2249,23 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     if (legendDimId && archivedDimensionSet.has(legendDimId)) setLegendDimId('')
   }, [archivedDimensionSet, containerDimId, legendDimId])
   const dynamicDimensions = [...visibleDimensions, ...systemDynamicDimensions]
-  const dynamicCategories = [...categories, ...filterCategories, ...timeCategories]
+  const dynamicCategories = [...categories, ...filterCategories, ...timeCategories, ...typeCategories]
   const containerDim = dynamicDimensions.find(d => d.id === containerDimId)
   const isDynamicContainerDimension = isDynamicDimensionId(containerDimId)
   const isSystemContainerDimension = isSystemDimension(containerDim)
   const isKanbanContainerDimension = isKanbanDimension(containerDim)
   const isLockedContainerStructure = isDynamicContainerDimension || isSystemContainerDimension
-  const scheduledCategory = isKanbanContainerDimension
-    ? categories.find(c => c.dimensionId === containerDimId && c.kanbanState === 'scheduled')
-    : null
   const timeSlotNoteIds = new Set(timeSlots.map(ms => ms.noteId))
-  const allNotesCategory = containerDimId
+  const scheduledKanbanCategoryId = isKanbanContainerDimension
+    ? categories.find(c => c.dimensionId === containerDimId && c.kanbanState === 'scheduled')?.id
+    : null
+  const effectiveContainerCategoryId = noteId => {
+    const assignedCategoryId = assignments[noteId]?.[containerDimId]
+    if (!isKanbanContainerDimension) return assignedCategoryId
+    if (!timeSlotNoteIds.has(noteId)) return null
+    return assignedCategoryId || scheduledKanbanCategoryId
+  }
+  const allNotesCategory = containerDimId && !isKanbanContainerDimension
     ? {
         id: allNotesCategoryId(containerDimId),
         dimensionId: containerDimId,
@@ -2181,13 +2319,18 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
   const getNoteLegendColor = noteId => {
     if (!legendDimId) return null
     if (legendDimId === FILTER_DIMENSION_ID) {
-      const match = filterCategories.find(cat => filterMatchesNote(namedFilters.find(f => f.id === cat.filterId), noteId, assignments, notes.find(note => note.id === noteId)))
+      const match = filterCategories.find(cat => filterMatchesNote(namedFilters.find(f => f.id === cat.filterId), noteId, assignments, notes.find(note => note.id === noteId), { notes, timeSlots }))
       return match?.color ?? null
     }
     if (legendDimId === TIME_DIMENSION_ID) {
       const note = notes.find(g => g.id === noteId)
       const catId = timeCategoryIdForNote(note)
       return timeCategories.find(cat => cat.id === catId)?.color ?? null
+    }
+    if (legendDimId === TYPE_DIMENSION_ID) {
+      const note = notes.find(g => g.id === noteId)
+      const catId = typeCategoryIdForNote(note, { notes, timeSlots })
+      return typeCategories.find(cat => cat.id === catId)?.color ?? null
     }
     const catId = assignments[noteId]?.[legendDimId]
     if (!catId) return null
@@ -2274,10 +2417,11 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     .filter(Boolean)
 
   const hasActiveFiltering = activeFilters.length > 0 || quickFilters.length > 0
-  const matchesQuickFilter = note => quickFilterMatchesNote(quickFilters, note, (id, dimensionId) => assignments[id]?.[dimensionId])
+  const typeContext = { notes, timeSlots }
+  const matchesQuickFilter = note => quickFilterMatchesNote(quickFilters, note, (id, dimensionId) => assignments[id]?.[dimensionId], typeContext)
 
   const filterMatchedNotes = hasActiveFiltering
-    ? depthScopedNotes.filter(g => activeFilters.some(filter => filterMatchesNote(filter, g.id, assignments, g)) || matchesQuickFilter(g))
+    ? depthScopedNotes.filter(g => activeFilters.some(filter => filterMatchesNote(filter, g.id, assignments, g, typeContext)) || matchesQuickFilter(g))
     : depthScopedNotes
   const visibleNotes = peopleVisibleNoteIds === null
     ? filterMatchedNotes
@@ -2287,11 +2431,12 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     const allNotesDimId = dimensionIdFromAllNotesCategoryId(catId)
     if (allNotesDimId) {
       if (allNotesDimId === FILTER_DIMENSION_ID) {
-        return visibleNotes.filter(g => namedFilters.some(filter => filterMatchesNote(filter, g.id, assignments, g)))
+        return visibleNotes.filter(g => namedFilters.some(filter => filterMatchesNote(filter, g.id, assignments, g, typeContext)))
       }
       if (allNotesDimId === TIME_DIMENSION_ID) {
         return [...visibleNotes].sort((a, b) => noteCreatedAtMs(b) - noteCreatedAtMs(a))
       }
+      if (allNotesDimId === TYPE_DIMENSION_ID) return visibleNotes
       return visibleNotes.filter(g => assignments[g.id]?.[allNotesDimId])
         .sort((a, b) => {
           const aCatId = assignments[a.id]?.[allNotesDimId]
@@ -2304,25 +2449,34 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     if (containerDimId === FILTER_DIMENSION_ID) {
       const filterId = filterIdFromCategoryId(catId)
       const filter = namedFilters.find(f => f.id === filterId)
-      return filter ? visibleNotes.filter(g => filterMatchesNote(filter, g.id, assignments, g)) : []
+      return filter ? visibleNotes.filter(g => filterMatchesNote(filter, g.id, assignments, g, typeContext)) : []
     }
     if (containerDimId === TIME_DIMENSION_ID) {
       return visibleNotes
         .filter(g => timeCategoryIdForNote(g) === catId)
         .sort((a, b) => noteCreatedAtMs(b) - noteCreatedAtMs(a))
     }
+    if (containerDimId === TYPE_DIMENSION_ID) {
+      return visibleNotes.filter(g => typeCategoryIdForNote(g, typeContext) === catId)
+    }
+    if (isKanbanContainerDimension) {
+      return visibleNotes.filter(g => effectiveContainerCategoryId(g.id) === catId)
+        .sort((a, b) => (assignmentOrders[a.id]?.[containerDimId] ?? Number.MAX_SAFE_INTEGER) - (assignmentOrders[b.id]?.[containerDimId] ?? Number.MAX_SAFE_INTEGER))
+    }
     return visibleNotes.filter(g => assignments[g.id]?.[containerDimId] === catId)
       .sort((a, b) => (assignmentOrders[a.id]?.[containerDimId] ?? Number.MAX_SAFE_INTEGER) - (assignmentOrders[b.id]?.[containerDimId] ?? Number.MAX_SAFE_INTEGER))
   }
   const unassignedNotes = containerDimId
     ? (containerDimId === FILTER_DIMENSION_ID
-      ? visibleNotes.filter(g => !namedFilters.some(filter => filterMatchesNote(filter, g.id, assignments, g)))
-      : containerDimId === TIME_DIMENSION_ID
+      ? visibleNotes.filter(g => !namedFilters.some(filter => filterMatchesNote(filter, g.id, assignments, g, typeContext)))
+      : containerDimId === TIME_DIMENSION_ID || containerDimId === TYPE_DIMENSION_ID
       ? []
+      : isKanbanContainerDimension
+      ? visibleNotes.filter(g => !timeSlotNoteIds.has(g.id))
       : visibleNotes.filter(g => !assignments[g.id]?.[containerDimId]))
     : visibleNotes
-  const showUnassignedBox = containerDimId !== TIME_DIMENSION_ID
-  const unassignedLabel = isKanbanContainerDimension ? 'Not scheduled yet' : 'Unassigned'
+  const showUnassignedBox = containerDimId !== TIME_DIMENSION_ID && containerDimId !== TYPE_DIMENSION_ID
+  const unassignedLabel = isKanbanContainerDimension ? 'Unscheduled' : 'Unassigned'
   const visibilityCategories = showUnassignedBox
     ? [...containerCats, { id: UNASSIGNED_CATEGORY_ID, name: unassignedLabel, color: '#bbb' }]
     : containerCats
@@ -2421,12 +2575,53 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
       />
 
       <div className={styles.body}>
+        {containerDimId === FILTER_DIMENSION_ID && (
+          <button
+            type="button"
+            className={styles.canvasAddFilter}
+            onClick={() => setEditingFilter({})}
+          >
+            <span className={styles.canvasAddFilterIcon}>+</span>
+            <span>Add filter</span>
+          </button>
+        )}
         <div className={styles.canvas} style={gridStyle}
           onDragOver={e => {
             if (e.dataTransfer.types.includes('catdrag') || e.dataTransfer.types.includes('persona-drag')) e.preventDefault()
           }}
           onDrop={e => { if (e.dataTransfer.types.includes('catdrag')) { reorderCatsDrop(); catDragCleanup() } }}
         >
+          {isKanbanContainerDimension && showUnassignedBox && !unassignedCollapsed && (
+            <ContainerBox cat={null} notes={unassignedNotes}
+              onDrop={() => setStatusNotice('Unscheduling deletes the time slot. Use Schedule for that.')}
+              dynamic
+              onCollapse={() => setUnassignedCollapsed(true)}
+              unassignedLabel={unassignedLabel}
+              onReorderNote={reorderNoteInCategory}
+              paintCat={paintCat} onPaint={paintNote}
+              paintPersona={paintPersonaId ? true : null}
+              onPersonaCategoryPaint={() => {}}
+              onPersonaNotePaint={noteId => {
+                if (!paintPersonaId) return
+                api.assignPersonaToNote(paintPersonaId, noteId).then(() => onPeopleChanged?.()).catch(console.error)
+                setPersonaNoteAssignments(prev => [
+                  ...prev.filter(a => !(a.personaId === paintPersonaId && a.noteId === noteId)),
+                  { personaId: paintPersonaId, noteId },
+                ])
+              }}
+              getNoteColor={getNoteLegendColor}
+              getNoteHierarchyNumber={noteId => hierarchyIndexByNoteId.get(noteId)?.number}
+              getNoteHierarchyPath={noteId => hierarchyIndexByNoteId.get(noteId)?.path}
+              getNotePersonas={noteId => notePersonasMap[noteId] || []}
+              onRemovePersona={(personaId, noteId) => {
+                api.unassignPersonaFromNote(personaId, noteId).then(() => onPeopleChanged?.()).catch(console.error)
+                setPersonaNoteAssignments(prev => prev.filter(a => !(a.personaId === personaId && a.noteId === noteId)))
+              }}
+              catPersonas={[]}
+              onBulkPaint={undefined}
+              ruleText={categoryRules(null, containerDim, unassignedLabel)}
+              onNoteOpen={onNoteOpen} />
+          )}
           {containerCats.filter(c => !collapsedCatIds.has(c.id)).map(cat => (
             <ContainerBox key={cat.id} cat={cat} notes={notesForCat(cat.id)}
               onDrop={cat.dynamic ? undefined : noteId => assignNote(noteId, cat.id)}
@@ -2464,10 +2659,11 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
               onBulkPaint={requestBulkPaint}
               dynamic={cat.dynamic}
               readOnlyCategory={cat.system}
+              ruleText={categoryRules(cat, containerDim, unassignedLabel)}
               onNoteOpen={onNoteOpen}
             />
           ))}
-          {showUnassignedBox && !unassignedCollapsed && (
+          {!isKanbanContainerDimension && showUnassignedBox && !unassignedCollapsed && (
             <ContainerBox cat={null} notes={unassignedNotes}
               onDrop={noteId => assignNote(noteId, null)}
               onCollapse={() => setUnassignedCollapsed(true)}
@@ -2494,6 +2690,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
               }}
               catPersonas={[]}
               onBulkPaint={requestBulkPaint}
+              ruleText={categoryRules(null, containerDim, unassignedLabel)}
               onNoteOpen={onNoteOpen} />
           )}
           {containerDimId && !isLockedContainerStructure && <AddCatBox onAdd={name => createCategory(containerDimId, name, PRESET_COLORS[containerCats.length % PRESET_COLORS.length])} />}
