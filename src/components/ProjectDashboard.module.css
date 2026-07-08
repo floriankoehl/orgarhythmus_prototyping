@@ -35,7 +35,17 @@
   position: fixed;
   right: 24px;
   bottom: 24px;
-  z-index: 6200;
+  z-index: 3600;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.structureIconFloatingTools {
+  position: fixed;
+  left: calc(24px + 52px + 12px + 52px + 12px);
+  bottom: 24px;
+  z-index: 3700;
   display: flex;
   align-items: flex-end;
   gap: 10px;

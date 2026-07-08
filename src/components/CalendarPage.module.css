@@ -1172,6 +1172,15 @@
   gap: 8px;
 }
 
+.iconDimensionLeftDock {
+  position: fixed;
+  left: calc(24px + 52px + 12px + 52px + 12px);
+  bottom: 24px;
+  z-index: 3700;
+  display: flex;
+  align-items: flex-end;
+}
+
 .perspectiveWrap {
   position: relative;
   display: flex;

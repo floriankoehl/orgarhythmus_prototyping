@@ -2839,6 +2839,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const timeLockReasonInputRef = useRef()
   const [colorDimId,        setColorDimId]        = useState('')
   const [iconDimId, setIconDimId] = useState('')
+  const [iconExpanded, setIconExpanded] = useState(false)
   const [activeFilterIds, setActiveFilterIds] = useState([])
   const [quickFilters, setQuickFilters] = useState([])
   const [paintCat, setPaintCat] = useState(null)
@@ -7722,29 +7723,6 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
 	            <span>{scaleLabelForZoom(timeZoom)} scale · Return to previous view</span>
 	          </button>
 	        )}
-	        <PerspectiveMenu
-          perspectives={perspectiveOptions}
-          activePerspectiveId={activePerspectiveId}
-          defaultPerspectiveId={defaultPerspectiveId}
-          open={floatingPanel === 'perspective'}
-          onOpenChange={open => setFloatingPanel(open ? 'perspective' : null)}
-          onApply={applyPerspective}
-          onCreate={createPerspective}
-          onUpdate={updatePerspectiveSnapshot}
-          onRename={renamePerspective}
-          onDelete={deletePerspective}
-          onSetDefault={setScheduleDefaultPerspective}
-        />
-        <StandardIconPicker
-          dimensions={colorDimensions}
-          categories={colorCategories}
-          iconDimensionId={iconDimId}
-          onIconDimensionChange={setIconDimId}
-          onDimensionDataChanged={handleDimDataChanged}
-          expanded={floatingPanel === 'icon'}
-          onExpandedChange={open => setFloatingPanel(open ? 'icon' : null)}
-          enablePainting={false}
-        />
         <StandardColorPicker
           dimensions={colorDimensions}
           categories={colorCategories}
@@ -7770,6 +7748,20 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
           expanded={floatingPanel === 'people'}
           onExpandedChange={open => setFloatingPanel(open ? 'people' : null)}
           refreshKey={peopleRefreshKey}
+        />
+      </div>
+
+      <div className={styles.iconDimensionLeftDock}>
+        <StandardIconPicker
+          dimensions={colorDimensions}
+          categories={colorCategories}
+          iconDimensionId={iconDimId}
+          onIconDimensionChange={setIconDimId}
+          onDimensionDataChanged={handleDimDataChanged}
+          expanded={iconExpanded}
+          onExpandedChange={setIconExpanded}
+          enablePainting={false}
+          align="dock-left"
         />
       </div>
 

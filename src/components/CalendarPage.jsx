@@ -2356,23 +2356,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
         )}
       </main>
 
-      <div className={styles.floatingViewTools}>
-        <PerspectiveMenu
-          perspectives={perspectiveOptions}
-          activePerspectiveId={activePerspectiveId}
-          defaultPerspectiveId={defaultPerspectiveId}
-          open={perspectiveOpen}
-          onOpenChange={open => {
-            setPerspectiveOpen(open)
-            if (open) { setLegendOpen(false); setPeopleOpen(false); setIconOpen(false) }
-          }}
-          onApply={applyPerspective}
-          onCreate={createPerspective}
-          onUpdate={updatePerspectiveSnapshot}
-          onRename={renamePerspective}
-          onDelete={deletePerspective}
-          onSetDefault={setCalendarDefaultPerspective}
-        />
+      <div className={styles.iconDimensionLeftDock}>
         <StandardIconPicker
           dimensions={colorDimensions}
           categories={colorCategories}
@@ -2380,16 +2364,20 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
           onIconDimensionChange={setIconDimId}
           onDimensionDataChanged={refreshDimensionData}
           expanded={iconOpen}
-          onExpandedChange={open => { setIconOpen(open); if (open) { setLegendOpen(false); setPeopleOpen(false); setPerspectiveOpen(false) } }}
+          onExpandedChange={setIconOpen}
           enablePainting={false}
+          align="dock-left"
         />
+      </div>
+
+      <div className={styles.floatingViewTools}>
         <StandardColorPicker
           dimensions={colorDimensions}
           categories={colorCategories}
           colorDimensionId={colorDimId}
           onColorDimensionChange={setColorDimId}
           expanded={legendOpen}
-          onExpandedChange={open => { setLegendOpen(open); if (open) { setPeopleOpen(false); setPerspectiveOpen(false); setIconOpen(false) } }}
+          onExpandedChange={open => { setLegendOpen(open); if (open) { setPeopleOpen(false); setPerspectiveOpen(false) } }}
           paintCategoryId={paintCat?.id}
           onPaintCategory={activatePaint}
           quickFilters={quickFilters}
@@ -2403,7 +2391,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
           paintPersonaId={paintPersonaId}
           onPaintPersonaChange={id => { setPaintCat(null); setPaintPersonaId(id) }}
           expanded={peopleOpen}
-          onExpandedChange={open => { setPeopleOpen(open); if (open) { setLegendOpen(false); setPerspectiveOpen(false); setIconOpen(false) } }}
+          onExpandedChange={open => { setPeopleOpen(open); if (open) { setLegendOpen(false); setPerspectiveOpen(false) } }}
           refreshKey={peopleRefreshKey}
         />
       </div>

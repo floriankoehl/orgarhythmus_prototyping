@@ -625,6 +625,15 @@
 .tbAddDimTrigger:hover { background: #1558b0; }
 
 /* ── Floating view tools ─────────────────────────────────── */
+.iconDimensionLeftDock {
+  position: fixed;
+  left: calc(24px + 52px + 12px + 52px + 12px);
+  bottom: 24px;
+  z-index: 3700;
+  display: flex;
+  align-items: flex-end;
+}
+
 .floatingViewTools {
   position: absolute;
   bottom: 20px;
@@ -1520,8 +1529,70 @@
   font-weight: 700;
 }
 
+.filterDimExpandBtn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 22px;
+  padding: 0;
+  color: #64748b;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.filterDimExpandBtn:hover {
+  color: #1a73e8;
+  background: #eef5ff;
+}
+
+.filterDimExpandBtn svg { transition: transform 0.15s; }
+
+.filterDimNameBtn {
+  min-width: 0;
+  flex: 1;
+  padding: 0;
+  overflow: hidden;
+  color: inherit;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filterDimHeaderToggle {
+  display: inline-flex;
+  padding: 2px;
+  background: #eef2f7;
+  border-radius: 6px;
+}
+
+.filterDimHeaderToggle button {
+  height: 22px;
+  padding: 0 8px;
+  color: #64748b;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font: 800 10px Arial, sans-serif;
+}
+
+.filterDimHeaderToggle button:hover { background: rgba(255,255,255,0.72); }
+
+.filterDimHeaderToggleActive {
+  color: #fff !important;
+  background: #1a73e8 !important;
+  box-shadow: 0 0 0 1px #1558b0, 0 2px 7px rgba(26,115,232,0.34);
+}
+
 .filterSpecialBadge {
-  margin-left: auto;
   padding: 2px 5px;
   color: #7c3aed;
   background: #ede9fe;
@@ -1537,6 +1608,10 @@
   padding: 8px 10px;
 }
 
+.filterCatGridMuted {
+  opacity: 0.42;
+}
+
 .filterCatOption {
   min-width: 0;
   display: flex;
@@ -1547,6 +1622,10 @@
   color: #444;
   cursor: pointer;
   font-size: 12px;
+}
+
+.filterCatOptionMuted {
+  filter: grayscale(0.2);
 }
 
 .filterCatOption:hover {
@@ -1562,6 +1641,15 @@
   margin: 0;
   accent-color: #1a73e8;
   flex-shrink: 0;
+}
+
+.filterCatIcon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .filterCatName {

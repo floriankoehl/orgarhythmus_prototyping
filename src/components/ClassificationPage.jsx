@@ -11,7 +11,7 @@ import ColorPickerIcon from './ColorPickerIcon'
 import ColorPickerCategoryBadge from './ColorPickerCategoryBadge'
 import { COLOR_UNASSIGNED_CATEGORY_ID, colorPickerCategories } from './colorPickerCategories'
 import FilterDimensionSelector from './FilterDimensionSelector'
-import CategoryIconPicker from './CategoryIconPicker'
+import CategoryEditModal from './CategoryEditModal'
 import StandardColorPicker from './StandardColorPicker'
 import StandardIconPicker from './StandardIconPicker'
 import { CategoryIconGlyph, iconForCategory } from './iconRegistry'
@@ -1001,104 +1001,6 @@ function ClassificationToolbar({
   )
 }
 
-// ── Category edit modal ───────────────────────────────────────────────────────
-function CategoryEditModal({ cat, onClose, onSave, onDelete }) {
-  const [name, setName]           = useState(cat.name)
-  const [color, setColor]         = useState(cat.color)
-  const [icon, setIcon]           = useState(iconForCategory(cat))
-  const [editingName, setEditingName] = useState(false)
-  const [confirm, setConfirm]     = useState(false)
-  const nameInputRef = useRef()
-
-  useEffect(() => { if (editingName) nameInputRef.current?.select() }, [editingName])
-
-  const save = () => {
-    onSave(cat.id, { name: name.trim() || cat.name, color, icon })
-    onClose()
-  }
-
-  return createPortal(
-    <div className={styles.modalBackdrop} onClick={onClose}>
-      {confirm ? (
-        <div className={styles.modal} onClick={e => e.stopPropagation()}>
-          <p className={styles.confirmText}>
-            {cat.customTimeRange ? (
-              <>The custom time category <strong>"{cat.name}"</strong> will be removed. The notes themselves won't be deleted.</>
-            ) : (
-              <>All notes assigned to <strong>"{cat.name}"</strong> will be unassigned. The notes themselves won't be deleted.</>
-            )}
-          </p>
-          <div className={styles.modalActions}>
-            <button className={styles.dangerBtn}
-              onClick={() => { onDelete(cat.id); onClose() }}>
-              Yes, delete category
-            </button>
-            <button className={styles.cancelBtn} onClick={() => setConfirm(false)}>Cancel</button>
-          </div>
-        </div>
-      ) : (
-        <div className={styles.modal} onClick={e => e.stopPropagation()}>
-          <div className={styles.modalHeader}>
-            <span className={styles.modalColorDot} style={{ background: color }} />
-            <span className={styles.modalIconPreview} style={{ color }}>
-              <CategoryIconGlyph icon={icon} size={16} strokeWidth={2.4} />
-            </span>
-            {editingName ? (
-              <input ref={nameInputRef} className={styles.modalNameInput}
-                value={name} onChange={e => setName(e.target.value)}
-                onBlur={() => setEditingName(false)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') setEditingName(false)
-                  if (e.key === 'Escape') { setName(cat.name); setEditingName(false) }
-                }} />
-            ) : (
-              <span className={styles.modalCatName} title="Double-click to rename"
-                onDoubleClick={() => setEditingName(true)}>
-                {name}
-              </span>
-            )}
-          </div>
-
-          <div className={styles.colorSection}>
-            <span className={styles.sectionLabel}>Color</span>
-            <div className={styles.colorSwatches}>
-              {PRESET_COLORS.map(c => (
-                <button key={c} type="button" className={styles.colorSwatch}
-                  style={{ background: c, boxShadow: color === c ? `0 0 0 2px #fff, 0 0 0 3.5px ${c}` : 'none' }}
-                  onClick={() => setColor(c)} />
-              ))}
-              <input type="color" className={styles.colorFullPicker}
-                value={color} title="Custom color"
-                onChange={e => setColor(e.target.value)} />
-            </div>
-          </div>
-
-          <div className={styles.colorSection}>
-            <span className={styles.sectionLabel}>Icon</span>
-            <div className={styles.iconPickerRow}>
-              <CategoryIconPicker
-                value={icon}
-                color={color}
-                size={18}
-                ariaLabel="Category icon"
-                onChange={setIcon}
-              />
-            </div>
-          </div>
-
-          <div className={styles.modalActions}>
-            <button className={styles.dangerBtn} onClick={() => setConfirm(true)}>Delete</button>
-            <div style={{ flex: 1 }} />
-            <button className={styles.cancelBtn} onClick={onClose}>Cancel</button>
-            <button className={styles.submitBtn} onClick={save}>Save</button>
-          </div>
-        </div>
-      )}
-    </div>,
-    document.body
-  )
-}
-
 // ── Note row inside a container ───────────────────────────────────────────────
 function NoteRow({ note, paintCat, onPaint, paintPersona, onPersonaPaint, legendColor, hierarchyNumber, hierarchyPath, onNoteDrop, onOpen, onContextMenu, canDrag = true, forceExpanded = false, getNotePersonas, onRemovePersona, doneInfo = null }) {
   const [expanded, setExpanded] = useState(false)
@@ -1997,6 +1899,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
   const [unassignedCollapsed, setUnassignedCollapsed] = useState(false)
   const [floatingPanel, setFloatingPanel] = useState(null)
   const [iconDimId, setIconDimId] = useState('')
+  const [iconExpanded, setIconExpanded] = useState(false)
   const [noteContextMenu, setNoteContextMenu] = useState(null)
   const [statusNotice, setStatusNotice] = useState('')
   const { confirm: confirmDialog, dialog: confirmDialogNode } = useConfirmDialog()
@@ -3245,30 +3148,22 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
           </div>
         )}
 
-        <div className={styles.floatingViewTools}>
-          <PerspectiveMenu
-            perspectives={perspectiveOptions}
-            activePerspectiveId={activePerspectiveId}
-            defaultPerspectiveId={defaultPerspectiveId}
-            open={floatingPanel === 'perspective'}
-            onOpenChange={open => setFloatingPanel(open ? 'perspective' : null)}
-            onApply={applyPerspective}
-            onCreate={createPerspective}
-            onUpdate={updatePerspectiveSnapshot}
-            onRename={renamePerspective}
-            onDelete={deletePerspective}
-            onSetDefault={setClassificationDefaultPerspective}
-          />
+        <div className={styles.iconDimensionLeftDock}>
           <StandardIconPicker
             dimensions={dynamicDimensions}
             categories={dynamicCategories}
             iconDimensionId={iconDimId}
             onIconDimensionChange={setIconDimId}
             onDimensionDataChanged={refreshDimensionData}
-            expanded={floatingPanel === 'icon'}
-            onExpandedChange={open => setFloatingPanel(open ? 'icon' : null)}
+            expanded={iconExpanded}
+            onExpandedChange={setIconExpanded}
             enablePainting={false}
+            align="dock-left"
+            onEditCategory={setEditCat}
           />
+        </div>
+
+        <div className={styles.floatingViewTools}>
           <StandardColorPicker
             dimensions={dynamicDimensions}
             categories={dynamicCategories}
@@ -3285,6 +3180,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
             expanded={floatingPanel === 'color'}
             onExpandedChange={open => setFloatingPanel(open ? 'color' : null)}
             onSwapWithCanvasDim={() => { const prev = legendDimId; setLegendDimId(containerDimId); setContainerDimId(prev) }}
+            onEditCategory={setEditCat}
           />
           <PeopleWidget
             paintPersonaId={paintPersonaId}

@@ -1309,38 +1309,37 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
       </div>
 
       {structureOnly && (
-        <div className={styles.structureFloatingTools}>
-          <StandardIconPicker
-            dimensions={structureDynamicDimensions}
-            categories={structureDynamicCategories}
-            iconDimensionId={structureIconDimId}
-            onIconDimensionChange={changeStructureIconDim}
-            onDimensionDataChanged={reloadStructureColorData}
-            paintCategoryId={structureIconPaintCat?.id}
-            onPaintCategory={activateStructureIconPaint}
-            expanded={structureIconExpanded}
-            onExpandedChange={expanded => {
-              setStructureIconExpanded(expanded)
-              if (expanded) setStructureColorExpanded(false)
-            }}
-            hint="Assign category icons"
-          />
-          <StandardColorPicker
-            dimensions={structureDynamicDimensions}
-            categories={structureDynamicCategories}
-            colorDimensionId={structureColorDimId}
-            onColorDimensionChange={changeStructureColorDim}
-            onDimensionDataChanged={reloadStructureColorData}
-            paintCategoryId={structurePaintCat?.id}
-            onPaintCategory={activateStructurePaint}
-            expanded={structureColorExpanded}
-            onExpandedChange={expanded => {
-              setStructureColorExpanded(expanded)
-              if (expanded) setStructureIconExpanded(false)
-            }}
-            hint="Assign note categories"
-          />
-        </div>
+        <>
+          <div className={styles.structureIconFloatingTools}>
+            <StandardIconPicker
+              dimensions={structureDynamicDimensions}
+              categories={structureDynamicCategories}
+              iconDimensionId={structureIconDimId}
+              onIconDimensionChange={changeStructureIconDim}
+              onDimensionDataChanged={reloadStructureColorData}
+              paintCategoryId={structureIconPaintCat?.id}
+              onPaintCategory={activateStructureIconPaint}
+              expanded={structureIconExpanded}
+              onExpandedChange={setStructureIconExpanded}
+              hint="Assign category icons"
+              align="dock-left"
+            />
+          </div>
+          <div className={styles.structureFloatingTools}>
+            <StandardColorPicker
+              dimensions={structureDynamicDimensions}
+              categories={structureDynamicCategories}
+              colorDimensionId={structureColorDimId}
+              onColorDimensionChange={changeStructureColorDim}
+              onDimensionDataChanged={reloadStructureColorData}
+              paintCategoryId={structurePaintCat?.id}
+              onPaintCategory={activateStructurePaint}
+              expanded={structureColorExpanded}
+              onExpandedChange={setStructureColorExpanded}
+              hint="Assign note categories"
+            />
+          </div>
+        </>
       )}
 
       {hierarchyWarning && (

@@ -167,6 +167,24 @@ export default function DimensionDropUp({
           className={styles.menu}
           style={{ position: 'fixed', bottom: pos.bottom, left: pos.left, minWidth: Math.max(pos.width, 200) }}
         >
+          {/* Dynamic dims (not reorderable, just selectable) */}
+          {dynamicDims.length > 0 && (
+            <div className={styles.sectionDivider}>
+              <span>Special</span>
+            </div>
+          )}
+          {dynamicDims.map(dim => (
+            <div key={dim.id} className={styles.dimRow}>
+              <button
+                className={`${styles.option} ${styles.optionInRow} ${dim.id === value ? styles.active : ''}`}
+                style={{ paddingLeft: 14 }}
+                onClick={() => { onChange(dim.id); setOpen(false) }}
+              >
+                {dim.name}
+              </button>
+            </div>
+          ))}
+
           {/* None */}
           <button
             className={`${styles.option} ${!value ? styles.active : ''}`}
@@ -312,24 +330,6 @@ export default function DimensionDropUp({
                   )}
                 </div>
               )}
-            </div>
-          ))}
-
-          {/* Dynamic dims (not reorderable, just selectable) */}
-          {dynamicDims.length > 0 && (
-            <div className={styles.sectionDivider}>
-              <span>Special</span>
-            </div>
-          )}
-          {dynamicDims.map(dim => (
-            <div key={dim.id} className={styles.dimRow}>
-              <button
-                className={`${styles.option} ${styles.optionInRow} ${dim.id === value ? styles.active : ''}`}
-                style={{ paddingLeft: 14 }}
-                onClick={() => { onChange(dim.id); setOpen(false) }}
-              >
-                {dim.name}
-              </button>
             </div>
           ))}
 

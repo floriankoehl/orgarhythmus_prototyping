@@ -7,16 +7,6 @@ export function colorPickerCategories(categories, dimensions, dimensionId) {
   const computed = Boolean(dimension?.dynamic)
   return [
     {
-      id: COLOR_ALL_CATEGORY_ID,
-      dimensionId,
-      name: 'All',
-      color: '#64748b',
-      colorPickerSpecial: true,
-      readOnly: true,
-      filterable: true,
-      specialLabel: 'Filter only',
-    },
-    {
       id: COLOR_UNASSIGNED_CATEGORY_ID,
       dimensionId,
       name: 'Unassigned',
