@@ -1,4 +1,4 @@
-import { Cloudy, Layers } from 'lucide-react'
+import { CategoryIconGlyph, DEFAULT_TYPE_ICONS } from './iconRegistry'
 import styles from './NoteHierarchyTree.module.css'
 
 function descriptionText(html) {
@@ -114,20 +114,8 @@ function HierarchyTypeIcon({ hasChildren }) {
   )
 }
 
-function NoteKindIcon({ role }) {
-  if (role === 'project') {
-    return <Layers size={18} strokeWidth={2.3} aria-hidden="true" />
-  }
-  if (role === 'task') {
-    return (
-      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <rect x="2.8" y="2.8" width="14.4" height="14.4" rx="2.8" />
-      </svg>
-    )
-  }
-  return (
-    <Cloudy size={18} strokeWidth={2.3} aria-hidden="true" />
-  )
+function NoteCategoryIcon({ icon, role }) {
+  return <CategoryIconGlyph icon={icon || DEFAULT_TYPE_ICONS[role] || DEFAULT_TYPE_ICONS.thought} />
 }
 
 function DoneKindIcon() {
@@ -165,6 +153,7 @@ export default function NoteHierarchyTree({
   colorByNoteId = null,
   getNoteDoneInfo = null,
   getNoteTypeInfo = null,
+  getNoteOverview = null,
   showHierarchyTypeIcon = true,
   paintCategoryId = '',
   paintCursor = '',
@@ -207,6 +196,14 @@ export default function NoteHierarchyTree({
         const typeInfo = getNoteTypeInfo?.(note.id)
         const typeRole = typeInfo?.role || 'thought'
         const typeLabel = typeInfo?.label || 'Thought'
+        const typeIcon = typeInfo?.icon || ''
+        const overviewLabel = getNoteOverview?.(note.id)
+        const overviewRows = overviewLabel
+          ? overviewLabel.split('\n').map(line => {
+            const [label, ...valueParts] = line.split(':')
+            return { label: label.trim(), value: valueParts.join(':').trim() }
+          })
+          : []
         const hoverTitle = [
           createdLabel ? `Created ${createdLabel}` : '',
           hoverDescription || `Double-click to open ${displayTitle || 'Untitled'} details`,
@@ -332,7 +329,7 @@ export default function NoteHierarchyTree({
                   event.stopPropagation()
                   onOpenDetails?.(note.id)
                 }}
-                title={hoverTitle}>
+                title={overviewRows.length ? undefined : hoverTitle}>
                 <span
                   className={[
                     styles.hierarchyReorderHandle,
@@ -372,15 +369,27 @@ export default function NoteHierarchyTree({
                 <span
                   className={[
                     styles.hierarchyDoneBadgeSlot,
+                    overviewRows.length && styles.hierarchyOverviewAnchor,
                     done && styles.hierarchyDoneBadge,
                     doneInfo?.inherited && styles.hierarchyDoneBadgeInherited,
                     !done && typeInfo && styles[`hierarchyTypeBadge${typeRole[0].toUpperCase()}${typeRole.slice(1)}`],
                   ].filter(Boolean).join(' ')}
-                  title={done ? doneLabel : typeInfo ? typeLabel : undefined}
-                  aria-label={done ? doneLabel : typeInfo ? typeLabel : undefined}
+                  style={!done && typeInfo?.color ? { color: typeInfo.color } : undefined}
+                  title={overviewRows.length ? undefined : (done ? doneLabel : typeInfo ? typeLabel : undefined)}
+                  aria-label={overviewLabel || (done ? doneLabel : typeInfo ? typeLabel : undefined)}
                   aria-hidden={done || typeInfo ? undefined : 'true'}
                 >
-                  {done ? <DoneKindIcon /> : typeInfo ? <NoteKindIcon role={typeRole} /> : ''}
+                  {done ? <DoneKindIcon /> : typeInfo ? <NoteCategoryIcon role={typeRole} icon={typeIcon} /> : ''}
+                  {overviewRows.length > 0 && (
+                    <span className={styles.hierarchyOverviewTooltip} role="tooltip">
+                      {overviewRows.map(row => (
+                        <span key={row.label} className={styles.hierarchyOverviewRow}>
+                          <span className={styles.hierarchyOverviewLabel}>{row.label}</span>
+                          <span className={styles.hierarchyOverviewValue}>{row.value}</span>
+                        </span>
+                      ))}
+                    </span>
+                  )}
                 </span>
                 <span className={styles.hierarchyTitle}>{displayTitle || 'Untitled'}</span>
               </button>

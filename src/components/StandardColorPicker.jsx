@@ -25,7 +25,7 @@ export default function StandardColorPicker({
   onDimensionDataChanged, expanded, onExpandedChange, paintCategoryId = '', onPaintCategory,
   quickFilters = [], onToggleQuickFilter, activeSavedFilterIds = [], onToggleSavedFilter,
   onCreateSavedFilter, onEditSavedFilter, variant = 'dock', emptyLabel = 'Color legend',
-  hint = 'Color and filter notes', onSwapWithCanvasDim,
+  hint = 'Color and filter notes', onSwapWithCanvasDim, align = 'right',
 }) {
   const pickerCategories = colorPickerCategories(categories, dimensions, colorDimensionId)
   const className = `${styles.widget} ${variant === 'people' ? styles.widgetPeople : ''}`
@@ -33,7 +33,7 @@ export default function StandardColorPicker({
   return (
     <div className={className} onClick={event => event.stopPropagation()}>
       {expanded && (
-        <div className={styles.panel}>
+        <div className={`${styles.panel} ${align === 'left' ? styles.panelLeft : ''}`}>
           {onCreateSavedFilter && <button type="button" className={styles.createFilter} onClick={onCreateSavedFilter}>+ Create filter</button>}
           {pickerCategories.map(category => {
             const savedFilter = category.dynamicType === 'filter'
@@ -73,7 +73,7 @@ export default function StandardColorPicker({
           </div>
         </div>
       )}
-      <button type="button" className={`${styles.toggle} ${expanded ? styles.toggleActive : ''}`} onClick={() => onExpandedChange(!expanded)} title={expanded ? 'Collapse color picker' : 'Color and filter notes'}><ColorPickerIcon /></button>
+      <button type="button" className={`${styles.toggle} ${expanded ? styles.toggleActive : ''}`} onClick={() => onExpandedChange(!expanded)} title={expanded ? 'Collapse color picker' : 'Color and filter notes'}><ColorPickerIcon size={22} /></button>
       {!expanded && <span className={styles.hint}><strong>Color dimension</strong><small>{hint}</small></span>}
     </div>
   )

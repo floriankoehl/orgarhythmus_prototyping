@@ -1637,7 +1637,7 @@ function PeopleColorLegendWidget({
         onClick={() => onExpandedChange(!expanded)}
         title={expanded ? 'Collapse color picker' : 'Color notes'}
       >
-        <ColorPickerIcon />
+        <ColorPickerIcon size={22} />
       </button>
       {!expanded && (
         <span className={styles.peopleColorHint}>

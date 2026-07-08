@@ -11,7 +11,10 @@ import ColorPickerIcon from './ColorPickerIcon'
 import ColorPickerCategoryBadge from './ColorPickerCategoryBadge'
 import { COLOR_UNASSIGNED_CATEGORY_ID, colorPickerCategories } from './colorPickerCategories'
 import FilterDimensionSelector from './FilterDimensionSelector'
+import CategoryIconPicker from './CategoryIconPicker'
 import StandardColorPicker from './StandardColorPicker'
+import StandardIconPicker from './StandardIconPicker'
+import { CategoryIconGlyph, iconForCategory } from './iconRegistry'
 import { filterMatchesNote as matchesSavedFilter, quickFilterMatchesNote } from './savedFilterUtils'
 import { TIME_DIMENSION_ID, TIME_DYNAMIC_CATEGORIES, noteCreatedAtMs, timeCategoryIdForNote } from './timeCategories'
 import { TYPE_DIMENSION_ID, TYPE_DYNAMIC_CATEGORIES, typeCategoryIdForNote } from './typeCategories'
@@ -1002,6 +1005,7 @@ function ClassificationToolbar({
 function CategoryEditModal({ cat, onClose, onSave, onDelete }) {
   const [name, setName]           = useState(cat.name)
   const [color, setColor]         = useState(cat.color)
+  const [icon, setIcon]           = useState(iconForCategory(cat))
   const [editingName, setEditingName] = useState(false)
   const [confirm, setConfirm]     = useState(false)
   const nameInputRef = useRef()
@@ -1009,7 +1013,7 @@ function CategoryEditModal({ cat, onClose, onSave, onDelete }) {
   useEffect(() => { if (editingName) nameInputRef.current?.select() }, [editingName])
 
   const save = () => {
-    onSave(cat.id, { name: name.trim() || cat.name, color })
+    onSave(cat.id, { name: name.trim() || cat.name, color, icon })
     onClose()
   }
 
@@ -1036,6 +1040,9 @@ function CategoryEditModal({ cat, onClose, onSave, onDelete }) {
         <div className={styles.modal} onClick={e => e.stopPropagation()}>
           <div className={styles.modalHeader}>
             <span className={styles.modalColorDot} style={{ background: color }} />
+            <span className={styles.modalIconPreview} style={{ color }}>
+              <CategoryIconGlyph icon={icon} size={16} strokeWidth={2.4} />
+            </span>
             {editingName ? (
               <input ref={nameInputRef} className={styles.modalNameInput}
                 value={name} onChange={e => setName(e.target.value)}
@@ -1063,6 +1070,19 @@ function CategoryEditModal({ cat, onClose, onSave, onDelete }) {
               <input type="color" className={styles.colorFullPicker}
                 value={color} title="Custom color"
                 onChange={e => setColor(e.target.value)} />
+            </div>
+          </div>
+
+          <div className={styles.colorSection}>
+            <span className={styles.sectionLabel}>Icon</span>
+            <div className={styles.iconPickerRow}>
+              <CategoryIconPicker
+                value={icon}
+                color={color}
+                size={18}
+                ariaLabel="Category icon"
+                onChange={setIcon}
+              />
             </div>
           </div>
 
@@ -1332,6 +1352,9 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, paintPersona, onP
           </div>
         )}
         <span className={styles.catBoxName}>
+          <span className={styles.catBoxIcon} style={{ color: cat?.color ?? '#94a3b8' }}>
+            <CategoryIconGlyph icon={cat ? iconForCategory(cat) : 'circle-minus'} size={16} strokeWidth={2.45} />
+          </span>
           {cat?.name ?? unassignedLabel}
           {cat && (dynamic || readOnlyCategory) && <span className={styles.dynamicBadge}>{dynamicDimensionLabel(cat)}</span>}
           <span className={styles.catBoxCount}> {notes.length}</span>
@@ -1874,6 +1897,9 @@ function LegendWidget({
               }}
               onDoubleClick={() => cat.colorPickerSpecial ? undefined : cat.dynamicType === 'filter' ? onEditFilter(namedFilters.find(f => f.id === cat.filterId)) : cat.customTimeRange ? onEditCat(cat) : cat.dynamic || cat.system ? undefined : onEditCat(cat)}>
               <span className={styles.legendDot} style={{ background: cat.color }} />
+              <span className={styles.legendIcon} style={{ color: cat.color || '#64748b' }}>
+                <CategoryIconGlyph icon={iconForCategory(cat)} size={14} strokeWidth={2.4} />
+              </span>
               <span className={styles.legendName}>{cat.name}</span>
               {(cat.dynamic || cat.system) && <span className={styles.dynamicBadge}>{dynamicDimensionLabel(cat)}</span>}
               {cat.colorPickerSpecial ? (
@@ -1917,7 +1943,7 @@ function LegendWidget({
         className={`${styles.legendToggleBtn} ${expanded ? styles.legendToggleActive : ''}`}
         onClick={() => onExpandedChange(!expanded)}
         title={expanded ? 'Collapse legend' : 'Color legend'}>
-        <ColorPickerIcon />
+        <ColorPickerIcon size={22} />
       </button>
       {!expanded && (
         <span className={styles.floatingHint}>
@@ -1970,6 +1996,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
   const [collapsedCatIds, setCollapsedCatIds]     = useState(new Set())
   const [unassignedCollapsed, setUnassignedCollapsed] = useState(false)
   const [floatingPanel, setFloatingPanel] = useState(null)
+  const [iconDimId, setIconDimId] = useState('')
   const [noteContextMenu, setNoteContextMenu] = useState(null)
   const [statusNotice, setStatusNotice] = useState('')
   const { confirm: confirmDialog, dialog: confirmDialogNode } = useConfirmDialog()
@@ -2084,6 +2111,13 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     const timer = window.setTimeout(() => setStatusNotice(''), 4500)
     return () => window.clearTimeout(timer)
   }, [statusNotice])
+
+  const refreshDimensionData = () => {
+    Promise.all([api.getDimensions(), api.getAllCategories()])
+      .then(([dims, cats]) => { setDimensions(dims); setCategories(cats) })
+      .catch(console.error)
+    onDimChanged?.()
+  }
 
   useEffect(() => {
     if (!noteContextMenu) return undefined
@@ -3224,6 +3258,16 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
             onRename={renamePerspective}
             onDelete={deletePerspective}
             onSetDefault={setClassificationDefaultPerspective}
+          />
+          <StandardIconPicker
+            dimensions={dynamicDimensions}
+            categories={dynamicCategories}
+            iconDimensionId={iconDimId}
+            onIconDimensionChange={setIconDimId}
+            onDimensionDataChanged={refreshDimensionData}
+            expanded={floatingPanel === 'icon'}
+            onExpandedChange={open => setFloatingPanel(open ? 'icon' : null)}
+            enablePainting={false}
           />
           <StandardColorPicker
             dimensions={dynamicDimensions}

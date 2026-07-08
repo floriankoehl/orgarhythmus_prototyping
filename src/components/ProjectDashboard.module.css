@@ -35,7 +35,10 @@
   position: fixed;
   right: 24px;
   bottom: 24px;
-  z-index: 3500;
+  z-index: 6200;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
 }
 
 /* ── Project name ──────────────────────────────────────────────────────────── */

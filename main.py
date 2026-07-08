@@ -160,6 +160,7 @@ def _init_db():
                 dimension_id TEXT NOT NULL,
                 name         TEXT NOT NULL,
                 color        TEXT NOT NULL DEFAULT '#94a3b8',
+                icon         TEXT NOT NULL DEFAULT '',
                 order_idx    INTEGER NOT NULL DEFAULT 0
             )
         """)
@@ -513,6 +514,8 @@ def _migrate():
             rows = con.execute("SELECT id FROM categories ORDER BY rowid").fetchall()
             for i, row in enumerate(rows):
                 con.execute("UPDATE categories SET order_idx = ? WHERE id = ?", (i, row[0]))
+        if 'icon' not in cols:
+            con.execute("ALTER TABLE categories ADD COLUMN icon TEXT NOT NULL DEFAULT ''")
 
         assignment_cols = [r[1] for r in con.execute("PRAGMA table_info(assignments)").fetchall()]
         if 'order_idx' not in assignment_cols:
@@ -832,10 +835,12 @@ class CategoryIn(BaseModel):
     id: Optional[str] = None
     name: str
     color: str = "#94a3b8"
+    icon: str = ""
 
 class CategoryPatch(BaseModel):
     name: Optional[str] = None
     color: Optional[str] = None
+    icon: Optional[str] = None
 
 class AssignIn(BaseModel):
     categoryId: str
@@ -1034,7 +1039,13 @@ def _dimension(row) -> dict:
 
 def _cat(row) -> dict:
     d = dict(row)
-    out = {"id": d["id"], "dimensionId": d["dimension_id"], "name": d["name"], "color": d["color"]}
+    out = {
+        "id": d["id"],
+        "dimensionId": d["dimension_id"],
+        "name": d["name"],
+        "color": d["color"],
+        "icon": d["icon"] if "icon" in d.keys() else "",
+    }
     state = _kanban_state_from_category_id(d["id"])
     if state:
         out.update({"system": True, "systemType": "kanban", "kanbanState": state})
@@ -3189,10 +3200,10 @@ def create_category(dim_id: str, data: CategoryIn, user: dict = Depends(current_
             "SELECT COALESCE(MAX(order_idx), -1) FROM categories WHERE dimension_id = ?", (dim_id,)
         ).fetchone()[0]
         con.execute(
-            "INSERT INTO categories (id, dimension_id, name, color, order_idx) VALUES (?, ?, ?, ?, ?)",
-            (cid, dim_id, data.name.strip(), data.color, max_ord + 1),
+            "INSERT INTO categories (id, dimension_id, name, color, icon, order_idx) VALUES (?, ?, ?, ?, ?, ?)",
+            (cid, dim_id, data.name.strip(), data.color, data.icon.strip(), max_ord + 1),
         )
-    return {"id": cid, "dimensionId": dim_id, "name": data.name.strip(), "color": data.color}
+    return {"id": cid, "dimensionId": dim_id, "name": data.name.strip(), "color": data.color, "icon": data.icon.strip()}
 
 
 @app.put("/categories/order")
@@ -3220,6 +3231,7 @@ def update_category(cat_id: str, data: CategoryPatch, user: dict = Depends(curre
         fields, values = [], []
         if data.name is not None:  fields.append("name = ?");  values.append(data.name.strip())
         if data.color is not None: fields.append("color = ?"); values.append(data.color)
+        if data.icon is not None:  fields.append("icon = ?");  values.append(data.icon.strip())
         if fields:
             con.execute(f"UPDATE categories SET {', '.join(fields)} WHERE id = ?", (*values, cat_id))
         row = con.execute("SELECT * FROM categories WHERE id = ?", (cat_id,)).fetchone()

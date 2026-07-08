@@ -10,6 +10,7 @@ import ColorPickerIcon from './ColorPickerIcon'
 import ColorPickerCategoryBadge from './ColorPickerCategoryBadge'
 import { COLOR_UNASSIGNED_CATEGORY_ID, colorPickerCategories } from './colorPickerCategories'
 import StandardColorPicker from './StandardColorPicker'
+import StandardIconPicker from './StandardIconPicker'
 import SavedFilterEditorModal from './SavedFilterEditorModal'
 import { FILTER_DIMENSION_ID, filterCategoryId, filterMatchesNote, normalizeSavedFilter, quickFilterMatchesNote } from './savedFilterUtils'
 import { TIME_DIMENSION_ID, TIME_DYNAMIC_CATEGORIES, timeCategoryIdForNote } from './timeCategories'
@@ -710,7 +711,7 @@ function ColorLegendWidget({ dimensions, categories, colorDimId, onColorDimensio
         className={`${styles.legendToggleBtn} ${expanded ? styles.legendToggleActive : ''}`}
         onClick={() => onExpandedChange(!expanded)}
         title={expanded ? 'Collapse color legend' : 'Color dimension'}>
-        <ColorPickerIcon />
+        <ColorPickerIcon size={22} />
       </button>
       {!expanded && (
         <span className={styles.floatingHint}>
@@ -838,6 +839,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   const [canvasDimId, setCanvasDimId] = useState('')
   const [focusedCatId, setFocusedCatId] = useState('')
   const [colorDimId, setColorDimId] = useState('')
+  const [iconDimId, setIconDimId] = useState('')
   const [savedFilters, setSavedFilters] = useState([])
   const [activeFilterIds, setActiveFilterIds] = useState([])
   const [quickFilters, setQuickFilters] = useState([])
@@ -865,6 +867,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
   const [paintCat, setPaintCat] = useState(null)
   const [paintPersonaId, setPaintPersonaId] = useState(null)
   const [peopleOpen, setPeopleOpen] = useState(false)
+  const [iconOpen, setIconOpen] = useState(false)
   const [perspectiveOpen, setPerspectiveOpen] = useState(false)
   const [editPreview, setEditPreview] = useState(null)
   const [inlineTitleEdit, setInlineTitleEdit] = useState(null)
@@ -916,6 +919,15 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
   }, [isActive, refreshKey, project?.id, activeContextId])
+
+  const refreshDimensionData = () => {
+    Promise.all([api.getDimensions(), api.getAllCategories()])
+      .then(([dims, cats]) => {
+        setDimensions(dims || [])
+        setCategories(cats || [])
+      })
+      .catch(console.error)
+  }
 
   useEffect(() => {
     if (!isActive || !peopleRefreshKey) return
@@ -2352,7 +2364,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
           open={perspectiveOpen}
           onOpenChange={open => {
             setPerspectiveOpen(open)
-            if (open) { setLegendOpen(false); setPeopleOpen(false) }
+            if (open) { setLegendOpen(false); setPeopleOpen(false); setIconOpen(false) }
           }}
           onApply={applyPerspective}
           onCreate={createPerspective}
@@ -2361,13 +2373,23 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
           onDelete={deletePerspective}
           onSetDefault={setCalendarDefaultPerspective}
         />
+        <StandardIconPicker
+          dimensions={colorDimensions}
+          categories={colorCategories}
+          iconDimensionId={iconDimId}
+          onIconDimensionChange={setIconDimId}
+          onDimensionDataChanged={refreshDimensionData}
+          expanded={iconOpen}
+          onExpandedChange={open => { setIconOpen(open); if (open) { setLegendOpen(false); setPeopleOpen(false); setPerspectiveOpen(false) } }}
+          enablePainting={false}
+        />
         <StandardColorPicker
           dimensions={colorDimensions}
           categories={colorCategories}
           colorDimensionId={colorDimId}
           onColorDimensionChange={setColorDimId}
           expanded={legendOpen}
-          onExpandedChange={open => { setLegendOpen(open); if (open) { setPeopleOpen(false); setPerspectiveOpen(false) } }}
+          onExpandedChange={open => { setLegendOpen(open); if (open) { setPeopleOpen(false); setPerspectiveOpen(false); setIconOpen(false) } }}
           paintCategoryId={paintCat?.id}
           onPaintCategory={activatePaint}
           quickFilters={quickFilters}
@@ -2381,7 +2403,7 @@ export default function CalendarPage({ notes = [], project = null, isActive = fa
           paintPersonaId={paintPersonaId}
           onPaintPersonaChange={id => { setPaintCat(null); setPaintPersonaId(id) }}
           expanded={peopleOpen}
-          onExpandedChange={open => { setPeopleOpen(open); if (open) { setLegendOpen(false); setPerspectiveOpen(false) } }}
+          onExpandedChange={open => { setPeopleOpen(open); if (open) { setLegendOpen(false); setPerspectiveOpen(false); setIconOpen(false) } }}
           refreshKey={peopleRefreshKey}
         />
       </div>

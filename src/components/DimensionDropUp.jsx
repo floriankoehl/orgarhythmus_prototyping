@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../api'
+import CategoryIconPicker from './CategoryIconPicker'
 import styles from './DimensionDropUp.module.css'
 import { playSound } from '../sounds/sound_registry'
+import { CategoryIconGlyph, iconForCategory } from './iconRegistry'
 
 const PRESET_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#64748b']
 
@@ -23,9 +25,11 @@ export default function DimensionDropUp({
   const [addingCat, setAddingCat] = useState(false)
   const [newCatName, setNewCatName] = useState('')
   const [newCatColor, setNewCatColor] = useState(PRESET_COLORS[0])
+  const [newCatIcon, setNewCatIcon] = useState('star')
   const [editingCatId, setEditingCatId] = useState(null)
   const [editCatName, setEditCatName] = useState('')
   const [editCatColor, setEditCatColor] = useState('')
+  const [editCatIcon, setEditCatIcon] = useState('star')
   const [addingDim, setAddingDim] = useState(false)
   const [newDimName, setNewDimName] = useState('')
   const btnRef = useRef(null)
@@ -107,9 +111,9 @@ export default function DimensionDropUp({
     e.preventDefault()
     if (!newCatName.trim()) return
     try {
-      await api.createCategory(dimId, { name: newCatName.trim(), color: newCatColor })
+      await api.createCategory(dimId, { name: newCatName.trim(), color: newCatColor, icon: newCatIcon })
       playSound('categoryCreate')
-      setNewCatName(''); setNewCatColor(PRESET_COLORS[0]); setAddingCat(false)
+      setNewCatName(''); setNewCatColor(PRESET_COLORS[0]); setNewCatIcon('star'); setAddingCat(false)
       notify()
     } catch (e) { console.error(e) }
   }
@@ -118,13 +122,14 @@ export default function DimensionDropUp({
     setEditingCatId(cat.id)
     setEditCatName(cat.name)
     setEditCatColor(cat.color)
+    setEditCatIcon(iconForCategory(cat))
     setAddingCat(false)
   }
 
   const handleEditCatSave = async () => {
     if (!editingCatId || !editCatName.trim()) return
     try {
-      await api.updateCategory(editingCatId, { name: editCatName.trim(), color: editCatColor })
+      await api.updateCategory(editingCatId, { name: editCatName.trim(), color: editCatColor, icon: editCatIcon })
       playSound('categoryRename')
       setEditingCatId(null)
       notify()
@@ -226,6 +231,15 @@ export default function DimensionDropUp({
                             <input type="color" className={styles.catEditColorFull}
                               value={editCatColor} onChange={e => setEditCatColor(e.target.value)} />
                           </div>
+                          <div className={styles.catEditIconRow}>
+                            <CategoryIconPicker
+                              value={editCatIcon}
+                              color={editCatColor}
+                              size={15}
+                              ariaLabel="Category icon"
+                              onChange={setEditCatIcon}
+                            />
+                          </div>
                           <div className={styles.catEditNameRow}>
                             <input ref={editCatInputRef} className={styles.catEditInput}
                               value={editCatName} onChange={e => setEditCatName(e.target.value)}
@@ -241,6 +255,9 @@ export default function DimensionDropUp({
                       ) : (
                         <>
                           <span className={styles.catDot} style={{ background: cat.color }} />
+                          <span className={styles.catIcon} style={{ color: cat.color }}>
+                            <CategoryIconGlyph icon={iconForCategory(cat)} size={13} strokeWidth={2.4} />
+                          </span>
                           <span className={styles.catName}>{cat.name}</span>
                           <button className={styles.catEditBtn} title="Edit" onClick={() => startEditCat(cat)}>
                             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
@@ -266,6 +283,15 @@ export default function DimensionDropUp({
                         ))}
                         <input type="color" className={styles.catEditColorFull}
                           value={newCatColor} onChange={e => setNewCatColor(e.target.value)} />
+                      </div>
+                      <div className={styles.catEditIconRow}>
+                        <CategoryIconPicker
+                          value={newCatIcon}
+                          color={newCatColor}
+                          size={15}
+                          ariaLabel="Category icon"
+                          onChange={setNewCatIcon}
+                        />
                       </div>
                       <div className={styles.catEditNameRow}>
                         <input ref={newCatInputRef} className={styles.catEditInput}

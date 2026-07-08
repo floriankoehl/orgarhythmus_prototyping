@@ -13,6 +13,7 @@ import ColorPickerCategoryBadge from './ColorPickerCategoryBadge'
 import { COLOR_UNASSIGNED_CATEGORY_ID, colorPickerCategories } from './colorPickerCategories'
 import FilterDimensionSelector from './FilterDimensionSelector'
 import StandardColorPicker from './StandardColorPicker'
+import StandardIconPicker from './StandardIconPicker'
 import { filterMatchesNote as matchesSavedFilter, quickFilterMatchesNote } from './savedFilterUtils'
 import { TIME_DIMENSION_ID, TIME_DYNAMIC_CATEGORIES, timeCategoryIdForNote } from './timeCategories'
 import { TYPE_DIMENSION_ID, TYPE_DYNAMIC_CATEGORIES, typeCategoryIdForNote } from './typeCategories'
@@ -2497,7 +2498,7 @@ function ScheduleColorLegendWidget({
         className={`${styles.legendToggleBtn} ${expanded ? styles.legendToggleActive : ''}`}
         onClick={() => onExpandedChange(!expanded)}
         title={expanded ? 'Collapse legend' : 'Color legend'}>
-        <ColorPickerIcon />
+        <ColorPickerIcon size={22} />
       </button>
       {!expanded && (
         <span className={styles.floatingHint}>
@@ -2837,6 +2838,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
   const [timeLockReasonDraft, setTimeLockReasonDraft] = useState('')
   const timeLockReasonInputRef = useRef()
   const [colorDimId,        setColorDimId]        = useState('')
+  const [iconDimId, setIconDimId] = useState('')
   const [activeFilterIds, setActiveFilterIds] = useState([])
   const [quickFilters, setQuickFilters] = useState([])
   const [paintCat, setPaintCat] = useState(null)
@@ -7732,6 +7734,16 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
           onRename={renamePerspective}
           onDelete={deletePerspective}
           onSetDefault={setScheduleDefaultPerspective}
+        />
+        <StandardIconPicker
+          dimensions={colorDimensions}
+          categories={colorCategories}
+          iconDimensionId={iconDimId}
+          onIconDimensionChange={setIconDimId}
+          onDimensionDataChanged={handleDimDataChanged}
+          expanded={floatingPanel === 'icon'}
+          onExpandedChange={open => setFloatingPanel(open ? 'icon' : null)}
+          enablePainting={false}
         />
         <StandardColorPicker
           dimensions={colorDimensions}

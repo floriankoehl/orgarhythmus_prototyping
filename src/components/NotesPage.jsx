@@ -13,6 +13,7 @@ import { playSound } from '../sounds/sound_registry'
 import ColorPickerIcon from './ColorPickerIcon'
 import ColorPickerCategoryBadge from './ColorPickerCategoryBadge'
 import { COLOR_UNASSIGNED_CATEGORY_ID, colorPickerCategories } from './colorPickerCategories'
+import StandardIconPicker from './StandardIconPicker'
 
 const DRIFT_VARIANTS = 6
 
@@ -586,7 +587,7 @@ function NotesColorLegendWidget({
         onClick={() => onExpandedChange(!expanded)}
         title={expanded ? 'Collapse legend' : 'Color legend'}
       >
-        <ColorPickerIcon />
+        <ColorPickerIcon size={22} />
       </button>
       {!expanded && (
         <span className={styles.floatingHint}>
@@ -682,6 +683,7 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
   const [personaNoteAssignments, setPersonaNoteAssignments] = useState([])
   const [personaCatAssignments, setPersonaCatAssignments] = useState([])
   const [colorDimId, setColorDimId] = useState('')
+  const [iconDimId, setIconDimId] = useState('')
   const [paintCat, setPaintCat] = useState(null)
   const [paintPersonaId, setPaintPersonaId] = useState(null)
   const activePersona = useMemo(() => personas.find(p => p.id === paintPersonaId) ?? null, [personas, paintPersonaId])
@@ -1642,6 +1644,16 @@ export default function NotesPage({ notes, onNoteCreated, onNoteOpen, onNoteUpda
             <path d="M20 6l-6 6" />
           </svg>
         </button>
+        <StandardIconPicker
+          dimensions={dimensions}
+          categories={categories}
+          iconDimensionId={iconDimId}
+          onIconDimensionChange={setIconDimId}
+          onDimensionDataChanged={handleDimDataChanged}
+          expanded={floatingPanel === 'icon'}
+          onExpandedChange={open => { playSound('collapseToggle'); setFloatingPanel(open ? 'icon' : null) }}
+          enablePainting={false}
+        />
         <NotesColorLegendWidget
           dimensions={dimensions}
           categories={categories}

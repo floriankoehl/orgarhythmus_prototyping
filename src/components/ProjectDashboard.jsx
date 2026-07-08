@@ -5,7 +5,9 @@ import { playSound } from '../sounds/sound_registry'
 import { useConfirmDialog } from './ConfirmDialog'
 import NoteHierarchyTree, { buildNoteHierarchyRows } from './NoteHierarchyTree'
 import StandardColorPicker from './StandardColorPicker'
+import StandardIconPicker from './StandardIconPicker'
 import { COLOR_UNASSIGNED_CATEGORY_ID } from './colorPickerCategories'
+import { iconForCategory } from './iconRegistry'
 import { TYPE_DIMENSION_ID, TYPE_DYNAMIC_CATEGORIES, typeCategoryIdForNote } from './typeCategories'
 
 const STAT_LABELS = {
@@ -313,6 +315,9 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
   const [structureColorDimId, setStructureColorDimId] = useState('')
   const [structurePaintCat, setStructurePaintCat] = useState(null)
   const [structureColorExpanded, setStructureColorExpanded] = useState(false)
+  const [structureIconDimId, setStructureIconDimId] = useState('')
+  const [structureIconPaintCat, setStructureIconPaintCat] = useState(null)
+  const [structureIconExpanded, setStructureIconExpanded] = useState(false)
   const nameInputRef = useRef()
   const saveTimerRef = useRef(null)
   const hierarchyWarningTimerRef = useRef(null)
@@ -417,6 +422,7 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
         role: category.typeRole || 'thought',
         label: category.name || 'Thought',
         color: category.color || '#94a3b8',
+        icon: iconForCategory(category),
       }]
     }))
   }, [notes, structureTypeCategories, timeSlots])
@@ -428,6 +434,21 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     () => structureCategories.find(category => category.systemType === 'kanban' && category.kanbanState === 'done'),
     [structureCategories]
   )
+  const structureKanbanDimensionId = useMemo(
+    () => structureCategories.find(category => category.systemType === 'kanban')?.dimensionId || '',
+    [structureCategories]
+  )
+  const structureCategoryById = useMemo(
+    () => new Map(structureCategories.map(category => [category.id, category])),
+    [structureCategories]
+  )
+  const structureAssignmentByNoteDimension = useMemo(() => {
+    const map = new Map()
+    structureAssignments.forEach(assignment => {
+      map.set(`${assignment.noteId}:${assignment.dimensionId}`, assignment)
+    })
+    return map
+  }, [structureAssignments])
   const structureExplicitDoneNoteIds = useMemo(() => {
     if (!structureKanbanDoneCategory) return new Set()
     return new Set(
@@ -478,7 +499,62 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     noteId => structureDoneInfoByNoteId.get(String(noteId || '')) || { done: false, explicit: false, inherited: false, inheritedFrom: null },
     [structureDoneInfoByNoteId]
   )
+  const getStructureIconInfo = useCallback(noteId => {
+    if (!structureIconDimId || structureIconDimId === TYPE_DIMENSION_ID) return getStructureTypeInfo(noteId)
+    const noteKey = String(noteId || '')
+    const assignment = structureAssignmentByNoteDimension.get(`${noteKey}:${structureIconDimId}`)
+    if (!assignment) {
+      return { role: 'custom', label: 'Unassigned', color: '#94a3b8', icon: 'circle-minus' }
+    }
+    const category = structureCategoryById.get(assignment.categoryId)
+    if (!category) {
+      return { role: 'custom', label: 'Unassigned', color: '#94a3b8', icon: 'circle-minus' }
+    }
+    return {
+      role: 'custom',
+      label: category.name || 'Category',
+      color: category.color || '#64748b',
+      icon: iconForCategory(category),
+    }
+  }, [getStructureTypeInfo, structureAssignmentByNoteDimension, structureCategoryById, structureIconDimId])
+  const getStructureNoteOverview = useCallback(noteId => {
+    const note = notesById.get(String(noteId))
+    const typeInfo = getStructureTypeInfo(noteId)
+    const doneInfo = getStructureDoneInfo(noteId)
+    const noteKey = String(noteId)
+    const noteSlots = timeSlots.filter(slot => String(slot.noteId) === noteKey)
+    const assignedKanban = structureKanbanDimensionId
+      ? structureAssignmentByNoteDimension.get(`${noteKey}:${structureKanbanDimensionId}`)
+      : null
+    const assignedKanbanCategory = assignedKanban ? structureCategoryById.get(assignedKanban.categoryId) : null
+    const kanbanLabel = doneInfo.done
+      ? (doneInfo.inherited ? `Done via ${doneInfo.inheritedFrom?.title || 'parent'}` : 'Done')
+      : assignedKanbanCategory?.name || (noteSlots.length ? 'Scheduled' : 'Unscheduled')
+
+    let timeLabel = 'No time slot'
+    if (noteSlots.length) {
+      const start = Math.min(...noteSlots.map(slot => Math.max(0, Number(slot.startCol) || 0)))
+      const end = Math.max(...noteSlots.map(slot => {
+        const slotStart = Math.max(0, Number(slot.startCol) || 0)
+        return slotStart + Math.max(MIN_TIME_SLOT_DURATION, Number(slot.duration) || MIN_TIME_SLOT_DURATION)
+      }))
+      const duration = Math.max(MIN_TIME_SLOT_DURATION, end - start)
+      const scale = scheduleScaleForRange(start, duration)
+      const anchor = timelineAnchor(project)
+      timeLabel = `${formatScheduleMoment(anchor, start, scale)} - ${formatScheduleMoment(anchor, end, scale)} (${formatScheduleDuration(duration)})`
+    } else if (note?.createdAt) {
+      timeLabel = `Created ${formatHierarchyCreatedAt(note.createdAt)}`
+    }
+
+    return [
+      `Type: ${typeInfo?.label || 'Thought'}`,
+      `Kanban: ${kanbanLabel}`,
+      `Time: ${timeLabel}`,
+    ].join('\n')
+  }, [getStructureDoneInfo, getStructureTypeInfo, notesById, project, structureAssignmentByNoteDimension, structureCategoryById, structureKanbanDimensionId, timeSlots])
   const structurePaintCursor = structurePaintCat ? makeColorCursor(structurePaintCat.color) : ''
+  const structureIconPaintCursor = structureIconPaintCat ? 'crosshair' : ''
+  const structureActivePaintCursor = structureIconPaintCursor || structurePaintCursor
 
   useEffect(() => {
     setName(workspaceName)
@@ -874,7 +950,11 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
       setStructureColorDimId('')
       setStructurePaintCat(null)
     }
-  }, [structureColorDimId, structureDynamicDimensions])
+    if (structureIconDimId && !structureDynamicDimensions.some(dim => dim.id === structureIconDimId)) {
+      setStructureIconDimId('')
+      setStructureIconPaintCat(null)
+    }
+  }, [structureColorDimId, structureDynamicDimensions, structureIconDimId])
 
   const persist = useCallback((patch) => {
     clearTimeout(saveTimerRef.current)
@@ -944,10 +1024,23 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     setStructurePaintCat(null)
   }
 
+  const changeStructureIconDim = dimId => {
+    setStructureIconDimId(dimId)
+    setStructureIconPaintCat(null)
+  }
+
   const activateStructurePaint = (catId, color) => {
     const deactivating = structurePaintCat?.id === catId
     playSound(deactivating ? 'paintModeDeactivate' : 'paintModeActivate')
     setStructurePaintCat(previous => previous?.id === catId ? null : { id: catId, color })
+    setStructureIconPaintCat(null)
+  }
+
+  const activateStructureIconPaint = (catId, icon) => {
+    const deactivating = structureIconPaintCat?.id === catId
+    playSound(deactivating ? 'paintModeDeactivate' : 'paintModeActivate')
+    setStructureIconPaintCat(previous => previous?.id === catId ? null : { id: catId, icon })
+    setStructurePaintCat(null)
   }
 
   const applyStructurePaint = async noteId => {
@@ -967,6 +1060,26 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     } catch (error) {
       console.error(error)
       showHierarchyWarning('Category not assigned', error?.message || 'The category could not be assigned to this note.')
+    }
+  }
+
+  const applyStructureIconPaint = async noteId => {
+    if (!structureIconPaintCat || !structureIconDimId || structureIconDimId === TYPE_DIMENSION_ID || !noteId) return
+    playSound('paintApply')
+    try {
+      if (structureIconPaintCat.id === COLOR_UNASSIGNED_CATEGORY_ID) {
+        await api.unassign(noteId, structureIconDimId)
+        setStructureAssignments(previous => previous.filter(assignment => !(assignment.noteId === noteId && assignment.dimensionId === structureIconDimId)))
+        return
+      }
+      await api.assign(noteId, structureIconDimId, structureIconPaintCat.id)
+      setStructureAssignments(previous => [
+        ...previous.filter(assignment => !(assignment.noteId === noteId && assignment.dimensionId === structureIconDimId)),
+        { noteId, dimensionId: structureIconDimId, categoryId: structureIconPaintCat.id },
+      ])
+    } catch (error) {
+      console.error(error)
+      showHierarchyWarning('Icon not assigned', error?.message || 'The icon category could not be assigned to this note.')
     }
   }
 
@@ -1032,6 +1145,11 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
           isExpanded={isHierarchyNodeExpanded}
           onToggle={toggleHierarchyNode}
           onSelect={(event, noteId) => {
+            if (structureOnly && structureIconPaintCat) {
+              event.stopPropagation()
+              applyStructureIconPaint(noteId)
+              return
+            }
             if (structureOnly && structurePaintCat) {
               event.stopPropagation()
               applyStructurePaint(noteId)
@@ -1065,10 +1183,11 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
           onClearSelection={() => setSelectedHierarchyNoteIds(new Set())}
           colorByNoteId={structureOnly ? structureColorByNoteId : {}}
           getNoteDoneInfo={structureOnly ? getStructureDoneInfo : null}
-          getNoteTypeInfo={structureOnly ? getStructureTypeInfo : null}
+          getNoteTypeInfo={structureOnly ? getStructureIconInfo : null}
+          getNoteOverview={structureOnly ? getStructureNoteOverview : null}
           showHierarchyTypeIcon={!structureOnly}
-          paintCategoryId={structureOnly ? structurePaintCat?.id : ''}
-          paintCursor={structureOnly ? structurePaintCursor : ''}
+          paintCategoryId={structureOnly ? structureIconPaintCat?.id || structurePaintCat?.id : ''}
+          paintCursor={structureOnly ? structureActivePaintCursor : ''}
           ariaLabel="Project, ancestors, and child notes"
         />
       </div>
@@ -1077,9 +1196,9 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
 
   return (
     <div
-      className={`${styles.note} ${structurePaintCursor ? styles.paintMode : ''}`}
-      style={structurePaintCursor ? { '--paint-cursor': structurePaintCursor, cursor: structurePaintCursor } : undefined}
-      onClick={structurePaintCat ? () => setStructurePaintCat(null) : undefined}>
+      className={`${styles.note} ${structureActivePaintCursor ? styles.paintMode : ''}`}
+      style={structureActivePaintCursor ? { '--paint-cursor': structureActivePaintCursor, cursor: structureActivePaintCursor } : undefined}
+      onClick={structurePaintCat || structureIconPaintCat ? () => { setStructurePaintCat(null); setStructureIconPaintCat(null) } : undefined}>
       <div className={`${styles.content} ${structureOnly ? styles.structureContent : ''}`}>
 
         {/* Project name */}
@@ -1191,6 +1310,21 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
 
       {structureOnly && (
         <div className={styles.structureFloatingTools}>
+          <StandardIconPicker
+            dimensions={structureDynamicDimensions}
+            categories={structureDynamicCategories}
+            iconDimensionId={structureIconDimId}
+            onIconDimensionChange={changeStructureIconDim}
+            onDimensionDataChanged={reloadStructureColorData}
+            paintCategoryId={structureIconPaintCat?.id}
+            onPaintCategory={activateStructureIconPaint}
+            expanded={structureIconExpanded}
+            onExpandedChange={expanded => {
+              setStructureIconExpanded(expanded)
+              if (expanded) setStructureColorExpanded(false)
+            }}
+            hint="Assign category icons"
+          />
           <StandardColorPicker
             dimensions={structureDynamicDimensions}
             categories={structureDynamicCategories}
@@ -1200,7 +1334,10 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
             paintCategoryId={structurePaintCat?.id}
             onPaintCategory={activateStructurePaint}
             expanded={structureColorExpanded}
-            onExpandedChange={setStructureColorExpanded}
+            onExpandedChange={expanded => {
+              setStructureColorExpanded(expanded)
+              if (expanded) setStructureIconExpanded(false)
+            }}
             hint="Assign note categories"
           />
         </div>
