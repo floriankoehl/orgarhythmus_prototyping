@@ -224,6 +224,7 @@ def _init_db():
                 name            TEXT NOT NULL,
                 gate            TEXT NOT NULL DEFAULT 'AND',
                 color           TEXT NOT NULL DEFAULT '#64748b',
+                icon            TEXT NOT NULL DEFAULT '',
                 selections_json TEXT NOT NULL DEFAULT '{}',
                 quick_key       TEXT
             )
@@ -536,6 +537,8 @@ def _migrate():
         filter_cols = [r[1] for r in con.execute("PRAGMA table_info(saved_filters)").fetchall()]
         if 'color' not in filter_cols:
             con.execute("ALTER TABLE saved_filters ADD COLUMN color TEXT NOT NULL DEFAULT '#64748b'")
+        if 'icon' not in filter_cols:
+            con.execute("ALTER TABLE saved_filters ADD COLUMN icon TEXT NOT NULL DEFAULT ''")
 
         dep_cols = [r[1] for r in con.execute("PRAGMA table_info(dependencies)").fetchall()]
         if 'reason' not in dep_cols:
@@ -887,6 +890,7 @@ class SavedFilterIn(BaseModel):
     name: str
     gate: str = "AND"
     color: str = "#64748b"
+    icon: str = ""
     selections: dict[str, list[str]] = {}
     quickKey: Optional[str] = None
 
@@ -894,6 +898,7 @@ class SavedFilterPatch(BaseModel):
     name: Optional[str] = None
     gate: Optional[str] = None
     color: Optional[str] = None
+    icon: Optional[str] = None
     selections: Optional[dict[str, list[str]]] = None
     quickKey: Optional[str] = None
 
@@ -1159,6 +1164,7 @@ def _filter(row) -> dict:
         "name": d["name"],
         "gate": d["gate"],
         "color": d["color"],
+        "icon": d.get("icon") or "",
         "selections": selections,
         "quickKey": d["quick_key"],
     }
@@ -3672,15 +3678,16 @@ def create_filter(data: SavedFilterIn, project_id: str = Query(default='default'
     name = data.name.strip() or "Untitled filter"
     gate, selections_json, quick_key = _normalize_filter_payload(data)
     color = data.color or "#64748b"
+    icon = data.icon or ""
     with _db() as con:
         if con.execute("SELECT id FROM saved_filters WHERE id = ?", (fid,)).fetchone():
             raise HTTPException(409, "Filter already exists")
         con.execute(
             """
-            INSERT INTO saved_filters (id, project_id, name, gate, color, selections_json, quick_key)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO saved_filters (id, project_id, name, gate, color, icon, selections_json, quick_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (fid, project_id, name, gate, color, selections_json, quick_key),
+            (fid, project_id, name, gate, color, icon, selections_json, quick_key),
         )
         row = con.execute("SELECT * FROM saved_filters WHERE id = ?", (fid,)).fetchone()
     return _filter(row)
@@ -3699,6 +3706,9 @@ def update_filter(filter_id: str, data: SavedFilterPatch, user: dict = Depends(c
         if data.color is not None:
             fields.append("color = ?")
             values.append(data.color or "#64748b")
+        if data.icon is not None:
+            fields.append("icon = ?")
+            values.append(data.icon or "")
         if data.selections is not None:
             fields.append("selections_json = ?")
             values.append(json.dumps({

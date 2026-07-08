@@ -12,6 +12,7 @@ import ColorPickerIcon from './ColorPickerIcon'
 import ColorPickerCategoryBadge from './ColorPickerCategoryBadge'
 import { COLOR_UNASSIGNED_CATEGORY_ID, colorPickerCategories } from './colorPickerCategories'
 import FilterDimensionSelector from './FilterDimensionSelector'
+import CategoryIconPicker from './CategoryIconPicker'
 import StandardColorPicker from './StandardColorPicker'
 import StandardIconPicker from './StandardIconPicker'
 import { filterMatchesNote as matchesSavedFilter, quickFilterMatchesNote } from './savedFilterUtils'
@@ -2174,6 +2175,7 @@ function normalizeSavedFilter(filter) {
     name: (filter?.name || 'Untitled filter').trim(),
     gate: filter?.gate === 'OR' ? 'OR' : 'AND',
     color: filter?.color || '#64748b',
+    icon: filter?.icon || 'filter',
     selections,
   }
 }
@@ -2182,6 +2184,7 @@ function ScheduleFilterEditorModal({ filter, dimensions, categories, onSave, onD
   const [name, setName] = useState(filter?.name ?? 'New filter')
   const [gate, setGate] = useState(filter?.gate ?? 'AND')
   const [color, setColor] = useState(filter?.color ?? '#64748b')
+  const [icon, setIcon] = useState(filter?.icon ?? 'filter')
   const [selections, setSelections] = useState(filter?.selections ?? {})
   const isEdit = Boolean(filter?.id)
   const presetColors = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#94a3b8']
@@ -2200,7 +2203,7 @@ function ScheduleFilterEditorModal({ filter, dimensions, categories, onSave, onD
   }
 
   const save = () => {
-    onSave(normalizeSavedFilter({ ...filter, name, gate, color, selections }))
+    onSave(normalizeSavedFilter({ ...filter, name, gate, color, icon, selections }))
   }
 
   return createPortal(
@@ -2223,6 +2226,13 @@ function ScheduleFilterEditorModal({ filter, dimensions, categories, onSave, onD
                 onClick={() => setColor(c)} />
             ))}
             <input type="color" className={styles.colorFullPicker} value={color} onChange={e => setColor(e.target.value)} />
+          </div>
+        </div>
+
+        <div className={styles.colorSection}>
+          <span className={styles.sectionLabel}>Icon</span>
+          <div className={styles.iconPickerRow}>
+            <CategoryIconPicker value={icon} color={color} size={18} ariaLabel="Filter icon" onChange={setIcon} />
           </div>
         </div>
 
@@ -3681,6 +3691,7 @@ export default function SchedulePage({ notes = [], allNotes = notes, project = n
       dimensionId: FILTER_DIMENSION_ID,
       name: filter.name,
       color: filter.color || '#64748b',
+      icon: filter.icon || 'filter',
       dynamic: true,
       dynamicType: 'filter',
       filterId: filter.id,

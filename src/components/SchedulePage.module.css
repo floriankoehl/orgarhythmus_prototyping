@@ -3355,6 +3355,12 @@
   align-items: center;
 }
 
+.iconPickerRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .colorSwatch {
   width: 26px;
   height: 26px;

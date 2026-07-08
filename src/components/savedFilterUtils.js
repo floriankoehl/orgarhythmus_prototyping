@@ -16,6 +16,7 @@ export function normalizeSavedFilter(filter = {}) {
     name: (filter.name || 'Untitled filter').trim(),
     gate: filter.gate === 'OR' ? 'OR' : 'AND',
     color: filter.color || '#64748b',
+    icon: filter.icon || 'filter',
     selections,
   }
 }

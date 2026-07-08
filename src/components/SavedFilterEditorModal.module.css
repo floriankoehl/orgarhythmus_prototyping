@@ -7,6 +7,7 @@
 .gateActive { color: #1a73e8!important; background: #fff!important; }
 .colors { display: flex; gap: 7px; align-items: center; }
 .swatch { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; cursor: pointer; }
+.iconRow { display: flex; align-items: center; gap: 10px; color: #64748b; font: 800 11px Arial,sans-serif; text-transform: uppercase; letter-spacing: .06em; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; }
 .actions button { height: 32px; padding: 0 13px; border: 0; border-radius: 6px; cursor: pointer; font: 800 12px Arial,sans-serif; }
 .cancel { color: #475569; background: #f1f5f9; }

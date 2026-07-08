@@ -2213,7 +2213,7 @@ export default function PeoplePage({ peopleRefreshKey = 0, onNoteOpen, onPeopleC
 
   const filterCategories = useMemo(() => savedFilters.map(filter => ({
     id: filterCategoryId(filter.id), dimensionId: FILTER_DIMENSION_ID, name: filter.name,
-    color: filter.color || '#64748b', dynamic: true, dynamicType: 'filter', dynamicLabel: 'Filter', filterId: filter.id,
+    color: filter.color || '#64748b', icon: filter.icon || 'filter', dynamic: true, dynamicType: 'filter', dynamicLabel: 'Filter', filterId: filter.id,
   })), [savedFilters])
   const timeCategories = useMemo(() => TIME_DYNAMIC_CATEGORIES.map(category => ({ ...category, dimensionId: TIME_DIMENSION_ID, dynamic: true, dynamicType: 'time', dynamicLabel: 'Time' })), [])
   const typeCategories = useMemo(() => TYPE_DYNAMIC_CATEGORIES.map(category => ({ ...category, dimensionId: TYPE_DIMENSION_ID, dynamic: true, dynamicType: 'type', dynamicLabel: 'Type' })), [])

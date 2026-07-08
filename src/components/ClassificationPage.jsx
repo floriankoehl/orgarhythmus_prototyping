@@ -12,6 +12,7 @@ import ColorPickerCategoryBadge from './ColorPickerCategoryBadge'
 import { COLOR_UNASSIGNED_CATEGORY_ID, colorPickerCategories } from './colorPickerCategories'
 import FilterDimensionSelector from './FilterDimensionSelector'
 import CategoryEditModal from './CategoryEditModal'
+import CategoryIconPicker from './CategoryIconPicker'
 import StandardColorPicker from './StandardColorPicker'
 import StandardIconPicker from './StandardIconPicker'
 import { CategoryIconGlyph, iconForCategory } from './iconRegistry'
@@ -132,6 +133,7 @@ function normalizeFilter(filter) {
     name: (filter?.name || 'Untitled filter').trim(),
     gate: filter?.gate === 'OR' ? 'OR' : 'AND',
     color: filter?.color || '#64748b',
+    icon: filter?.icon || 'filter',
     selections,
     quickKey: filter?.quickKey || null,
   }
@@ -1448,6 +1450,7 @@ function FilterEditorModal({ filter, dimensions, categories, onSave, onDelete, o
   const [name, setName] = useState(filter?.name ?? 'New filter')
   const [gate, setGate] = useState(filter?.gate ?? 'AND')
   const [color, setColor] = useState(filter?.color ?? '#64748b')
+  const [icon, setIcon] = useState(filter?.icon ?? 'filter')
   const [selections, setSelections] = useState(filter?.selections ?? {})
   const isEdit = Boolean(filter?.id)
 
@@ -1470,6 +1473,7 @@ function FilterEditorModal({ filter, dimensions, categories, onSave, onDelete, o
       name: name.trim() || 'Untitled filter',
       gate,
       color,
+      icon,
       selections,
     }))
   }
@@ -1509,6 +1513,13 @@ function FilterEditorModal({ filter, dimensions, categories, onSave, onDelete, o
             <input type="color" className={styles.colorFullPicker}
               value={color} title="Custom color"
               onChange={e => setColor(e.target.value)} />
+          </div>
+        </div>
+
+        <div className={styles.colorSection}>
+          <span className={styles.sectionLabel}>Icon</span>
+          <div className={styles.iconPickerRow}>
+            <CategoryIconPicker value={icon} color={color} size={18} ariaLabel="Filter icon" onChange={setIcon} />
           </div>
         </div>
 
@@ -2524,6 +2535,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     dimensionId: FILTER_DIMENSION_ID,
     name: filter.name,
     color: filter.color || PRESET_COLORS[idx % PRESET_COLORS.length],
+    icon: filter.icon || 'filter',
     dynamic: true,
     dynamicType: 'filter',
     dynamicLabel: 'Filter',
