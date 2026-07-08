@@ -7,9 +7,9 @@
 .hierarchyRow {
   position: relative;
   --tree-depth: 0;
-  width: calc(100% - (var(--tree-depth) * 22px));
+  width: calc(100% - (var(--tree-depth) * 28px));
   min-width: 0;
-  margin-left: calc(var(--tree-depth) * 22px);
+  margin-left: calc(var(--tree-depth) * 28px);
 }
 
 .hierarchyRow[draggable="true"] {
@@ -37,9 +37,9 @@
 
 .hierarchyBranch {
   position: absolute;
-  left: -13px;
+  left: -17px;
   top: -8px;
-  width: 12px;
+  width: 16px;
   height: 25px;
   border-left: 1px solid #cbd5e1;
   border-bottom: 1px solid #cbd5e1;
@@ -55,14 +55,14 @@
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 1px;
 }
 
 .hierarchyExpandBtn,
 .hierarchyExpandSpacer {
-  width: 21px;
+  width: 18px;
   height: 21px;
-  flex: 0 0 21px;
+  flex: 0 0 18px;
 }
 
 .hierarchyExpandBtn {
@@ -97,7 +97,7 @@
   min-height: 34px;
   padding: 6px 9px;
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-columns: auto auto auto minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   border: 1px solid transparent;
@@ -116,6 +116,48 @@
 
 .hierarchyNodePaintMode * {
   cursor: var(--paint-cursor, crosshair) !important;
+}
+
+.hierarchyNodeNoFileIcon {
+  position: relative;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 11px;
+  border-left-width: 9px;
+  padding-left: 8px;
+}
+
+.hierarchyNodeNoFileIcon .hierarchyReorderHandle {
+  position: absolute;
+  left: -9px;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  height: auto;
+  margin: 0;
+  z-index: 1;
+  color: #cbd5e1;
+  border-radius: 4px 0 0 4px;
+  background: transparent;
+}
+
+.hierarchyNodeNoFileIcon .hierarchyDoneBadgeSlot {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.hierarchyNodeNoFileIcon .hierarchyTitle {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.hierarchyNodeNoFileIcon .hierarchyReorderHandle span {
+  transform: scaleX(0.55);
+  transform-origin: center;
+}
+
+.hierarchyNodeNoFileIcon .hierarchyReorderHandle:hover,
+.hierarchyNodeNoFileIcon .hierarchyReorderHandle:focus-visible {
+  background: rgba(29, 78, 216, 0.12);
 }
 
 .hierarchyTreeReordering .hierarchyRow {
@@ -261,6 +303,82 @@
 
 .hierarchyRowCurrent .hierarchyIcon {
   color: #2563eb;
+}
+
+.hierarchyDoneBadgeSlot {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hierarchyDoneBadge {
+  color: #16a34a;
+  filter: drop-shadow(0 1px 2px rgba(22,163,74,0.2));
+}
+
+.hierarchyDoneIcon,
+.hierarchyTypeBadgeThought svg,
+.hierarchyTypeBadgeTask svg,
+.hierarchyTypeBadgeProject svg {
+  width: 18px;
+  height: 18px;
+}
+
+.hierarchyDoneIconBox {
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 2.2;
+}
+
+.hierarchyDoneIconCheck {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2.2;
+}
+
+.hierarchyTypeBadgeThought {
+  color: #d946ef;
+}
+
+.hierarchyTypeBadgeTask {
+  color: #2563eb;
+}
+
+.hierarchyTypeBadgeProject {
+  display: grid;
+  place-items: center;
+  color: #d97706;
+}
+
+.hierarchyDoneBadgeInherited {
+  position: relative;
+  color: #15803d;
+  filter: none;
+}
+
+.hierarchyDoneBadgeInherited .hierarchyDoneIconBox {
+  fill: #f7fee7;
+  stroke: #65a30d;
+  stroke-dasharray: 2 1.5;
+}
+
+.hierarchyDoneBadgeInherited .hierarchyDoneIconCheck {
+  stroke: #15803d;
+}
+
+.hierarchyDoneBadgeInherited::after {
+  content: "";
+  position: absolute;
+  right: -2px;
+  top: -2px;
+  width: 6px;
+  height: 6px;
+  background: #84cc16;
+  border: 1px solid #fff;
+  border-radius: 50%;
 }
 
 .hierarchyTitle {

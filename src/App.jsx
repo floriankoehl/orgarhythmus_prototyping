@@ -405,6 +405,7 @@ export default function App() {
             onNotesChanged={handleNotesChanged}
             onProjectDeleted={backToHome}
             isActive={view === 0}
+            assignmentsRefreshKey={noteDataVersion}
           />
         </div>
         <div className={styles.view} style={{ display: view === 7 ? 'flex' : 'none' }}>
@@ -420,6 +421,7 @@ export default function App() {
             onNotesChanged={handleNotesChanged}
             onProjectDeleted={backToHome}
             isActive={view === 7}
+            assignmentsRefreshKey={noteDataVersion}
             structureOnly
           />
         </div>

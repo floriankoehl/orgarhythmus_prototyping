@@ -1796,6 +1796,68 @@
   cursor: pointer; padding: 0; display: flex; align-items: center; flex-shrink: 0;
 }
 
+.rowDoneBadge {
+  width: 17px;
+  height: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 17px;
+  color: #fff;
+  background: #16a34a;
+  border-radius: 5px;
+  box-shadow: 0 1px 3px rgba(22,163,74,0.24);
+  font: 900 11px Arial, sans-serif;
+}
+
+.rowDoneBadgeInherited {
+  position: relative;
+  color: #15803d;
+  background: #f7fee7;
+  border: 1px dashed #65a30d;
+  box-shadow: none;
+}
+
+.rowDoneBadgeInherited::after {
+  content: "";
+  position: absolute;
+  right: -2px;
+  top: -2px;
+  width: 6px;
+  height: 6px;
+  background: #84cc16;
+  border: 1px solid #fff;
+  border-radius: 50%;
+}
+
+.noteContextMenu {
+  position: fixed;
+  z-index: 5200;
+  min-width: 172px;
+  padding: 5px;
+  background: #fff;
+  border: 1px solid #dfe3e8;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(15,23,42,0.18);
+}
+
+.noteContextMenu button {
+  width: 100%;
+  padding: 8px 10px;
+  color: #334155;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font: 800 12px Arial, sans-serif;
+  text-align: left;
+}
+
+.noteContextMenu button:hover {
+  color: #166534;
+  background: #f0fdf4;
+}
+
 .rowHierarchyNumber {
   position: relative;
   flex: 0 0 auto;

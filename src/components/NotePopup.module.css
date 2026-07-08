@@ -138,6 +138,72 @@
   gap: 10px;
 }
 
+.doneToggle {
+  align-self: flex-start;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 8px;
+  color: #15803d;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 7px;
+  cursor: pointer;
+  font: 800 12px Arial, sans-serif;
+  transition: background 0.12s, color 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+
+.doneToggle:hover:not(:disabled) {
+  color: #166534;
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+.doneToggle:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.doneToggleActive {
+  color: #fff;
+  background: #16a34a;
+  border-color: #16a34a;
+  box-shadow: 0 2px 8px rgba(22,163,74,0.18);
+}
+
+.doneToggleActive:hover:not(:disabled) {
+  color: #fff;
+  background: #15803d;
+  border-color: #15803d;
+}
+
+.doneToggleInherited {
+  color: #15803d;
+  background: #ecfdf5;
+  border-color: #86efac;
+  box-shadow: 0 2px 8px rgba(22,163,74,0.1);
+}
+
+.doneToggleInherited:hover:not(:disabled) {
+  color: #166534;
+  background: #dcfce7;
+  border-color: #4ade80;
+}
+
+.doneCheck {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+  background: rgba(255,255,255,0.72);
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  font: 900 12px Arial, sans-serif;
+}
+
 .compactCategoryList {
   display: flex;
   flex-wrap: wrap;

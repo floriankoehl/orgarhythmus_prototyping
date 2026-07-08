@@ -31,7 +31,7 @@ KANBAN_STATES = [
     ("in_progress", "In progress", "#f97316"),
     ("done", "Done", "#22c55e"),
 ]
-KANBAN_TIME_SLOT_REQUIRED_STATES = {"scheduled", "in_progress", "done"}
+KANBAN_TIME_SLOT_REQUIRED_STATES = {"scheduled", "in_progress"}
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_MINUTES = 30
 REFRESH_TOKEN_DAYS = 30

@@ -1,3 +1,4 @@
+import { Cloudy, Layers } from 'lucide-react'
 import styles from './NoteHierarchyTree.module.css'
 
 function descriptionText(html) {
@@ -113,6 +114,31 @@ function HierarchyTypeIcon({ hasChildren }) {
   )
 }
 
+function NoteKindIcon({ role }) {
+  if (role === 'project') {
+    return <Layers size={18} strokeWidth={2.3} aria-hidden="true" />
+  }
+  if (role === 'task') {
+    return (
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <rect x="2.8" y="2.8" width="14.4" height="14.4" rx="2.8" />
+      </svg>
+    )
+  }
+  return (
+    <Cloudy size={18} strokeWidth={2.3} aria-hidden="true" />
+  )
+}
+
+function DoneKindIcon() {
+  return (
+    <svg className={styles.hierarchyDoneIcon} viewBox="0 0 20 20" fill="none" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect className={styles.hierarchyDoneIconBox} x="2.8" y="2.8" width="14.4" height="14.4" rx="2.8" />
+      <path className={styles.hierarchyDoneIconCheck} d="M6.6 10.2 9 12.6 13.7 7.5" />
+    </svg>
+  )
+}
+
 export default function NoteHierarchyTree({
   rows,
   rootNoteId,
@@ -137,6 +163,9 @@ export default function NoteHierarchyTree({
   onReorderDragStateChange,
   onClearSelection,
   colorByNoteId = null,
+  getNoteDoneInfo = null,
+  getNoteTypeInfo = null,
+  showHierarchyTypeIcon = true,
   paintCategoryId = '',
   paintCursor = '',
   ariaLabel = 'Note hierarchy',
@@ -170,6 +199,14 @@ export default function NoteHierarchyTree({
         const reorderPosition = reorderTarget?.noteId === note.id ? reorderTarget.position : null
         const createdLabel = formatCreatedAt(note.createdAt || (isProjectRoot ? project?.createdAt : ''))
         const color = colorByNoteId?.[note.id]
+        const doneInfo = getNoteDoneInfo?.(note.id)
+        const done = Boolean(doneInfo?.done)
+        const doneLabel = doneInfo?.inherited
+          ? `Done via ${doneInfo.inheritedFrom?.title || 'parent'}`
+          : 'Done'
+        const typeInfo = getNoteTypeInfo?.(note.id)
+        const typeRole = typeInfo?.role || 'thought'
+        const typeLabel = typeInfo?.label || 'Thought'
         const hoverTitle = [
           createdLabel ? `Created ${createdLabel}` : '',
           hoverDescription || `Double-click to open ${displayTitle || 'Untitled'} details`,
@@ -281,6 +318,7 @@ export default function NoteHierarchyTree({
                 type="button"
                 className={[
                   styles.hierarchyNode,
+                  !showHierarchyTypeIcon && styles.hierarchyNodeNoFileIcon,
                   (paintCategoryId || paintCursor) && styles.hierarchyNodePaintMode,
                 ].filter(Boolean).join(' ')}
                 style={{
@@ -324,10 +362,25 @@ export default function NoteHierarchyTree({
                   }}>
                   <span aria-hidden="true">⋮⋮</span>
                 </span>
+                {showHierarchyTypeIcon && (
+                  <span
+                    className={`${styles.hierarchyIcon} ${hasChildren ? styles.hierarchyProjectIcon : styles.hierarchyNoteIcon}`}
+                    title={hasChildren ? 'Project · contains child notes' : 'Note · no child notes'}>
+                    <HierarchyTypeIcon hasChildren={hasChildren} />
+                  </span>
+                )}
                 <span
-                  className={`${styles.hierarchyIcon} ${hasChildren ? styles.hierarchyProjectIcon : styles.hierarchyNoteIcon}`}
-                  title={hasChildren ? 'Project · contains child notes' : 'Note · no child notes'}>
-                  <HierarchyTypeIcon hasChildren={hasChildren} />
+                  className={[
+                    styles.hierarchyDoneBadgeSlot,
+                    done && styles.hierarchyDoneBadge,
+                    doneInfo?.inherited && styles.hierarchyDoneBadgeInherited,
+                    !done && typeInfo && styles[`hierarchyTypeBadge${typeRole[0].toUpperCase()}${typeRole.slice(1)}`],
+                  ].filter(Boolean).join(' ')}
+                  title={done ? doneLabel : typeInfo ? typeLabel : undefined}
+                  aria-label={done ? doneLabel : typeInfo ? typeLabel : undefined}
+                  aria-hidden={done || typeInfo ? undefined : 'true'}
+                >
+                  {done ? <DoneKindIcon /> : typeInfo ? <NoteKindIcon role={typeRole} /> : ''}
                 </span>
                 <span className={styles.hierarchyTitle}>{displayTitle || 'Untitled'}</span>
               </button>

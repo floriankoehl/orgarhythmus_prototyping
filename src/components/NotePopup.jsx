@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import styles from './NotePopup.module.css'
 import { api } from '../api'
@@ -157,6 +157,10 @@ function schedulePreviewForSlot(slot, project) {
   }
 }
 
+function isKanbanDimension(dim) {
+  return dim?.systemType === 'kanban' || String(dim?.id || '').startsWith('system:kanban:')
+}
+
 // ── Main popup ────────────────────────────────────────────────────────────────
 export default function NotePopup({ note, notes = [], project = null, isProjectRootNote = false, initiallyEditTitle = false, onClose, onNoteUpdated, onAssignmentsChanged, onPeopleChanged, onNoteDeleted, onNoteOpen, onOpenAsWorkspace, onNotesChanged }) {
   const [expanded, setExpanded]           = useState(false)
@@ -183,9 +187,11 @@ export default function NotePopup({ note, notes = [], project = null, isProjectR
   const [dimensions, setDimensions]   = useState([])
   const [categories, setCategories]   = useState([])
   const [assignments, setAssignments] = useState({}) // { dimId: catId }
+  const [allAssignments, setAllAssignments] = useState([])
   const [personas, setPersonas] = useState([])
   const [personaNoteAssignments, setPersonaNoteAssignments] = useState([])
   const [timeSlots, setTimeSlots] = useState([])
+  const [doneSaving, setDoneSaving] = useState(false)
 
   const editorRef      = useRef(null)
   const popupRef       = useRef(null)
@@ -213,6 +219,55 @@ export default function NotePopup({ note, notes = [], project = null, isProjectR
     return parentId === note.id && isHierarchyNodeExpanded(note.id)
   })
   const childCount = notes.filter(item => item.parentNoteId === note.id).length
+  const kanbanDimension = dimensions.find(isKanbanDimension)
+  const kanbanDoneCategory = kanbanDimension
+    ? categories.find(cat => cat.dimensionId === kanbanDimension.id && cat.kanbanState === 'done')
+    : null
+  const noteById = useMemo(() => new Map(notes.map(item => [item.id, item])), [notes])
+  const doneInfo = useMemo(() => {
+    const fallback = { done: false, explicit: false, inherited: false, inheritedFrom: null }
+    if (!kanbanDimension || !kanbanDoneCategory) return fallback
+    const explicitDoneNoteIds = new Set(
+      allAssignments
+        .filter(item => item.dimensionId === kanbanDimension.id && item.categoryId === kanbanDoneCategory.id)
+        .map(item => String(item.noteId))
+    )
+    const resolving = new Set()
+    const resolve = noteId => {
+      const normalizedId = String(noteId || '')
+      if (!normalizedId || resolving.has(normalizedId)) return fallback
+      resolving.add(normalizedId)
+      if (explicitDoneNoteIds.has(normalizedId)) {
+        resolving.delete(normalizedId)
+        return { done: true, explicit: true, inherited: false, inheritedFrom: noteById.get(normalizedId) || null }
+      }
+      const parentId = noteById.get(normalizedId)?.parentNoteId
+      if (parentId) {
+        const parentInfo = resolve(parentId)
+        if (parentInfo.done) {
+          resolving.delete(normalizedId)
+          return {
+            done: true,
+            explicit: false,
+            inherited: true,
+            inheritedFrom: parentInfo.inheritedFrom || noteById.get(String(parentId)) || null,
+          }
+        }
+      }
+      resolving.delete(normalizedId)
+      return fallback
+    }
+    return resolve(note.id)
+  }, [allAssignments, kanbanDimension, kanbanDoneCategory, note.id, noteById])
+  const isDone = doneInfo.done
+  const doneButtonLabel = doneInfo.inherited
+    ? `Done via ${doneInfo.inheritedFrom?.title || 'parent'}`
+    : isDone
+    ? 'Done'
+    : 'Mark as done'
+  const assignmentPickerCategories = kanbanDoneCategory
+    ? categories.filter(cat => cat.id !== kanbanDoneCategory.id)
+    : categories
 
   // Keep note title in sync if parent updates note
   useEffect(() => { setTitleVal(note.title) }, [note.title])
@@ -269,6 +324,7 @@ export default function NotePopup({ note, notes = [], project = null, isProjectR
         setPersonas(pers)
         setPersonaNoteAssignments(pnAsns)
         setTimeSlots(slots || [])
+        setAllAssignments(asns || [])
         // asns is array of { noteId, dimensionId, categoryId }
         const myAsns = asns.filter(a => a.noteId === note.id)
         const map = {}
@@ -494,19 +550,65 @@ export default function NotePopup({ note, notes = [], project = null, isProjectR
       if (oldCat === newCat) continue
       if (!newCat) {
         setAssignments(prev => { const n = { ...prev }; delete n[dimId]; return n })
+        setAllAssignments(prev => prev.filter(item => !(item.noteId === note.id && item.dimensionId === dimId)))
         try {
           await api.unassign(note.id, dimId)
           onAssignmentsChanged?.()
         }
-        catch (e) { console.error(e); setAssignments(old) }
+        catch (e) {
+          console.error(e)
+          setAssignments(old)
+          setAllAssignments(await api.getAssignments())
+        }
       } else {
         setAssignments(prev => ({ ...prev, [dimId]: newCat }))
+        setAllAssignments(prev => [
+          ...prev.filter(item => !(item.noteId === note.id && item.dimensionId === dimId)),
+          { noteId: note.id, dimensionId: dimId, categoryId: newCat },
+        ])
         try {
           await api.assign(note.id, dimId, newCat)
           onAssignmentsChanged?.()
         }
-        catch (e) { console.error(e); setAssignments(old) }
+        catch (e) {
+          console.error(e)
+          setAssignments(old)
+          setAllAssignments(await api.getAssignments())
+        }
       }
+    }
+  }
+
+  const toggleDone = async () => {
+    if (!kanbanDimension || !kanbanDoneCategory || doneSaving) return
+    const previousAssignments = { ...assignments }
+    const previousAllAssignments = allAssignments
+    setDoneSaving(true)
+    try {
+      if (doneInfo.explicit) {
+        setAssignments(prev => {
+          const next = { ...prev }
+          delete next[kanbanDimension.id]
+          return next
+        })
+        setAllAssignments(prev => prev.filter(item => !(item.noteId === note.id && item.dimensionId === kanbanDimension.id)))
+        await api.unassign(note.id, kanbanDimension.id)
+      } else {
+        setAssignments(prev => ({ ...prev, [kanbanDimension.id]: kanbanDoneCategory.id }))
+        setAllAssignments(prev => [
+          ...prev.filter(item => !(item.noteId === note.id && item.dimensionId === kanbanDimension.id)),
+          { noteId: note.id, dimensionId: kanbanDimension.id, categoryId: kanbanDoneCategory.id },
+        ])
+        await api.assign(note.id, kanbanDimension.id, kanbanDoneCategory.id)
+      }
+      playSound('settingToggle')
+      onAssignmentsChanged?.()
+    } catch (error) {
+      console.error(error)
+      setAssignments(previousAssignments)
+      setAllAssignments(previousAllAssignments)
+    } finally {
+      setDoneSaving(false)
     }
   }
 
@@ -594,22 +696,39 @@ export default function NotePopup({ note, notes = [], project = null, isProjectR
           </div>
           {dimensions.length === 0 ? (
             <p className={styles.emptyNote}>No dimensions defined yet.</p>
-          ) : assignedSummary.length === 0 ? (
-            <p className={styles.emptyNote}>No categories assigned.</p>
           ) : (
-            <div className={styles.compactCategoryList}>
-              {assignedSummary.map(({ dim, cat }) => (
-                <span
-                  key={dim.id}
-                  className={styles.compactCategoryBadge}
-                  style={{ borderColor: cat.color, background: `${cat.color}18`, color: cat.color }}
+            <>
+              {kanbanDoneCategory && (
+                <button
+                  type="button"
+                  className={`${styles.doneToggle} ${isDone ? styles.doneToggleActive : ''} ${doneInfo.inherited ? styles.doneToggleInherited : ''}`}
+                  onClick={toggleDone}
+                  disabled={doneSaving}
+                  aria-pressed={isDone}
+                  title={doneButtonLabel}
                 >
-                  <span className={styles.compactCategoryDim}>{dim.name}</span>
-                  <span className={styles.catDot} style={{ background: cat.color }} />
-                  {cat.name}
-                </span>
-              ))}
-            </div>
+                  <span className={styles.doneCheck}>{isDone ? '✓' : ''}</span>
+                  <span>{doneButtonLabel}</span>
+                </button>
+              )}
+              {assignedSummary.length === 0 ? (
+                <p className={styles.emptyNote}>No categories assigned.</p>
+              ) : (
+                <div className={styles.compactCategoryList}>
+                  {assignedSummary.map(({ dim, cat }) => (
+                    <span
+                      key={dim.id}
+                      className={styles.compactCategoryBadge}
+                      style={{ borderColor: cat.color, background: `${cat.color}18`, color: cat.color }}
+                    >
+                      <span className={styles.compactCategoryDim}>{dim.name}</span>
+                      <span className={styles.catDot} style={{ background: cat.color }} />
+                      {cat.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -846,7 +965,7 @@ export default function NotePopup({ note, notes = [], project = null, isProjectR
         <CategoryAssignmentPicker
           open={categoryPickerOpen}
           dimensions={dimensions}
-          categories={categories}
+          categories={assignmentPickerCategories}
           selections={assignments}
           onChange={handleCategoryChange}
           onClose={() => setCategoryPickerOpen(false)}

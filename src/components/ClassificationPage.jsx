@@ -171,7 +171,7 @@ function isKanbanDimension(dim) {
 }
 
 function kanbanCategoryRequiresTimeSlot(cat) {
-  return cat?.systemType === 'kanban' && ['scheduled', 'in_progress', 'done'].includes(cat.kanbanState)
+  return cat?.systemType === 'kanban' && ['scheduled', 'in_progress'].includes(cat.kanbanState)
 }
 
 function compareHierarchyNoteOrder(a, b) {
@@ -202,7 +202,7 @@ function specialDimensionRules(dim) {
     return 'Type is computed from the note role: Thought means no children and no time slot; Task means scheduled but not a project; Project means it contains child notes.'
   }
   if (isKanbanDimension(dim)) {
-    return 'Kanban reflects project process. Scheduled requires a time slot and can be implied by scheduling; In progress and Done also require a time slot; Unscheduled means no time slot and cannot be assigned from this page.'
+    return 'Kanban reflects project process. Scheduled requires a time slot and can be implied by scheduling; In progress also requires a time slot; Done can be assigned universally.'
   }
   if (dim.dynamic || dim.system) {
     return 'This is a special dimension. Its values are controlled by app rules instead of normal manual category editing.'
@@ -230,7 +230,7 @@ function categoryRules(cat, dimension = null, unassignedLabel = 'Unassigned') {
   if (cat.systemType === 'kanban') {
     if (cat.kanbanState === 'scheduled') return 'Scheduled contains notes with a time slot unless they were explicitly moved to In progress or Done.'
     if (cat.kanbanState === 'in_progress') return 'In progress is a real Kanban status, but only scheduled notes can be moved here.'
-    if (cat.kanbanState === 'done') return 'Done is a real Kanban status, but removing the note time slot automatically unschedules it.'
+    if (cat.kanbanState === 'done') return 'Done is a universal Kanban status. It can be assigned even when a note has no time slot.'
     return 'Kanban status is constrained by the note schedule.'
   }
   if (dimension?.system || dimension?.dynamic) return specialDimensionRules(dimension)
@@ -1080,12 +1080,16 @@ function CategoryEditModal({ cat, onClose, onSave, onDelete }) {
 }
 
 // ── Note row inside a container ───────────────────────────────────────────────
-function NoteRow({ note, paintCat, onPaint, paintPersona, onPersonaPaint, legendColor, hierarchyNumber, hierarchyPath, onNoteDrop, onOpen, canDrag = true, forceExpanded = false, getNotePersonas, onRemovePersona }) {
+function NoteRow({ note, paintCat, onPaint, paintPersona, onPersonaPaint, legendColor, hierarchyNumber, hierarchyPath, onNoteDrop, onOpen, onContextMenu, canDrag = true, forceExpanded = false, getNotePersonas, onRemovePersona, doneInfo = null }) {
   const [expanded, setExpanded] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [pathTooltip, setPathTooltip] = useState(null)
   const showContent = Boolean(note.html && (expanded || forceExpanded))
   const showHierarchyPath = Boolean(hierarchyNumber?.includes('.') && hierarchyPath)
+  const done = Boolean(doneInfo?.done)
+  const doneLabel = doneInfo?.inherited
+    ? `Done via ${doneInfo.inheritedFrom?.title || 'parent'}`
+    : 'Done'
 
   const openPathTooltip = event => {
     if (!showHierarchyPath) return
@@ -1131,6 +1135,7 @@ function NoteRow({ note, paintCat, onPaint, paintPersona, onPersonaPaint, legend
       onDragEnd={paintCat || paintPersona ? undefined : () => setDragging(false)}
       onClick={paintPersona ? e => { e.stopPropagation(); onPersonaPaint?.(note.id) } : paintCat ? e => { e.stopPropagation(); onPaint(note.id) } : undefined}
       onDoubleClick={paintCat || paintPersona ? undefined : e => { e.stopPropagation(); onOpen?.(note.id) }}
+      onContextMenu={paintCat || paintPersona ? undefined : e => onContextMenu?.(e, note.id)}
     >
       <div className={styles.noteRowHeader}>
         <button className={styles.rowChevron}
@@ -1148,6 +1153,15 @@ function NoteRow({ note, paintCat, onPaint, paintPersona, onPersonaPaint, legend
             onMouseLeave={() => setPathTooltip(null)}
           >
             {hierarchyNumber}
+          </span>
+        )}
+        {done && (
+          <span
+            className={`${styles.rowDoneBadge} ${doneInfo?.inherited ? styles.rowDoneBadgeInherited : ''}`}
+            title={doneLabel}
+            aria-label={doneLabel}
+          >
+            ✓
           </span>
         )}
         <span className={styles.rowTitle}>{note.title}</span>
@@ -1183,7 +1197,7 @@ function NoteRow({ note, paintCat, onPaint, paintPersona, onPersonaPaint, legend
 // ── Category container box ────────────────────────────────────────────────────
 function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, paintPersona, onPersonaCategoryPaint, onPersonaNotePaint, getNoteColor, getNotePersonas, onRemovePersona, catPersonas, onPersonaCatDrop, onRemoveCatPersona, onEdit, onCollapse,
   onCatDragStart, onCatDragEnd, onCatDragOver, onCatDrop, onReorderNote, insertSide, isDraggingCat, onNoteOpen,
-  getNoteHierarchyNumber, getNoteHierarchyPath, onBulkPaint, dynamic = false, readOnlyCategory = false, unassignedLabel = 'Unassigned', ruleText = '' }) {
+  getNoteHierarchyNumber, getNoteHierarchyPath, getNoteDoneInfo, onNoteContextMenu, onBulkPaint, dynamic = false, readOnlyCategory = false, unassignedLabel = 'Unassigned', ruleText = '' }) {
   const [isDragOver, setIsDragOver] = useState(false)
   const [isPersonaDragOver, setIsPersonaDragOver] = useState(false)
   const [allExpanded, setAllExpanded] = useState(false)
@@ -1377,6 +1391,8 @@ function ContainerBox({ cat, notes, onDrop, paintCat, onPaint, paintPersona, onP
               forceExpanded={allExpanded}
               getNotePersonas={getNotePersonas}
               onRemovePersona={onRemovePersona}
+              doneInfo={getNoteDoneInfo?.(g.id)}
+              onContextMenu={onNoteContextMenu}
               onOpen={onNoteOpen} />)
         }
       </div>
@@ -1954,6 +1970,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
   const [collapsedCatIds, setCollapsedCatIds]     = useState(new Set())
   const [unassignedCollapsed, setUnassignedCollapsed] = useState(false)
   const [floatingPanel, setFloatingPanel] = useState(null)
+  const [noteContextMenu, setNoteContextMenu] = useState(null)
   const [statusNotice, setStatusNotice] = useState('')
   const { confirm: confirmDialog, dialog: confirmDialogNode } = useConfirmDialog()
 
@@ -2067,6 +2084,19 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
     const timer = window.setTimeout(() => setStatusNotice(''), 4500)
     return () => window.clearTimeout(timer)
   }, [statusNotice])
+
+  useEffect(() => {
+    if (!noteContextMenu) return undefined
+    const close = () => setNoteContextMenu(null)
+    window.addEventListener('mousedown', close)
+    window.addEventListener('keydown', close)
+    window.addEventListener('scroll', close, true)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', close)
+      window.removeEventListener('scroll', close, true)
+    }
+  }, [noteContextMenu])
 
   useEffect(() => {
     if (!customTimeRanges.some(range => range?.endMode === 'now')) return undefined
@@ -2619,9 +2649,93 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
   const scheduledKanbanCategoryId = isKanbanContainerDimension
     ? categories.find(c => c.dimensionId === containerDimId && c.kanbanState === 'scheduled')?.id
     : null
+  const kanbanDoneCategory = categories.find(c => c.systemType === 'kanban' && c.kanbanState === 'done')
+  const noteById = useMemo(() => new Map(notes.map(item => [item.id, item])), [notes])
+  const explicitDoneNoteIds = useMemo(() => {
+    if (!kanbanDoneCategory) return new Set()
+    return new Set(
+      Object.entries(assignments)
+        .filter(([, dimAssignments]) => dimAssignments?.[kanbanDoneCategory.dimensionId] === kanbanDoneCategory.id)
+        .map(([noteId]) => String(noteId))
+    )
+  }, [assignments, kanbanDoneCategory])
+  const doneInfoByNoteId = useMemo(() => {
+    const fallback = { done: false, explicit: false, inherited: false, inheritedFrom: null }
+    if (!kanbanDoneCategory) return new Map()
+    const resolved = new Map()
+    const resolving = new Set()
+    const resolve = noteId => {
+      const normalizedId = String(noteId || '')
+      if (resolved.has(normalizedId)) return resolved.get(normalizedId)
+      if (!normalizedId || resolving.has(normalizedId)) return fallback
+      resolving.add(normalizedId)
+      if (explicitDoneNoteIds.has(normalizedId)) {
+        const info = { done: true, explicit: true, inherited: false, inheritedFrom: noteById.get(normalizedId) || null }
+        resolved.set(normalizedId, info)
+        resolving.delete(normalizedId)
+        return info
+      }
+      const parentId = noteById.get(normalizedId)?.parentNoteId
+      if (parentId) {
+        const parentInfo = resolve(parentId)
+        if (parentInfo.done) {
+          const info = {
+            done: true,
+            explicit: false,
+            inherited: true,
+            inheritedFrom: parentInfo.inheritedFrom || noteById.get(String(parentId)) || null,
+          }
+          resolved.set(normalizedId, info)
+          resolving.delete(normalizedId)
+          return info
+        }
+      }
+      resolved.set(normalizedId, fallback)
+      resolving.delete(normalizedId)
+      return fallback
+    }
+    notes.forEach(item => resolve(item.id))
+    return resolved
+  }, [explicitDoneNoteIds, kanbanDoneCategory, noteById, notes])
+  const getNoteDoneInfo = noteId => doneInfoByNoteId.get(String(noteId || '')) || { done: false, explicit: false, inherited: false, inheritedFrom: null }
+  const isNoteDone = noteId => getNoteDoneInfo(noteId).done
+  const openNoteContextMenu = (event, noteId) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setNoteContextMenu({
+      noteId,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 220)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 72)),
+    })
+  }
+  const toggleNoteDone = async noteId => {
+    if (!kanbanDoneCategory) return
+    const dimensionId = kanbanDoneCategory.dimensionId
+    const wasExplicitDone = getNoteDoneInfo(noteId).explicit
+    setNoteContextMenu(null)
+    playSound('settingToggle')
+    setAssignments(prev => {
+      const next = { ...prev }
+      const dimAssignments = { ...(next[noteId] ?? {}) }
+      if (wasExplicitDone) delete dimAssignments[dimensionId]
+      else dimAssignments[dimensionId] = kanbanDoneCategory.id
+      next[noteId] = dimAssignments
+      return next
+    })
+    try {
+      if (wasExplicitDone) await api.unassign(noteId, dimensionId)
+      else await api.assign(noteId, dimensionId, kanbanDoneCategory.id)
+    } catch (error) {
+      console.error(error)
+      applyAssignments(await api.getAssignments())
+    }
+  }
   const effectiveContainerCategoryId = noteId => {
     const assignedCategoryId = assignments[noteId]?.[containerDimId]
     if (!isKanbanContainerDimension) return assignedCategoryId
+    if (kanbanDoneCategory && isNoteDone(noteId)) return kanbanDoneCategory.id
+    const assignedCat = categories.find(cat => cat.id === assignedCategoryId)
+    if (assignedCat && !kanbanCategoryRequiresTimeSlot(assignedCat)) return assignedCategoryId
     if (!timeSlotNoteIds.has(noteId)) return null
     return assignedCategoryId || scheduledKanbanCategoryId
   }
@@ -2850,7 +2964,7 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
       : containerDimId === TIME_DIMENSION_ID || containerDimId === TYPE_DIMENSION_ID
       ? []
       : isKanbanContainerDimension
-      ? visibleNotes.filter(g => !timeSlotNoteIds.has(g.id))
+      ? visibleNotes.filter(g => !timeSlotNoteIds.has(g.id) && !effectiveContainerCategoryId(g.id))
       : visibleNotes.filter(g => !assignments[g.id]?.[containerDimId]))
     : visibleNotes
   const showUnassignedBox = containerDimId !== TIME_DIMENSION_ID && containerDimId !== TYPE_DIMENSION_ID
@@ -3000,6 +3114,8 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
               getNoteColor={getNoteLegendColor}
               getNoteHierarchyNumber={noteId => hierarchyIndexByNoteId.get(noteId)?.number}
               getNoteHierarchyPath={noteId => hierarchyIndexByNoteId.get(noteId)?.path}
+              getNoteDoneInfo={getNoteDoneInfo}
+              onNoteContextMenu={openNoteContextMenu}
               getNotePersonas={noteId => notePersonasMap[noteId] || []}
               onRemovePersona={(personaId, noteId) => {
                 api.unassignPersonaFromNote(personaId, noteId).then(() => onPeopleChanged?.()).catch(console.error)
@@ -3029,6 +3145,8 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
               getNoteColor={getNoteLegendColor}
               getNoteHierarchyNumber={noteId => hierarchyIndexByNoteId.get(noteId)?.number}
               getNoteHierarchyPath={noteId => hierarchyIndexByNoteId.get(noteId)?.path}
+              getNoteDoneInfo={getNoteDoneInfo}
+              onNoteContextMenu={openNoteContextMenu}
               getNotePersonas={noteId => notePersonasMap[noteId] || []}
               onRemovePersona={(personaId, noteId) => {
                 api.unassignPersonaFromNote(personaId, noteId).then(() => onPeopleChanged?.()).catch(console.error)
@@ -3071,6 +3189,8 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
               getNoteColor={getNoteLegendColor}
               getNoteHierarchyNumber={noteId => hierarchyIndexByNoteId.get(noteId)?.number}
               getNoteHierarchyPath={noteId => hierarchyIndexByNoteId.get(noteId)?.path}
+              getNoteDoneInfo={getNoteDoneInfo}
+              onNoteContextMenu={openNoteContextMenu}
               getNotePersonas={noteId => notePersonasMap[noteId] || []}
               onRemovePersona={(personaId, noteId) => {
                 api.unassignPersonaFromNote(personaId, noteId).then(() => onPeopleChanged?.()).catch(console.error)
@@ -3133,6 +3253,23 @@ export default function ClassificationPage({ notes = [], workspaceRootNoteId = n
             refreshKey={peopleRefreshKey}
           />
         </div>
+
+        {noteContextMenu && createPortal(
+          <div
+            className={styles.noteContextMenu}
+            style={{ left: noteContextMenu.x, top: noteContextMenu.y }}
+            onMouseDown={event => event.stopPropagation()}
+          >
+            <button type="button" onClick={() => toggleNoteDone(noteContextMenu.noteId)}>
+              {getNoteDoneInfo(noteContextMenu.noteId).explicit
+                ? 'Mark as not done'
+                : getNoteDoneInfo(noteContextMenu.noteId).inherited
+                ? 'Mark this note as done'
+                : 'Mark as done'}
+            </button>
+          </div>,
+          document.body
+        )}
 
       </div>
 

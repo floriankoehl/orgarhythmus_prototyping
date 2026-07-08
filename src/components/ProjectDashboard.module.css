@@ -375,6 +375,17 @@
   background: #e5e7eb;
 }
 
+.hierarchyContextMenu .hierarchyContextDone {
+  color: #15803d;
+  font-weight: 800;
+}
+
+.hierarchyContextMenu .hierarchyContextDone:hover,
+.hierarchyContextMenu .hierarchyContextDone:focus-visible {
+  background: #f0fdf4;
+  color: #166534;
+}
+
 .hierarchyContextMenu .hierarchyContextDanger {
   color: #b91c1c;
 }

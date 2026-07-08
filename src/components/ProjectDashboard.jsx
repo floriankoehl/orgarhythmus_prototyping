@@ -279,7 +279,7 @@ function makeColorCursor(color) {
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, crosshair`
 }
 
-export default function ProjectDashboard({ project, notes = [], workspaceRootNote = null, workspaceNote = null, onUpdate, onWorkspaceNoteUpdated, onWorkspaceOpen, onNoteOpen, onNotesChanged, onProjectDeleted, isActive, structureOnly = false }) {
+export default function ProjectDashboard({ project, notes = [], workspaceRootNote = null, workspaceNote = null, onUpdate, onWorkspaceNoteUpdated, onWorkspaceOpen, onNoteOpen, onNotesChanged, onProjectDeleted, isActive, structureOnly = false, assignmentsRefreshKey = 0 }) {
   const isNoteWorkspace = Boolean(workspaceNote)
   const workspaceName = workspaceNote?.title || project.name
   const workspaceDesc = isNoteWorkspace ? (workspaceNote?.html ?? '') : (project.description || '')
@@ -408,6 +408,76 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     })
     return colors
   }, [notes, structureAssignments, structureCategories, structureColorDimId, structureTypeCategories, timeSlots])
+  const structureTypeInfoByNoteId = useMemo(() => {
+    const categoriesById = new Map(structureTypeCategories.map(category => [category.id, category]))
+    return new Map(notes.map(note => {
+      const categoryId = typeCategoryIdForNote(note, { notes, timeSlots })
+      const category = categoriesById.get(categoryId) || structureTypeCategories[0]
+      return [note.id, {
+        role: category.typeRole || 'thought',
+        label: category.name || 'Thought',
+        color: category.color || '#94a3b8',
+      }]
+    }))
+  }, [notes, structureTypeCategories, timeSlots])
+  const getStructureTypeInfo = useCallback(
+    noteId => structureTypeInfoByNoteId.get(noteId),
+    [structureTypeInfoByNoteId]
+  )
+  const structureKanbanDoneCategory = useMemo(
+    () => structureCategories.find(category => category.systemType === 'kanban' && category.kanbanState === 'done'),
+    [structureCategories]
+  )
+  const structureExplicitDoneNoteIds = useMemo(() => {
+    if (!structureKanbanDoneCategory) return new Set()
+    return new Set(
+      structureAssignments
+        .filter(assignment => assignment.dimensionId === structureKanbanDoneCategory.dimensionId && assignment.categoryId === structureKanbanDoneCategory.id)
+        .map(assignment => String(assignment.noteId))
+    )
+  }, [structureAssignments, structureKanbanDoneCategory])
+  const structureDoneInfoByNoteId = useMemo(() => {
+    const fallback = { done: false, explicit: false, inherited: false, inheritedFrom: null }
+    if (!structureKanbanDoneCategory) return new Map()
+    const resolved = new Map()
+    const resolving = new Set()
+    const resolve = noteId => {
+      const normalizedId = String(noteId || '')
+      if (resolved.has(normalizedId)) return resolved.get(normalizedId)
+      if (!normalizedId || resolving.has(normalizedId)) return fallback
+      resolving.add(normalizedId)
+      if (structureExplicitDoneNoteIds.has(normalizedId)) {
+        const info = { done: true, explicit: true, inherited: false, inheritedFrom: notesById.get(normalizedId) || null }
+        resolved.set(normalizedId, info)
+        resolving.delete(normalizedId)
+        return info
+      }
+      const parentId = notesById.get(normalizedId)?.parentNoteId
+      if (parentId) {
+        const parentInfo = resolve(parentId)
+        if (parentInfo.done) {
+          const info = {
+            done: true,
+            explicit: false,
+            inherited: true,
+            inheritedFrom: parentInfo.inheritedFrom || notesById.get(String(parentId)) || null,
+          }
+          resolved.set(normalizedId, info)
+          resolving.delete(normalizedId)
+          return info
+        }
+      }
+      resolved.set(normalizedId, fallback)
+      resolving.delete(normalizedId)
+      return fallback
+    }
+    notes.forEach(note => resolve(note.id))
+    return resolved
+  }, [notes, notesById, structureExplicitDoneNoteIds, structureKanbanDoneCategory])
+  const getStructureDoneInfo = useCallback(
+    noteId => structureDoneInfoByNoteId.get(String(noteId || '')) || { done: false, explicit: false, inherited: false, inheritedFrom: null },
+    [structureDoneInfoByNoteId]
+  )
   const structurePaintCursor = structurePaintCat ? makeColorCursor(structurePaintCat.color) : ''
 
   useEffect(() => {
@@ -692,7 +762,7 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     event.preventDefault()
     event.stopPropagation()
     const menuWidth = 210
-    const menuHeight = 126
+    const menuHeight = 164
     setHierarchyContextMenu({
       noteId,
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
@@ -797,7 +867,7 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
   useEffect(() => {
     if (!isActive || !structureOnly) return
     reloadStructureColorData()
-  }, [isActive, reloadStructureColorData, structureOnly])
+  }, [assignmentsRefreshKey, isActive, reloadStructureColorData, structureOnly])
 
   useEffect(() => {
     if (structureColorDimId && !structureDynamicDimensions.some(dim => dim.id === structureColorDimId)) {
@@ -900,6 +970,33 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     }
   }
 
+  const toggleStructureDone = useCallback(async noteId => {
+    if (!noteId || !structureKanbanDoneCategory) {
+      showHierarchyWarning('Done unavailable', 'The Kanban Done category is not available for this project yet.')
+      return
+    }
+    const doneInfo = getStructureDoneInfo(noteId)
+    const dimensionId = structureKanbanDoneCategory.dimensionId
+    setHierarchyContextMenu(null)
+    playSound('settingToggle')
+    setStructureAssignments(previous => {
+      const withoutDoneAssignment = previous.filter(assignment => !(assignment.noteId === noteId && assignment.dimensionId === dimensionId))
+      if (doneInfo.explicit) return withoutDoneAssignment
+      return [
+        ...withoutDoneAssignment,
+        { noteId, dimensionId, categoryId: structureKanbanDoneCategory.id },
+      ]
+    })
+    try {
+      if (doneInfo.explicit) await api.unassign(noteId, dimensionId)
+      else await api.assign(noteId, dimensionId, structureKanbanDoneCategory.id)
+    } catch (error) {
+      console.error(error)
+      reloadStructureColorData()
+      showHierarchyWarning('Done not changed', error?.message || 'The done state could not be saved.')
+    }
+  }, [getStructureDoneInfo, reloadStructureColorData, showHierarchyWarning, structureKanbanDoneCategory])
+
   const hierarchySection = hierarchyRows.length > 0 && (
     <div className={`${styles.section} ${structureOnly ? styles.structureSection : ''}`}>
       <div className={styles.sectionHeader}>
@@ -967,6 +1064,9 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
           }}
           onClearSelection={() => setSelectedHierarchyNoteIds(new Set())}
           colorByNoteId={structureOnly ? structureColorByNoteId : {}}
+          getNoteDoneInfo={structureOnly ? getStructureDoneInfo : null}
+          getNoteTypeInfo={structureOnly ? getStructureTypeInfo : null}
+          showHierarchyTypeIcon={!structureOnly}
           paintCategoryId={structureOnly ? structurePaintCat?.id : ''}
           paintCursor={structureOnly ? structurePaintCursor : ''}
           ariaLabel="Project, ancestors, and child notes"
@@ -1122,12 +1222,29 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
         if (!contextNote) return null
         const hasChildren = notes.some(note => note.parentNoteId === contextNote.id)
         const isProjectRoot = contextNote.id === project.rootNoteId
+        const doneInfo = structureOnly ? getStructureDoneInfo(contextNote.id) : null
         return (
           <div
             className={styles.hierarchyContextMenu}
             style={{ left: hierarchyContextMenu.x, top: hierarchyContextMenu.y }}
             role="menu"
             onMouseDown={event => event.stopPropagation()}>
+            {structureOnly && (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={styles.hierarchyContextDone}
+                  onClick={() => toggleStructureDone(contextNote.id)}>
+                  {doneInfo?.explicit
+                    ? 'Mark as undone'
+                    : doneInfo?.inherited
+                      ? 'Mark this note as done'
+                      : 'Mark as done'}
+                </button>
+                <div className={styles.hierarchyContextDivider} />
+              </>
+            )}
             <button type="button" role="menuitem" onClick={() => {
               setHierarchyContextMenu(null)
               setNewNoteDraft({ parentNoteId: contextNote.id, title: '' })
