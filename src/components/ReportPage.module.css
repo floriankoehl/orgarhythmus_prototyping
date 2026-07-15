@@ -272,7 +272,7 @@
   position: absolute;
   top: calc(-1 * var(--section-top-gap, 0px) - 22px);
   bottom: 8px;
-  left: calc(-0.5 * var(--report-indent-step));
+  left: calc(-0.92 * var(--report-indent-step));
   width: 1px;
   border-radius: 999px;
   background: #d7deea;
@@ -283,7 +283,7 @@
   position: absolute;
   top: calc(-1 * var(--section-top-gap, 0px) - 22px);
   bottom: 8px;
-  left: calc(var(--report-tree-line-offset) * var(--report-indent-step));
+  left: calc((var(--report-tree-line-offset) - 0.42) * var(--report-indent-step));
   width: 1px;
   border-radius: 999px;
   background: #d7deea;
@@ -294,11 +294,15 @@
   top: 18px;
 }
 
+.sectionBlock[data-has-branch="true"][data-tree-root="true"]::before {
+  top: 24px;
+}
+
 .sectionBlock[data-has-branch="true"]::after {
   content: "";
   position: absolute;
   top: 4px;
-  left: calc(-0.5 * var(--report-indent-step));
+  left: calc(-0.92 * var(--report-indent-step));
   width: calc(var(--report-indent-step) * 0.56);
   height: 15px;
   border-left: 1px solid #d7deea;
@@ -306,6 +310,14 @@
   border-bottom-left-radius: 7px;
   background: transparent;
   pointer-events: none;
+}
+
+.sectionBlock[data-has-branch="true"][data-tree-root="true"]::after {
+  top: 24px;
+  border-top: 1px solid #d7deea;
+  border-bottom: 0;
+  border-top-left-radius: 7px;
+  border-bottom-left-radius: 0;
 }
 
 .sectionBlock[data-has-branch="true"][data-branch-start="true"]::after {
@@ -339,7 +351,7 @@
 .sectionTreeJoin {
   position: absolute;
   top: -10px;
-  left: calc(-1.5 * var(--report-indent-step));
+  left: calc(-1.92 * var(--report-indent-step));
   width: calc(var(--report-indent-step) * 1.56);
   height: 29px;
   border-left: 1px solid #d7deea;
@@ -629,6 +641,10 @@
   align-items: baseline;
   column-gap: 8px;
   margin: 0 0 10px;
+}
+
+.sectionHeading[data-numbering="false"] {
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
 }
 
 .sectionNumber {

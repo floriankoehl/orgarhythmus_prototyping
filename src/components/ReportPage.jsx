@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { CalendarClock, Eye, EyeOff, Settings } from 'lucide-react'
+import { CalendarClock, Eye, EyeOff, ListOrdered, Settings } from 'lucide-react'
 import { api } from '../api'
 import { usePersonaCursor } from '../hooks/usePersonaCursor'
 import { playSound } from '../sounds/sound_registry'
@@ -391,7 +391,7 @@ function ReportScheduleBadge({ schedule }) {
   )
 }
 
-function ReportSection({ row, project, isProjectRoot, childrenCollapsed, attributes, detailMode, activeColor, sideMeta, paintCat, paintPersonaId, registerSection, onTitleChange, onBodyChange, onToggleChildren, onToggleDetails, onTypeContextMenu, onPaint, onPersonaPaint }) {
+function ReportSection({ row, project, isProjectRoot, childrenCollapsed, showNumbering, attributes, detailMode, activeColor, sideMeta, paintCat, paintPersonaId, registerSection, onTitleChange, onBodyChange, onToggleChildren, onToggleDetails, onTypeContextMenu, onPaint, onPersonaPaint }) {
   const title = isProjectRoot && project?.name ? project.name : row.note.title || 'Untitled'
   const body = isProjectRoot && project?.description ? project.description : row.note.html || ''
   const isReportRoot = row.relation === 'current' || row.depth === 0
@@ -422,15 +422,17 @@ function ReportSection({ row, project, isProjectRoot, childrenCollapsed, attribu
         else onPaint(row.note.id)
       } : undefined}>
       <div className={styles.sectionMain}>
-        <div className={styles.sectionHeading}>
-          <button
-            type="button"
-            className={styles.sectionNumberButton}
-            onClick={() => onToggleChildren(row.note.id)}
-            title={childrenCollapsed ? 'Expand child sections' : 'Collapse child sections'}
-          aria-label={childrenCollapsed ? `Expand children of ${title}` : `Collapse children of ${title}`}>
-            {row.outlineNumber}
-          </button>
+        <div className={styles.sectionHeading} data-numbering={showNumbering ? 'true' : 'false'}>
+          {showNumbering && (
+            <button
+              type="button"
+              className={styles.sectionNumberButton}
+              onClick={() => onToggleChildren(row.note.id)}
+              title={childrenCollapsed ? 'Expand child sections' : 'Collapse child sections'}
+              aria-label={childrenCollapsed ? `Expand children of ${title}` : `Collapse children of ${title}`}>
+              {row.outlineNumber}
+            </button>
+          )}
         {(() => {
           const doneInfo = sideMeta.doneInfo
           const done = Boolean(doneInfo?.done)
@@ -522,6 +524,7 @@ export default function ReportPage({
   const [paintPersonaId, setPaintPersonaId] = useState(null)
   const [floatingPanel, setFloatingPanel] = useState(null)
   const [reportSettingsOpen, setReportSettingsOpen] = useState(false)
+  const [showNumbering, setShowNumbering] = useState(true)
   const [typeContextMenu, setTypeContextMenu] = useState(null)
   const [pendingCreatedNoteId, setPendingCreatedNoteId] = useState(null)
   const sectionRefs = useRef({})
@@ -1247,6 +1250,10 @@ export default function ReportPage({
                 <Eye size={15} strokeWidth={2.2} />
                 <span>Expand all descriptions</span>
               </button>
+              <button type="button" className={styles.reportSettingsAction} onClick={() => setShowNumbering(value => !value)}>
+                <ListOrdered size={15} strokeWidth={2.2} />
+                <span>{showNumbering ? 'Hide numeration' : 'Show numeration'}</span>
+              </button>
             </div>
           )}
         </div>
@@ -1273,7 +1280,7 @@ export default function ReportPage({
             const isRootRow = row.note.id === rootNoteId || row.relation === 'current' || row.depth === 0
             const previousRow = visibleReportRows[index - 1]
             const nextRow = visibleReportRows[index + 1]
-            const displayDepth = Math.max(0, row.depth)
+            const displayDepth = Math.max(0, row.depth) + 1
             const startsChildGroup = Boolean(previousRow && row.depth > previousRow.depth)
             const startsNestedChildGroup = startsChildGroup && displayDepth > 1
             const needsIndentJoin = startsNestedChildGroup
@@ -1302,7 +1309,8 @@ export default function ReportPage({
                 key={row.note.id}
                 className={styles.sectionBlock}
                 data-depth={row.depth}
-                data-has-branch={row.depth > 0 ? 'true' : undefined}
+                data-has-branch={displayDepth > 0 ? 'true' : undefined}
+                data-tree-root={isRootRow ? 'true' : undefined}
                 data-branch-start={startsNestedChildGroup ? 'true' : undefined}
                 style={{
                   '--section-top-gap': `${sectionTopGap}px`,
@@ -1322,6 +1330,7 @@ export default function ReportPage({
                   project={project}
                   isProjectRoot={row.note.id === project?.rootNoteId}
                   childrenCollapsed={collapsedStructureNoteIds.has(row.note.id)}
+                  showNumbering={showNumbering}
                   attributes={reportAttributesByNoteId.get(row.note.id) || []}
                   detailMode={detailModesByNoteId.get(row.note.id) || DETAIL_MODE_DEFAULT}
                   activeColor={activeColorByNoteId.get(row.note.id)}
