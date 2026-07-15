@@ -1293,6 +1293,7 @@ export default function ReportPage({
             const endingLineSet = new Set(endingLineIndices)
             const endsCurrentBranch = endingLineSet.has(displayDepth - 1)
             const hasVisibleChildAfter = nextRow && nextRow.depth > row.depth
+            const closesAsVisibleLeaf = !hasVisibleChildAfter && endingLineIndices.length > 0
             const primaryInsertMode = isRootRow || hasVisibleChildAfter ? 'child' : 'after'
             const levelRise = previousRow ? Math.max(0, previousRow.depth - row.depth) : 0
             const sameLevel = previousRow && previousRow.depth === row.depth
@@ -1320,6 +1321,7 @@ export default function ReportPage({
                 data-tree-root={isRootRow ? 'true' : undefined}
                 data-branch-start={startsNestedChildGroup ? 'true' : undefined}
                 data-branch-end={endsCurrentBranch ? 'true' : undefined}
+                data-branch-end-leaf={endsCurrentBranch && closesAsVisibleLeaf ? 'true' : undefined}
                 style={{
                   '--section-top-gap': `${sectionTopGap}px`,
                   '--report-tree-depth': displayDepth,
@@ -1330,6 +1332,7 @@ export default function ReportPage({
                     className={[
                       styles.sectionTreeAncestorLine,
                       endingLineSet.has(lineIndex) && styles.sectionTreeAncestorLineEnding,
+                      closesAsVisibleLeaf && endingLineSet.has(lineIndex) && styles.sectionTreeAncestorLineEndingLeaf,
                     ].filter(Boolean).join(' ')}
                     style={{ '--report-tree-line-offset': lineIndex + 0.5 - displayDepth }}
                     aria-hidden="true"
@@ -1339,7 +1342,10 @@ export default function ReportPage({
                 {endingLineIndices.map(lineIndex => (
                   <span
                     key={`end-join-${lineIndex}`}
-                    className={styles.sectionTreeEndJoin}
+                    className={[
+                      styles.sectionTreeEndJoin,
+                      closesAsVisibleLeaf && styles.sectionTreeEndJoinLeaf,
+                    ].filter(Boolean).join(' ')}
                     style={{ '--report-tree-end-offset': lineIndex + 0.5 - displayDepth }}
                     aria-hidden="true"
                   />

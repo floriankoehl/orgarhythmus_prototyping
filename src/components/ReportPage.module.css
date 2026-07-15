@@ -295,6 +295,12 @@
   bottom: 23px;
 }
 
+.sectionBlock[data-has-branch="true"][data-branch-end-leaf="true"]::before,
+.sectionTreeAncestorLineEndingLeaf {
+  bottom: auto;
+  height: calc(var(--section-top-gap, 0px) + 45px);
+}
+
 .sectionBlock[data-has-branch="true"][data-branch-start="true"]::before {
   top: 18px;
 }
@@ -377,6 +383,11 @@
   border-bottom-right-radius: 7px;
   background: transparent;
   pointer-events: none;
+}
+
+.sectionTreeEndJoinLeaf {
+  top: 23px;
+  bottom: auto;
 }
 
 .sheet[data-depth-span="shallow"] .sectionTreeJoin {
