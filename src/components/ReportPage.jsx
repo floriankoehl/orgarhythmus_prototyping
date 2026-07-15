@@ -23,6 +23,7 @@ const STRUCTURE_COLLAPSED_WIDTH = 42
 const DETAIL_MODE_ALL = 'all'
 const DETAIL_MODE_DESCRIPTION = 'description'
 const DETAIL_MODE_NONE = 'none'
+const DETAIL_MODE_DEFAULT = DETAIL_MODE_DESCRIPTION
 const MIN_TIME_SLOT_DURATION = 10
 const DAY_MINUTES = 60 * 24
 const MONTH_MINUTES = DAY_MINUTES * 30
@@ -1018,13 +1019,13 @@ export default function ReportPage({
   const toggleDetails = noteId => {
     setDetailModesByNoteId(previous => {
       const next = new Map(previous)
-      const current = next.get(noteId) || DETAIL_MODE_ALL
+      const current = next.get(noteId) || DETAIL_MODE_DEFAULT
       const nextMode = current === DETAIL_MODE_ALL
         ? DETAIL_MODE_DESCRIPTION
         : current === DETAIL_MODE_DESCRIPTION
           ? DETAIL_MODE_NONE
           : DETAIL_MODE_ALL
-      if (nextMode === DETAIL_MODE_ALL) next.delete(noteId)
+      if (nextMode === DETAIL_MODE_DEFAULT) next.delete(noteId)
       else next.set(noteId, nextMode)
       return next
     })
@@ -1036,7 +1037,7 @@ export default function ReportPage({
   }
 
   const expandAllDetails = () => {
-    setDetailModesByNoteId(new Map())
+    setDetailModesByNoteId(new Map(numberedRows.map(row => [row.note.id, DETAIL_MODE_ALL])))
     setReportSettingsOpen(false)
   }
 
@@ -1273,6 +1274,8 @@ export default function ReportPage({
             const previousRow = visibleReportRows[index - 1]
             const nextRow = visibleReportRows[index + 1]
             const displayDepth = Math.max(0, row.depth - 1)
+            const startsChildGroup = Boolean(previousRow && row.depth > previousRow.depth)
+            const needsIndentJoin = startsChildGroup && displayDepth > 0
             const hasVisibleChildAfter = nextRow && nextRow.depth > row.depth
             const primaryInsertMode = isRootRow || hasVisibleChildAfter ? 'child' : 'after'
             const levelRise = previousRow ? Math.max(0, previousRow.depth - row.depth) : 0
@@ -1297,18 +1300,20 @@ export default function ReportPage({
                 key={row.note.id}
                 className={styles.sectionBlock}
                 data-depth={row.depth}
-                data-has-branch={displayDepth > 1 ? 'true' : undefined}
+                data-has-branch={row.depth > 1 ? 'true' : undefined}
+                data-branch-start={startsChildGroup ? 'true' : undefined}
                 style={{
                   '--section-top-gap': `${sectionTopGap}px`,
                   '--report-tree-depth': displayDepth,
                 }}>
+                {needsIndentJoin && <span className={styles.sectionTreeJoin} aria-hidden="true" />}
                 <ReportSection
                   row={row}
                   project={project}
                   isProjectRoot={row.note.id === project?.rootNoteId}
                   childrenCollapsed={collapsedStructureNoteIds.has(row.note.id)}
                   attributes={reportAttributesByNoteId.get(row.note.id) || []}
-                  detailMode={detailModesByNoteId.get(row.note.id) || DETAIL_MODE_ALL}
+                  detailMode={detailModesByNoteId.get(row.note.id) || DETAIL_MODE_DEFAULT}
                   activeColor={activeColorByNoteId.get(row.note.id)}
                   sideMeta={{
                     typeCategory: typeCategoryByNoteId.get(row.note.id),

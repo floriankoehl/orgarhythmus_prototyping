@@ -279,25 +279,61 @@
   pointer-events: none;
 }
 
+.sectionBlock[data-has-branch="true"][data-branch-start="true"]::before {
+  top: 18px;
+}
+
 .sectionBlock[data-has-branch="true"]::after {
   content: "";
   position: absolute;
-  top: 18px;
+  top: 4px;
   left: calc(-0.5 * var(--report-indent-step));
-  width: calc(var(--report-indent-step) * 0.5);
+  width: calc(var(--report-indent-step) * 0.56);
+  height: 15px;
+  border-left: 1px solid #d7deea;
+  border-bottom: 1px solid #d7deea;
+  border-bottom-left-radius: 7px;
+  background: transparent;
+  pointer-events: none;
+}
+
+.sectionBlock[data-has-branch="true"][data-branch-start="true"]::after {
+  display: none;
+}
+
+.sheet[data-depth-span="shallow"] .sectionBlock[data-has-branch="true"]::before {
+  background: #e2e8f0;
+}
+
+.sheet[data-depth-span="shallow"] .sectionBlock[data-has-branch="true"]::after {
+  border-color: #e2e8f0;
+}
+
+.sheet[data-depth-span="deep"] .sectionBlock[data-has-branch="true"]::before {
+  background: #cbd5e1;
+}
+
+.sheet[data-depth-span="deep"] .sectionBlock[data-has-branch="true"]::after {
+  border-color: #cbd5e1;
+}
+
+.sectionTreeJoin {
+  position: absolute;
+  top: 18px;
+  left: calc(-1.5 * var(--report-indent-step));
+  width: calc(var(--report-indent-step) * 1.56);
   height: 1px;
+  border: 0;
   border-radius: 999px;
   background: #d7deea;
   pointer-events: none;
 }
 
-.sheet[data-depth-span="shallow"] .sectionBlock[data-has-branch="true"]::before,
-.sheet[data-depth-span="shallow"] .sectionBlock[data-has-branch="true"]::after {
+.sheet[data-depth-span="shallow"] .sectionTreeJoin {
   background: #e2e8f0;
 }
 
-.sheet[data-depth-span="deep"] .sectionBlock[data-has-branch="true"]::before,
-.sheet[data-depth-span="deep"] .sectionBlock[data-has-branch="true"]::after {
+.sheet[data-depth-span="deep"] .sectionTreeJoin {
   background: #cbd5e1;
 }
 
