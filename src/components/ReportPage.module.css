@@ -290,12 +290,17 @@
   pointer-events: none;
 }
 
+.sectionBlock[data-has-branch="true"][data-branch-end="true"]::before,
+.sectionTreeAncestorLineEnding {
+  bottom: 23px;
+}
+
 .sectionBlock[data-has-branch="true"][data-branch-start="true"]::before {
   top: 18px;
 }
 
 .sectionBlock[data-has-branch="true"][data-tree-root="true"]::before {
-  top: 24px;
+  top: 27px;
 }
 
 .sectionBlock[data-has-branch="true"]::after {
@@ -361,11 +366,32 @@
   pointer-events: none;
 }
 
+.sectionTreeEndJoin {
+  position: absolute;
+  bottom: 4px;
+  left: calc((var(--report-tree-end-offset) - 1.98) * var(--report-indent-step));
+  width: calc(var(--report-indent-step) * 1.56);
+  height: 19px;
+  border-right: 1px solid #d7deea;
+  border-bottom: 1px solid #d7deea;
+  border-bottom-right-radius: 7px;
+  background: transparent;
+  pointer-events: none;
+}
+
 .sheet[data-depth-span="shallow"] .sectionTreeJoin {
   border-color: #e2e8f0;
 }
 
+.sheet[data-depth-span="shallow"] .sectionTreeEndJoin {
+  border-color: #e2e8f0;
+}
+
 .sheet[data-depth-span="deep"] .sectionTreeJoin {
+  border-color: #cbd5e1;
+}
+
+.sheet[data-depth-span="deep"] .sectionTreeEndJoin {
   border-color: #cbd5e1;
 }
 

@@ -1281,10 +1281,17 @@ export default function ReportPage({
             const previousRow = visibleReportRows[index - 1]
             const nextRow = visibleReportRows[index + 1]
             const displayDepth = Math.max(0, row.depth) + 1
+            const nextDisplayDepth = nextRow ? Math.max(0, nextRow.depth) + 1 : 0
             const startsChildGroup = Boolean(previousRow && row.depth > previousRow.depth)
             const startsNestedChildGroup = startsChildGroup && displayDepth > 1
             const needsIndentJoin = startsNestedChildGroup
             const ancestorLineCount = Math.max(0, displayDepth - 1)
+            const endingLineIndices = Array.from(
+              { length: Math.max(0, displayDepth - nextDisplayDepth) },
+              (_, closeIndex) => displayDepth - 1 - closeIndex,
+            ).filter(lineIndex => lineIndex > 0)
+            const endingLineSet = new Set(endingLineIndices)
+            const endsCurrentBranch = endingLineSet.has(displayDepth - 1)
             const hasVisibleChildAfter = nextRow && nextRow.depth > row.depth
             const primaryInsertMode = isRootRow || hasVisibleChildAfter ? 'child' : 'after'
             const levelRise = previousRow ? Math.max(0, previousRow.depth - row.depth) : 0
@@ -1312,6 +1319,7 @@ export default function ReportPage({
                 data-has-branch={displayDepth > 0 ? 'true' : undefined}
                 data-tree-root={isRootRow ? 'true' : undefined}
                 data-branch-start={startsNestedChildGroup ? 'true' : undefined}
+                data-branch-end={endsCurrentBranch ? 'true' : undefined}
                 style={{
                   '--section-top-gap': `${sectionTopGap}px`,
                   '--report-tree-depth': displayDepth,
@@ -1319,12 +1327,23 @@ export default function ReportPage({
                 {Array.from({ length: ancestorLineCount }, (_, lineIndex) => (
                   <span
                     key={`ancestor-line-${lineIndex}`}
-                    className={styles.sectionTreeAncestorLine}
+                    className={[
+                      styles.sectionTreeAncestorLine,
+                      endingLineSet.has(lineIndex) && styles.sectionTreeAncestorLineEnding,
+                    ].filter(Boolean).join(' ')}
                     style={{ '--report-tree-line-offset': lineIndex + 0.5 - displayDepth }}
                     aria-hidden="true"
                   />
                 ))}
                 {needsIndentJoin && <span className={styles.sectionTreeJoin} aria-hidden="true" />}
+                {endingLineIndices.map(lineIndex => (
+                  <span
+                    key={`end-join-${lineIndex}`}
+                    className={styles.sectionTreeEndJoin}
+                    style={{ '--report-tree-end-offset': lineIndex + 0.5 - displayDepth }}
+                    aria-hidden="true"
+                  />
+                ))}
                 <ReportSection
                   row={row}
                   project={project}
