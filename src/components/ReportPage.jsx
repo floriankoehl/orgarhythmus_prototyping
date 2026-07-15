@@ -39,31 +39,55 @@ function addOutlineNumbers(rows) {
   })
 }
 
+function compareReportNoteOrder(a, b) {
+  const aOrder = a.orderIdx ?? a.order_idx ?? Number.MAX_SAFE_INTEGER
+  const bOrder = b.orderIdx ?? b.order_idx ?? Number.MAX_SAFE_INTEGER
+  if (aOrder !== bOrder) return aOrder - bOrder
+  return String(a.title || '').localeCompare(String(b.title || ''))
+}
+
 function EditableHeading({ as: HeadingTag, title, editable, onCommit }) {
   const [draftTitle, setDraftTitle] = useState(title)
+  const inputRef = useRef(null)
+
+  const resizeInput = useCallback(() => {
+    const element = inputRef.current
+    if (!element) return
+    element.style.height = 'auto'
+    element.style.height = `${element.scrollHeight}px`
+  }, [])
 
   useEffect(() => {
     setDraftTitle(title)
   }, [title])
+
+  useLayoutEffect(() => {
+    if (editable) resizeInput()
+  }, [draftTitle, editable, resizeInput])
 
   if (!editable) {
     return <HeadingTag className={styles.sectionTitle} dir="ltr">{title}</HeadingTag>
   }
 
   return (
-    <input
+    <textarea
+      ref={inputRef}
       className={`${styles.sectionTitle} ${styles.sectionTitleInput}`}
       dir="ltr"
       spellCheck
       value={draftTitle}
+      rows={1}
       onChange={event => setDraftTitle(event.target.value)}
       onBlur={() => {
-        const nextTitle = draftTitle.trim() || title || 'Untitled'
+        const nextTitle = draftTitle.replace(/\s+/g, ' ').trim() || title || 'Untitled'
         setDraftTitle(nextTitle)
         onCommit(nextTitle)
       }}
       onKeyDown={event => {
-        if (event.key === 'Enter') event.currentTarget.blur()
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault()
+          event.currentTarget.blur()
+        }
         if (event.key === 'Escape') {
           setDraftTitle(title)
           event.currentTarget.blur()
@@ -107,6 +131,149 @@ function EditableBody({ html, editable, onChange }) {
   )
 }
 
+function ReportInsertPoint({ row, primaryMode, initiallyOpen = false, hoverIntent = true, onCreate }) {
+  const [open, setOpen] = useState(initiallyOpen)
+  const [draftTitle, setDraftTitle] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [hoverReady, setHoverReady] = useState(false)
+  const hoverTimer = useRef(null)
+  const primaryLabel = primaryMode === 'child' ? 'inside' : 'below'
+  const secondaryMode = primaryMode === 'child' ? 'after' : 'child'
+  const canAddBelow = row.depth > 0 && Boolean(row.note.parentNoteId)
+
+  const clearHoverTimer = useCallback(() => {
+    if (!hoverTimer.current) return
+    window.clearTimeout(hoverTimer.current)
+    hoverTimer.current = null
+  }, [])
+
+  const scheduleHoverReady = useCallback(() => {
+    if (!hoverIntent || open) {
+      setHoverReady(true)
+      return
+    }
+    setHoverReady(false)
+    clearHoverTimer()
+    hoverTimer.current = window.setTimeout(() => {
+      setHoverReady(true)
+      hoverTimer.current = null
+    }, 180)
+  }, [clearHoverTimer, hoverIntent, open])
+
+  const resetHoverReady = useCallback(() => {
+    clearHoverTimer()
+    setHoverReady(false)
+  }, [clearHoverTimer])
+
+  useEffect(() => () => clearHoverTimer(), [clearHoverTimer])
+
+  const submit = async mode => {
+    const title = draftTitle.trim()
+    if (!title || creating) return
+    setCreating(true)
+    const created = await onCreate({ row, title, mode })
+    setCreating(false)
+    if (created) {
+      setDraftTitle('')
+      setOpen(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <div
+        className={styles.insertPoint}
+        data-hover-ready={hoverReady ? 'true' : undefined}
+        onPointerEnter={scheduleHoverReady}
+        onPointerMove={scheduleHoverReady}
+        onPointerLeave={resetHoverReady}>
+        <button
+          type="button"
+          className={styles.insertGhostButton}
+          onClick={() => setOpen(true)}>
+          + Add {primaryLabel}
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <form
+      className={styles.insertEditor}
+      onSubmit={event => {
+        event.preventDefault()
+        submit(primaryMode)
+      }}>
+      <input
+        className={styles.insertInput}
+        dir="ltr"
+        autoFocus
+        value={draftTitle}
+        placeholder="New note title"
+        disabled={creating}
+        onChange={event => setDraftTitle(event.target.value)}
+        onKeyDown={event => {
+          if (event.key === 'Escape') {
+            setDraftTitle('')
+            setOpen(false)
+          }
+        }}
+      />
+      <button type="submit" className={styles.insertAction} disabled={!draftTitle.trim() || creating}>
+        Add
+      </button>
+      {(secondaryMode === 'child' || canAddBelow) && (
+        <button
+          type="button"
+          className={styles.insertActionSecondary}
+          disabled={!draftTitle.trim() || creating}
+          onClick={() => submit(secondaryMode)}>
+          {secondaryMode === 'child' ? 'Inside' : 'Below'}
+        </button>
+      )}
+    </form>
+  )
+}
+
+function ReportEndInsert({ rootRow, onCreate }) {
+  const [open, setOpen] = useState(false)
+
+  if (!rootRow) return null
+
+  if (!open) {
+    return (
+      <div
+        className={styles.sheetEndInsert}
+        role="button"
+        tabIndex={0}
+        aria-label="Add note at the end of the report"
+        onClick={() => setOpen(true)}
+        onKeyDown={event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            setOpen(true)
+          }
+        }}
+      />
+    )
+  }
+
+  return (
+    <div className={`${styles.sheetEndInsert} ${styles.sheetEndInsertOpen}`}>
+      <ReportInsertPoint
+        row={rootRow}
+        primaryMode="child"
+        initiallyOpen
+        onCreate={async payload => {
+          const created = await onCreate(payload)
+          if (created) setOpen(false)
+          return created
+        }}
+      />
+    </div>
+  )
+}
+
 function ReportAttributes({ attributes }) {
   if (!attributes.length) return null
 
@@ -127,10 +294,11 @@ function ReportAttributes({ attributes }) {
   )
 }
 
-function ReportSection({ row, project, isProjectRoot, bodyCollapsed, attributes, activeColor, sideMeta, paintCat, paintPersonaId, registerSection, onTitleChange, onBodyChange, onToggleCollapse, onPaint, onPersonaPaint }) {
+function ReportSection({ row, project, isProjectRoot, childrenCollapsed, attributes, detailsVisible, activeColor, sideMeta, paintCat, paintPersonaId, registerSection, onTitleChange, onBodyChange, onToggleChildren, onToggleDetails, onPaint, onPersonaPaint }) {
   const title = isProjectRoot && project?.name ? project.name : row.note.title || 'Untitled'
   const body = isProjectRoot && project?.description ? project.description : row.note.html || ''
-  const headingLevel = Math.min(6, row.depth + 1)
+  const isReportRoot = row.relation === 'current' || row.depth === 0
+  const headingLevel = isReportRoot ? 1 : Math.min(6, row.depth + 1)
   const HeadingTag = `h${headingLevel}`
 
   return (
@@ -140,9 +308,10 @@ function ReportSection({ row, project, isProjectRoot, bodyCollapsed, attributes,
       style={activeColor ? { '--section-color': activeColor } : undefined}
       dir="ltr"
       data-depth={row.depth}
+      data-report-root={isReportRoot ? 'true' : undefined}
       data-colored={activeColor ? 'true' : undefined}
       onClickCapture={(paintCat || paintPersonaId) ? event => {
-        if (event.target.closest?.(`.${styles.sectionNumberButton}`)) return
+        if (event.target.closest?.(`.${styles.sectionNumberButton}, .${styles.headingTypeIcon}`)) return
         event.preventDefault()
         event.stopPropagation()
         if (paintPersonaId) onPersonaPaint(row.note.id)
@@ -153,14 +322,21 @@ function ReportSection({ row, project, isProjectRoot, bodyCollapsed, attributes,
           <button
             type="button"
             className={styles.sectionNumberButton}
-            onClick={() => onToggleCollapse(row.note.id)}
-            title={bodyCollapsed ? 'Expand section' : 'Collapse section'}
-          aria-label={bodyCollapsed ? `Expand ${title}` : `Collapse ${title}`}>
-          {row.outlineNumber}
-        </button>
-        <span className={styles.headingTypeIcon} style={{ '--attribute-color': sideMeta.typeCategory?.color || '#64748b' }}>
+            onClick={() => onToggleChildren(row.note.id)}
+            title={childrenCollapsed ? 'Expand child sections' : 'Collapse child sections'}
+          aria-label={childrenCollapsed ? `Expand children of ${title}` : `Collapse children of ${title}`}>
+            {row.outlineNumber}
+          </button>
+        <button
+          type="button"
+          className={styles.headingTypeIcon}
+          style={{ '--attribute-color': sideMeta.typeCategory?.color || '#64748b' }}
+          onClick={() => onToggleDetails(row.note.id)}
+          title={detailsVisible ? 'Hide note details' : 'Show note details'}
+          aria-label={detailsVisible ? `Hide details for ${title}` : `Show details for ${title}`}
+          aria-pressed={detailsVisible}>
           <CategoryIconGlyph icon={iconForCategory(sideMeta.typeCategory)} strokeWidth={2.35} />
-        </span>
+        </button>
         <EditableHeading
           as={HeadingTag}
           title={title}
@@ -173,7 +349,7 @@ function ReportSection({ row, project, isProjectRoot, bodyCollapsed, attributes,
           </span>
         )}
       </div>
-        {!bodyCollapsed && (
+        {detailsVisible && (
           <>
             <ReportAttributes attributes={attributes} />
             <EditableBody
@@ -209,6 +385,7 @@ export default function ReportPage({
   const [structureCollapsed, setStructureCollapsed] = useState(false)
   const [visibleStructureNoteIds, setVisibleStructureNoteIds] = useState(null)
   const [collapsedStructureNoteIds, setCollapsedStructureNoteIds] = useState(() => new Set())
+  const [hiddenDetailNoteIds, setHiddenDetailNoteIds] = useState(() => new Set())
   const [hierarchyToggleRequest, setHierarchyToggleRequest] = useState(null)
   const [classificationDimensions, setClassificationDimensions] = useState([])
   const [classificationCategories, setClassificationCategories] = useState([])
@@ -221,6 +398,7 @@ export default function ReportPage({
   const [paintCat, setPaintCat] = useState(null)
   const [paintPersonaId, setPaintPersonaId] = useState(null)
   const [floatingPanel, setFloatingPanel] = useState(null)
+  const [pendingCreatedNoteId, setPendingCreatedNoteId] = useState(null)
   const sectionRefs = useRef({})
   const saveTimers = useRef({})
   const pendingPatches = useRef({})
@@ -233,6 +411,10 @@ export default function ReportPage({
   )
   const numberedRows = useMemo(() => addOutlineNumbers(rows), [rows])
   const rowById = useMemo(() => new Map(numberedRows.map(row => [row.note.id, row])), [numberedRows])
+  const rootReportRow = useMemo(
+    () => rowById.get(rootNoteId) || numberedRows[0] || null,
+    [numberedRows, rootNoteId, rowById],
+  )
   const noteParentById = useMemo(
     () => new Map(numberedRows.map(row => [row.note.id, row.note.parentNoteId || null])),
     [numberedRows],
@@ -478,6 +660,12 @@ export default function ReportPage({
     }
   }, [isActive])
 
+  useEffect(() => {
+    if (!pendingCreatedNoteId || !rowById.has(pendingCreatedNoteId)) return
+    window.requestAnimationFrame(() => scrollToSection(pendingCreatedNoteId))
+    setPendingCreatedNoteId(null)
+  }, [pendingCreatedNoteId, rowById])
+
   const registerSection = (noteId, element) => {
     if (element) sectionRefs.current[noteId] = element
     else delete sectionRefs.current[noteId]
@@ -525,6 +713,62 @@ export default function ReportPage({
     sectionRefs.current[noteId]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
+  const createReportNote = useCallback(async ({ row, title, mode }) => {
+    const trimmedTitle = String(title || '').trim()
+    if (!row?.note?.id || !trimmedTitle) return null
+
+    const isRootRow = row.note.id === rootNoteId || row.relation === 'current' || row.depth === 0
+    const parentNoteId = mode === 'child' || isRootRow
+      ? row.note.id
+      : (row.note.parentNoteId || rootNoteId)
+    if (!parentNoteId) return null
+
+    const newNoteId = crypto.randomUUID()
+    const createdNote = {
+      id: newNoteId,
+      parentNoteId,
+      title: trimmedTitle,
+      html: '',
+      collapsed: false,
+    }
+
+    try {
+      const savedNote = await api.createNote(createdNote)
+      const noteToInsert = savedNote || createdNote
+      if (mode === 'after' && !isRootRow) {
+        const siblings = notes
+          .filter(note => (note.parentNoteId || '') === (parentNoteId || '') && note.id !== noteToInsert.id)
+          .sort(compareReportNoteOrder)
+        const targetIndex = siblings.findIndex(note => note.id === row.note.id)
+        if (targetIndex !== -1) {
+          const reordered = [...siblings]
+          reordered.splice(targetIndex + 1, 0, noteToInsert)
+          await api.reorderNotes(reordered.map(note => note.id))
+        }
+      }
+
+      playSound('noteCreate')
+      setCollapsedStructureNoteIds(previous => {
+        const next = new Set(previous)
+        next.delete(parentNoteId)
+        return next
+      })
+      if (collapsedStructureNoteIds.has(parentNoteId)) {
+        setHierarchyToggleRequest({ id: crypto.randomUUID(), noteId: parentNoteId })
+      }
+      setVisibleStructureNoteIds(previous => {
+        if (!previous) return previous
+        return new Set([...previous, parentNoteId, row.note.id, noteToInsert.id])
+      })
+      await onNotesChanged?.()
+      setPendingCreatedNoteId(noteToInsert.id)
+      return noteToInsert
+    } catch (error) {
+      console.error('Report note create failed', error)
+      return null
+    }
+  }, [collapsedStructureNoteIds, notes, onNotesChanged, rootNoteId])
+
   const syncVisibleStructureNoteIds = useCallback(ids => {
     const nextIds = Array.isArray(ids) ? ids : []
     setVisibleStructureNoteIds(previous => {
@@ -553,6 +797,15 @@ export default function ReportPage({
       return next
     })
     setHierarchyToggleRequest({ id: crypto.randomUUID(), noteId })
+  }
+
+  const toggleDetails = noteId => {
+    setHiddenDetailNoteIds(previous => {
+      const next = new Set(previous)
+      if (next.has(noteId)) next.delete(noteId)
+      else next.add(noteId)
+      return next
+    })
   }
 
   const activatePaint = (catId, color) => {
@@ -703,29 +956,56 @@ export default function ReportPage({
 
       <div className={styles.documentPane}>
         <article className={styles.sheet} dir="ltr">
-          {visibleReportRows.map(row => (
-            <ReportSection
-              key={row.note.id}
-              row={row}
-              project={project}
-              isProjectRoot={row.note.id === project?.rootNoteId}
-              bodyCollapsed={collapsedStructureNoteIds.has(row.note.id)}
-              attributes={reportAttributesByNoteId.get(row.note.id) || []}
-              activeColor={activeColorByNoteId.get(row.note.id)}
-              sideMeta={{
-                typeCategory: typeCategoryByNoteId.get(row.note.id),
-                people: peopleByNoteId.get(row.note.id) || [],
-              }}
-              paintCat={paintCat}
-              paintPersonaId={paintPersonaId}
-              registerSection={registerSection}
-              onTitleChange={saveTitle}
-              onBodyChange={saveBody}
-              onToggleCollapse={requestHierarchyToggle}
-              onPaint={paintNote}
-              onPersonaPaint={paintPersonaToNote}
-            />
-          ))}
+          {visibleReportRows.map((row, index) => {
+            const isRootRow = row.note.id === rootNoteId || row.relation === 'current' || row.depth === 0
+            const previousRow = visibleReportRows[index - 1]
+            const nextRow = visibleReportRows[index + 1]
+            const hasVisibleChildAfter = nextRow && nextRow.depth > row.depth
+            const primaryInsertMode = isRootRow || hasVisibleChildAfter ? 'child' : 'after'
+            const levelRise = previousRow ? Math.max(0, previousRow.depth - row.depth) : 0
+            const sameLevel = previousRow && previousRow.depth === row.depth
+            const deeperLevel = previousRow && previousRow.depth < row.depth
+            const sectionTopGap = index === 0
+              ? 0
+              : levelRise > 0
+                ? 14 + levelRise * 12
+                : sameLevel
+                  ? Math.max(4, 12 - row.depth * 2)
+                  : deeperLevel
+                    ? Math.max(0, 6 - row.depth * 2)
+                    : 0
+            return (
+              <div
+                key={row.note.id}
+                className={styles.sectionBlock}
+                style={{ '--section-top-gap': `${sectionTopGap}px` }}>
+                <ReportSection
+                  row={row}
+                  project={project}
+                  isProjectRoot={row.note.id === project?.rootNoteId}
+                  childrenCollapsed={collapsedStructureNoteIds.has(row.note.id)}
+                  attributes={reportAttributesByNoteId.get(row.note.id) || []}
+                  detailsVisible={!hiddenDetailNoteIds.has(row.note.id)}
+                  activeColor={activeColorByNoteId.get(row.note.id)}
+                  sideMeta={{
+                    typeCategory: typeCategoryByNoteId.get(row.note.id),
+                    people: peopleByNoteId.get(row.note.id) || [],
+                  }}
+                  paintCat={paintCat}
+                  paintPersonaId={paintPersonaId}
+                  registerSection={registerSection}
+                  onTitleChange={saveTitle}
+                  onBodyChange={saveBody}
+                  onToggleChildren={requestHierarchyToggle}
+                  onToggleDetails={toggleDetails}
+                  onPaint={paintNote}
+                  onPersonaPaint={paintPersonaToNote}
+                />
+                <ReportInsertPoint row={row} primaryMode={primaryInsertMode} onCreate={createReportNote} />
+              </div>
+            )
+          })}
+          <ReportEndInsert rootRow={rootReportRow} onCreate={createReportNote} />
         </article>
         {savingIds.size > 0 && <div className={styles.saveStatus}>Saving...</div>}
         <div className={styles.reportFloatingTools}>

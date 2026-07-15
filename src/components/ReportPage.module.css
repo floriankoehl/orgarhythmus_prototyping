@@ -116,12 +116,15 @@
 }
 
 .sheet {
+  --sheet-padding-left: 92px;
   width: min(816px, calc(100vw - var(--structure-width) - 72px));
   min-height: 1056px;
+  display: flex;
+  flex-direction: column;
   background: #ffffff;
   border: 1px solid #d7dbe0;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18), 0 8px 24px rgba(0, 0, 0, 0.08);
-  padding: 76px 86px 104px 106px;
+  padding: 76px 86px 104px 92px;
   direction: ltr;
   text-align: left;
 }
@@ -136,9 +139,14 @@
   gap: 8px;
 }
 
+.sectionBlock {
+  position: relative;
+  margin-top: var(--section-top-gap, 0);
+}
+
 .documentSection {
   position: relative;
-  margin: 0 -10px 28px;
+  margin: 0 -10px 22px;
   padding: 6px 10px;
   border-radius: 4px;
   scroll-margin-top: 28px;
@@ -147,12 +155,31 @@
 .documentSection::before {
   content: "";
   position: absolute;
-  top: 2px;
-  bottom: 2px;
+  top: -4px;
+  bottom: -4px;
   left: -18px;
+  z-index: 2;
   width: 3px;
   border-radius: 999px;
   background: transparent;
+}
+
+.documentSection::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  right: 0;
+  bottom: -4px;
+  left: -15px;
+  z-index: 0;
+  border-radius: 4px;
+  pointer-events: none;
+  background: transparent;
+}
+
+.documentSection > * {
+  position: relative;
+  z-index: 1;
 }
 
 .documentSection[data-colored="true"]::before {
@@ -160,17 +187,14 @@
   opacity: 0.5;
 }
 
-.documentSection[data-colored="true"] {
+.documentSection[data-colored="true"]::after {
   background:
     linear-gradient(
       90deg,
-      color-mix(in srgb, var(--section-color, #94a3b8) 10%, transparent) 0,
-      color-mix(in srgb, var(--section-color, #94a3b8) 4%, transparent) 18%,
-      transparent 78%
+      color-mix(in srgb, var(--section-color, #94a3b8) 7%, transparent) 0,
+      color-mix(in srgb, var(--section-color, #94a3b8) 3.5%, transparent) 40%,
+      color-mix(in srgb, var(--section-color, #94a3b8) 2.2%, transparent) 100%
     );
-  background-position: -18px 0;
-  background-size: calc(100% + 18px) 100%;
-  background-repeat: no-repeat;
 }
 
 .documentSectionPaintable {
@@ -183,12 +207,179 @@
 }
 
 .documentSectionPaintable:hover {
+  background: transparent;
+}
+
+.documentSectionPaintable:hover::after {
   background:
-    linear-gradient(90deg, color-mix(in srgb, var(--section-color, #94a3b8) 8%, transparent), transparent 42%);
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--section-color, #94a3b8) 9%, transparent) 0,
+      color-mix(in srgb, var(--section-color, #94a3b8) 4.5%, transparent) 42%,
+      color-mix(in srgb, var(--section-color, #94a3b8) 2.8%, transparent) 100%
+    );
 }
 
 .documentSection[data-depth="0"] {
-  margin-bottom: 38px;
+  margin-bottom: 32px;
+}
+
+.documentSection[data-depth="1"] {
+  margin-bottom: 24px;
+}
+
+.documentSection[data-depth="2"] {
+  margin-bottom: 20px;
+}
+
+.documentSection[data-depth="3"],
+.documentSection[data-depth="4"],
+.documentSection[data-depth="5"] {
+  margin-bottom: 16px;
+}
+
+.insertPoint {
+  position: relative;
+  height: 18px;
+  margin: -18px -10px 0;
+}
+
+.insertPoint::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: calc(-1 * var(--sheet-padding-left) - 12px);
+  width: 18px;
+  height: 18px;
+  border: 1px solid #d7deea;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.1);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.insertPoint::after {
+  content: "+";
+  position: absolute;
+  top: 4px;
+  left: calc(-1 * var(--sheet-padding-left) - 12px);
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  color: #64748b;
+  font: 800 14px/1 Arial, sans-serif;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+
+.insertGhostButton {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  font: 0/0 Arial, sans-serif;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.insertPoint:focus-within::before,
+.insertPoint[data-hover-ready="true"]::before,
+.insertPoint:focus-within::after,
+.insertPoint[data-hover-ready="true"]::after {
+  opacity: 1;
+}
+
+.insertPoint:hover::after,
+.insertPoint:focus-within::after {
+  color: #2563eb;
+}
+
+.insertGhostButton:focus {
+  outline: none;
+}
+
+.insertEditor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content max-content;
+  gap: 7px;
+  align-items: center;
+  margin: -18px -10px 22px;
+  padding: 5px 7px;
+  border-left: 3px solid #bfdbfe;
+  border-radius: 4px;
+  background: #f8fafc;
+}
+
+.insertInput {
+  min-width: 0;
+  height: 30px;
+  padding: 0 3px;
+  border: 0;
+  background: transparent;
+  color: #111827;
+  font: 700 16px/1.25 Arial, sans-serif;
+  outline: none;
+  direction: ltr;
+  text-align: left;
+}
+
+.insertInput::placeholder {
+  color: #94a3b8;
+}
+
+.insertAction,
+.insertActionSecondary {
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #334155;
+  font: 700 12px/1 Arial, sans-serif;
+  cursor: pointer;
+}
+
+.insertAction {
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.insertAction:hover,
+.insertActionSecondary:hover {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.insertAction:disabled,
+.insertActionSecondary:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.sheetEndInsert {
+  flex: 1 1 180px;
+  min-height: 180px;
+  margin: -4px -10px 0;
+  cursor: text;
+}
+
+.sheetEndInsertOpen {
+  cursor: default;
+}
+
+.sheetEndInsert .insertEditor {
+  margin: 8px 0 0;
+}
+
+.sheetEndInsert .insertPoint {
+  margin: 8px 0 0;
 }
 
 .sectionHeading {
@@ -242,26 +433,42 @@
 
 .sectionTitleInput {
   width: 100%;
+  min-height: 1.2em;
   padding: 0;
   border: 0;
   background: transparent;
+  overflow: hidden;
+  resize: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .headingTypeIcon {
-  width: 0.9em;
-  height: 0.9em;
+  width: 1em;
+  height: 1em;
   margin-right: 3px;
+  margin-top: 0.08em;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  align-self: center;
+  align-self: start;
   color: var(--attribute-color, #64748b);
   opacity: 0.82;
+  cursor: pointer;
 }
 
 .headingTypeIcon svg {
   width: 100%;
   height: 100%;
+}
+
+.headingTypeIcon:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--attribute-color, #64748b) 10%, transparent);
 }
 
 .headingPeople {
@@ -275,57 +482,58 @@
 }
 
 h1.sectionTitle {
-  font-size: 30px;
+  font-size: 38px;
 }
 
 .documentSection[data-depth="0"] .sectionTitle {
-  font-size: 30px;
+  font-size: 38px;
+  font-weight: 800;
 }
 
 .documentSection[data-depth="0"] .sectionNumber,
 .documentSection[data-depth="0"] .sectionNumberButton,
 .documentSection[data-depth="0"] .headingTypeIcon {
-  font-size: 30px;
+  font-size: 38px;
 }
 
 h2.sectionTitle {
-  font-size: 23px;
+  font-size: 26px;
 }
 
 .documentSection[data-depth="1"] .sectionTitle {
-  font-size: 23px;
+  font-size: 26px;
 }
 
 .documentSection[data-depth="1"] .sectionNumber,
 .documentSection[data-depth="1"] .sectionNumberButton,
 .documentSection[data-depth="1"] .headingTypeIcon {
-  font-size: 23px;
+  font-size: 26px;
 }
 
 h3.sectionTitle {
-  font-size: 19px;
+  font-size: 20px;
 }
 
 .documentSection[data-depth="2"] .sectionTitle {
-  font-size: 19px;
+  font-size: 20px;
 }
 
 .documentSection[data-depth="2"] .sectionNumber,
 .documentSection[data-depth="2"] .sectionNumberButton,
 .documentSection[data-depth="2"] .headingTypeIcon {
-  font-size: 19px;
+  font-size: 20px;
 }
 
 h4.sectionTitle,
 h5.sectionTitle,
 h6.sectionTitle {
-  font-size: 16px;
+  font-size: 15px;
 }
 
 .documentSection[data-depth="3"] .sectionTitle,
 .documentSection[data-depth="4"] .sectionTitle,
 .documentSection[data-depth="5"] .sectionTitle {
-  font-size: 16px;
+  font-size: 15px;
 }
 
 .documentSection[data-depth="3"] .sectionNumber,
@@ -337,7 +545,22 @@ h6.sectionTitle {
 .documentSection[data-depth="3"] .headingTypeIcon,
 .documentSection[data-depth="4"] .headingTypeIcon,
 .documentSection[data-depth="5"] .headingTypeIcon {
-  font-size: 16px;
+  font-size: 15px;
+}
+
+.documentSection[data-report-root="true"] {
+  margin-bottom: 44px;
+}
+
+.documentSection[data-report-root="true"] .sectionTitle {
+  font-size: 42px;
+  font-weight: 800;
+  line-height: 1.08;
+}
+
+.documentSection[data-report-root="true"] .sectionNumberButton,
+.documentSection[data-report-root="true"] .headingTypeIcon {
+  font-size: 42px;
 }
 
 .sectionTitleInput:focus,
@@ -466,9 +689,10 @@ h6.sectionTitle {
   }
 
   .sheet {
+    --sheet-padding-left: 34px;
     width: calc(100vw - 24px);
     min-height: 900px;
-    padding: 46px 32px 72px 42px;
+    padding: 46px 32px 72px 34px;
   }
 
   .sectionHeading {
