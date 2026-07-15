@@ -279,6 +279,17 @@
   pointer-events: none;
 }
 
+.sectionTreeAncestorLine {
+  position: absolute;
+  top: calc(-1 * var(--section-top-gap, 0px) - 22px);
+  bottom: 8px;
+  left: calc(var(--report-tree-line-offset) * var(--report-indent-step));
+  width: 1px;
+  border-radius: 999px;
+  background: #d7deea;
+  pointer-events: none;
+}
+
 .sectionBlock[data-has-branch="true"][data-branch-start="true"]::before {
   top: 18px;
 }
@@ -305,11 +316,19 @@
   background: #e2e8f0;
 }
 
+.sheet[data-depth-span="shallow"] .sectionTreeAncestorLine {
+  background: #e2e8f0;
+}
+
 .sheet[data-depth-span="shallow"] .sectionBlock[data-has-branch="true"]::after {
   border-color: #e2e8f0;
 }
 
 .sheet[data-depth-span="deep"] .sectionBlock[data-has-branch="true"]::before {
+  background: #cbd5e1;
+}
+
+.sheet[data-depth-span="deep"] .sectionTreeAncestorLine {
   background: #cbd5e1;
 }
 

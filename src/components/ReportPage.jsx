@@ -1273,9 +1273,11 @@ export default function ReportPage({
             const isRootRow = row.note.id === rootNoteId || row.relation === 'current' || row.depth === 0
             const previousRow = visibleReportRows[index - 1]
             const nextRow = visibleReportRows[index + 1]
-            const displayDepth = Math.max(0, row.depth - 1)
+            const displayDepth = Math.max(0, row.depth)
             const startsChildGroup = Boolean(previousRow && row.depth > previousRow.depth)
-            const needsIndentJoin = startsChildGroup && displayDepth > 0
+            const startsNestedChildGroup = startsChildGroup && displayDepth > 1
+            const needsIndentJoin = startsNestedChildGroup
+            const ancestorLineCount = Math.max(0, displayDepth - 1)
             const hasVisibleChildAfter = nextRow && nextRow.depth > row.depth
             const primaryInsertMode = isRootRow || hasVisibleChildAfter ? 'child' : 'after'
             const levelRise = previousRow ? Math.max(0, previousRow.depth - row.depth) : 0
@@ -1300,12 +1302,20 @@ export default function ReportPage({
                 key={row.note.id}
                 className={styles.sectionBlock}
                 data-depth={row.depth}
-                data-has-branch={row.depth > 1 ? 'true' : undefined}
-                data-branch-start={startsChildGroup ? 'true' : undefined}
+                data-has-branch={row.depth > 0 ? 'true' : undefined}
+                data-branch-start={startsNestedChildGroup ? 'true' : undefined}
                 style={{
                   '--section-top-gap': `${sectionTopGap}px`,
                   '--report-tree-depth': displayDepth,
                 }}>
+                {Array.from({ length: ancestorLineCount }, (_, lineIndex) => (
+                  <span
+                    key={`ancestor-line-${lineIndex}`}
+                    className={styles.sectionTreeAncestorLine}
+                    style={{ '--report-tree-line-offset': lineIndex + 0.5 - displayDepth }}
+                    aria-hidden="true"
+                  />
+                ))}
                 {needsIndentJoin && <span className={styles.sectionTreeJoin} aria-hidden="true" />}
                 <ReportSection
                   row={row}
