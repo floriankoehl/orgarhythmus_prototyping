@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { CalendarClock, Eye, EyeOff, Settings } from 'lucide-react'
 import { api } from '../api'
 import { usePersonaCursor } from '../hooks/usePersonaCursor'
 import { playSound } from '../sounds/sound_registry'
-import { buildNoteHierarchyRows } from './NoteHierarchyTree'
+import { buildNoteHierarchyRows, DoneKindIcon } from './NoteHierarchyTree'
 import PersonaAvatarStack from './PersonaAvatarStack'
 import PeopleWidget from './PeopleWidget'
 import ProjectDashboard from './ProjectDashboard'
@@ -19,6 +20,12 @@ const STRUCTURE_MIN_WIDTH = 220
 const STRUCTURE_MAX_WIDTH = 480
 const STRUCTURE_DEFAULT_WIDTH = 292
 const STRUCTURE_COLLAPSED_WIDTH = 42
+const DETAIL_MODE_ALL = 'all'
+const DETAIL_MODE_DESCRIPTION = 'description'
+const DETAIL_MODE_NONE = 'none'
+const MIN_TIME_SLOT_DURATION = 10
+const DAY_MINUTES = 60 * 24
+const MONTH_MINUTES = DAY_MINUTES * 30
 
 function makeColorCursor(color) {
   const safeColor = /^#[0-9a-f]{3,8}$/i.test(String(color)) ? color : '#64748b'
@@ -37,6 +44,69 @@ function addOutlineNumbers(rows) {
     }
     return { ...row, outlineNumber: counters.slice(0, depth + 1).join('.') }
   })
+}
+
+function timelineAnchor(project) {
+  const rawValue = project?.createdAt ?? project?.created_at
+  const raw = rawValue ? String(rawValue).replace(' ', 'T') : ''
+  const parsed = raw ? new Date(raw) : new Date()
+  const anchor = Number.isNaN(parsed.getTime()) ? new Date() : parsed
+  anchor.setHours(0, 0, 0, 0)
+  return anchor
+}
+
+function dateAtMinute(anchor, minute) {
+  const date = new Date(anchor.getTime())
+  date.setMinutes(date.getMinutes() + Math.max(0, Number(minute) || 0))
+  return date
+}
+
+function scheduleScaleForRange(duration) {
+  const value = Math.max(MIN_TIME_SLOT_DURATION, Number(duration) || MIN_TIME_SLOT_DURATION)
+  if (value < DAY_MINUTES) return 'minute'
+  if (value < MONTH_MINUTES) return 'day'
+  return 'month'
+}
+
+function formatScheduleMoment(anchor, minute, scale) {
+  const date = dateAtMinute(anchor, minute)
+  if (scale === 'minute') {
+    return date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  }
+  if (scale === 'month') {
+    return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+  }
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function formatScheduleDuration(minutes) {
+  const value = Math.max(MIN_TIME_SLOT_DURATION, Number(minutes) || MIN_TIME_SLOT_DURATION)
+  if (value < 60) return `${value} min`
+  if (value < DAY_MINUTES) return `${Number((value / 60).toFixed(value % 60 === 0 ? 0 : 1))} h`
+  if (value < MONTH_MINUTES) return `${Number((value / DAY_MINUTES).toFixed(value % DAY_MINUTES === 0 ? 0 : 1))} d`
+  return `${Number((value / MONTH_MINUTES).toFixed(value % MONTH_MINUTES === 0 ? 0 : 1))} mo`
+}
+
+function scheduleLabelForSlot(project, slot) {
+  if (!slot) return null
+  const start = Math.max(0, Number(slot.startCol ?? slot.start_col) || 0)
+  const duration = Math.max(MIN_TIME_SLOT_DURATION, Number(slot.duration) || MIN_TIME_SLOT_DURATION)
+  const end = start + duration
+  const scale = scheduleScaleForRange(duration)
+  const anchor = timelineAnchor(project)
+  return {
+    range: `${formatScheduleMoment(anchor, start, scale)} - ${formatScheduleMoment(anchor, end, scale)}`,
+    duration: formatScheduleDuration(duration),
+  }
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 function compareReportNoteOrder(a, b) {
@@ -131,62 +201,46 @@ function EditableBody({ html, editable, onChange }) {
   )
 }
 
-function ReportInsertPoint({ row, primaryMode, initiallyOpen = false, hoverIntent = true, onCreate }) {
+function ReportInsertPoint({ row, primaryMode, initiallyOpen = false, onCreate }) {
   const [open, setOpen] = useState(initiallyOpen)
   const [draftTitle, setDraftTitle] = useState('')
+  const [draftBody, setDraftBody] = useState('')
   const [creating, setCreating] = useState(false)
-  const [hoverReady, setHoverReady] = useState(false)
-  const hoverTimer = useRef(null)
+  const editorRef = useRef(null)
+  const bodyInputRef = useRef(null)
   const primaryLabel = primaryMode === 'child' ? 'inside' : 'below'
   const secondaryMode = primaryMode === 'child' ? 'after' : 'child'
   const canAddBelow = row.depth > 0 && Boolean(row.note.parentNoteId)
 
-  const clearHoverTimer = useCallback(() => {
-    if (!hoverTimer.current) return
-    window.clearTimeout(hoverTimer.current)
-    hoverTimer.current = null
-  }, [])
-
-  const scheduleHoverReady = useCallback(() => {
-    if (!hoverIntent || open) {
-      setHoverReady(true)
-      return
-    }
-    setHoverReady(false)
-    clearHoverTimer()
-    hoverTimer.current = window.setTimeout(() => {
-      setHoverReady(true)
-      hoverTimer.current = null
-    }, 180)
-  }, [clearHoverTimer, hoverIntent, open])
-
-  const resetHoverReady = useCallback(() => {
-    clearHoverTimer()
-    setHoverReady(false)
-  }, [clearHoverTimer])
-
-  useEffect(() => () => clearHoverTimer(), [clearHoverTimer])
+  const closeEmptyEditor = () => {
+    setDraftTitle('')
+    setDraftBody('')
+    setOpen(false)
+  }
 
   const submit = async mode => {
     const title = draftTitle.trim()
     if (!title || creating) return
     setCreating(true)
-    const created = await onCreate({ row, title, mode })
+    const html = draftBody.trim()
+      ? draftBody
+        .trim()
+        .split(/\n{2,}/)
+        .map(block => `<p>${escapeHtml(block).replace(/\n/g, '<br>')}</p>`)
+        .join('')
+      : ''
+    const created = await onCreate({ row, title, html, mode })
     setCreating(false)
     if (created) {
       setDraftTitle('')
+      setDraftBody('')
       setOpen(false)
     }
   }
 
   if (!open) {
     return (
-      <div
-        className={styles.insertPoint}
-        data-hover-ready={hoverReady ? 'true' : undefined}
-        onPointerEnter={scheduleHoverReady}
-        onPointerMove={scheduleHoverReady}
-        onPointerLeave={resetHoverReady}>
+      <div className={styles.insertPoint}>
         <button
           type="button"
           className={styles.insertGhostButton}
@@ -199,7 +253,12 @@ function ReportInsertPoint({ row, primaryMode, initiallyOpen = false, hoverInten
 
   return (
     <form
+      ref={editorRef}
       className={styles.insertEditor}
+      onBlur={event => {
+        if (event.currentTarget.contains(event.relatedTarget)) return
+        if (!draftTitle.trim() && !draftBody.trim() && !creating) closeEmptyEditor()
+      }}
       onSubmit={event => {
         event.preventDefault()
         submit(primaryMode)
@@ -214,8 +273,31 @@ function ReportInsertPoint({ row, primaryMode, initiallyOpen = false, hoverInten
         onChange={event => setDraftTitle(event.target.value)}
         onKeyDown={event => {
           if (event.key === 'Escape') {
-            setDraftTitle('')
-            setOpen(false)
+            closeEmptyEditor()
+          }
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault()
+            bodyInputRef.current?.focus()
+          }
+        }}
+      />
+      <textarea
+        ref={bodyInputRef}
+        className={styles.insertBodyInput}
+        dir="ltr"
+        spellCheck
+        value={draftBody}
+        rows={2}
+        placeholder="Description"
+        disabled={creating}
+        onChange={event => setDraftBody(event.target.value)}
+        onKeyDown={event => {
+          if (event.key === 'Escape') {
+            closeEmptyEditor()
+          }
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault()
+            submit(primaryMode)
           }
         }}
       />
@@ -294,12 +376,33 @@ function ReportAttributes({ attributes }) {
   )
 }
 
-function ReportSection({ row, project, isProjectRoot, childrenCollapsed, attributes, detailsVisible, activeColor, sideMeta, paintCat, paintPersonaId, registerSection, onTitleChange, onBodyChange, onToggleChildren, onToggleDetails, onPaint, onPersonaPaint }) {
+function ReportScheduleBadge({ schedule }) {
+  if (!schedule) return null
+
+  return (
+    <div className={styles.sectionSchedule}>
+      <span className={styles.sectionScheduleIcon}>
+        <CalendarClock size={14} strokeWidth={2.25} />
+      </span>
+      <span className={styles.sectionScheduleRange}>{schedule.range}</span>
+      <span className={styles.sectionScheduleDuration}>{schedule.duration}</span>
+    </div>
+  )
+}
+
+function ReportSection({ row, project, isProjectRoot, childrenCollapsed, attributes, detailMode, activeColor, sideMeta, paintCat, paintPersonaId, registerSection, onTitleChange, onBodyChange, onToggleChildren, onToggleDetails, onTypeContextMenu, onPaint, onPersonaPaint }) {
   const title = isProjectRoot && project?.name ? project.name : row.note.title || 'Untitled'
   const body = isProjectRoot && project?.description ? project.description : row.note.html || ''
   const isReportRoot = row.relation === 'current' || row.depth === 0
   const headingLevel = isReportRoot ? 1 : Math.min(6, row.depth + 1)
   const HeadingTag = `h${headingLevel}`
+  const showDescription = detailMode === DETAIL_MODE_ALL || detailMode === DETAIL_MODE_DESCRIPTION
+  const showMetadata = detailMode === DETAIL_MODE_ALL
+  const nextDetailLabel = detailMode === DETAIL_MODE_ALL
+    ? 'show description only'
+    : detailMode === DETAIL_MODE_DESCRIPTION
+      ? 'hide details'
+      : 'show all details'
 
   return (
     <section
@@ -327,16 +430,30 @@ function ReportSection({ row, project, isProjectRoot, childrenCollapsed, attribu
           aria-label={childrenCollapsed ? `Expand children of ${title}` : `Collapse children of ${title}`}>
             {row.outlineNumber}
           </button>
+        {(() => {
+          const doneInfo = sideMeta.doneInfo
+          const done = Boolean(doneInfo?.done)
+          const doneLabel = doneInfo?.inherited
+            ? `Done via ${doneInfo.inheritedFrom?.title || 'parent'}`
+            : 'Done'
+          return (
         <button
           type="button"
-          className={styles.headingTypeIcon}
-          style={{ '--attribute-color': sideMeta.typeCategory?.color || '#64748b' }}
+          className={[
+            styles.headingTypeIcon,
+            done && styles.headingTypeDone,
+            doneInfo?.inherited && styles.headingTypeDoneInherited,
+          ].filter(Boolean).join(' ')}
+          style={{ '--attribute-color': done ? '#16a34a' : (sideMeta.typeCategory?.color || '#64748b') }}
           onClick={() => onToggleDetails(row.note.id)}
-          title={detailsVisible ? 'Hide note details' : 'Show note details'}
-          aria-label={detailsVisible ? `Hide details for ${title}` : `Show details for ${title}`}
-          aria-pressed={detailsVisible}>
-          <CategoryIconGlyph icon={iconForCategory(sideMeta.typeCategory)} strokeWidth={2.35} />
+          onContextMenu={event => onTypeContextMenu(event, row.note.id)}
+          title={`Current detail view: ${detailMode}. Click to ${nextDetailLabel}.`}
+          aria-label={`${done ? doneLabel : (sideMeta.typeCategory?.name || 'Type')}: ${nextDetailLabel} for ${title}`}
+          aria-pressed={detailMode !== DETAIL_MODE_NONE}>
+          {done ? <DoneKindIcon /> : <CategoryIconGlyph icon={iconForCategory(sideMeta.typeCategory)} strokeWidth={2.35} />}
         </button>
+          )
+        })()}
         <EditableHeading
           as={HeadingTag}
           title={title}
@@ -349,15 +466,20 @@ function ReportSection({ row, project, isProjectRoot, childrenCollapsed, attribu
           </span>
         )}
       </div>
-        {detailsVisible && (
-          <>
+        {showDescription && (
+          <div className={styles.sectionDetails} data-detail-mode={detailMode}>
+            {showMetadata && (
+              <>
             <ReportAttributes attributes={attributes} />
+            <ReportScheduleBadge schedule={sideMeta.schedule} />
+              </>
+            )}
             <EditableBody
               html={body}
               editable={!isProjectRoot}
               onChange={html => onBodyChange(row.note.id, html)}
             />
-          </>
+          </div>
         )}
       </div>
     </section>
@@ -385,7 +507,7 @@ export default function ReportPage({
   const [structureCollapsed, setStructureCollapsed] = useState(false)
   const [visibleStructureNoteIds, setVisibleStructureNoteIds] = useState(null)
   const [collapsedStructureNoteIds, setCollapsedStructureNoteIds] = useState(() => new Set())
-  const [hiddenDetailNoteIds, setHiddenDetailNoteIds] = useState(() => new Set())
+  const [detailModesByNoteId, setDetailModesByNoteId] = useState(() => new Map())
   const [hierarchyToggleRequest, setHierarchyToggleRequest] = useState(null)
   const [classificationDimensions, setClassificationDimensions] = useState([])
   const [classificationCategories, setClassificationCategories] = useState([])
@@ -398,6 +520,8 @@ export default function ReportPage({
   const [paintCat, setPaintCat] = useState(null)
   const [paintPersonaId, setPaintPersonaId] = useState(null)
   const [floatingPanel, setFloatingPanel] = useState(null)
+  const [reportSettingsOpen, setReportSettingsOpen] = useState(false)
+  const [typeContextMenu, setTypeContextMenu] = useState(null)
   const [pendingCreatedNoteId, setPendingCreatedNoteId] = useState(null)
   const sectionRefs = useRef({})
   const saveTimers = useRef({})
@@ -409,6 +533,7 @@ export default function ReportPage({
     () => buildNoteHierarchyRows(notes, rootNoteId, { includeRoot: true }),
     [notes, rootNoteId],
   )
+  const notesById = useMemo(() => new Map(notes.map(note => [String(note.id), note])), [notes])
   const numberedRows = useMemo(() => addOutlineNumbers(rows), [rows])
   const rowById = useMemo(() => new Map(numberedRows.map(row => [row.note.id, row])), [numberedRows])
   const rootReportRow = useMemo(
@@ -435,6 +560,12 @@ export default function ReportPage({
       return !isHiddenByCollapsedAncestor(row.note.id)
     })
   }, [collapsedStructureNoteIds, noteParentById, numberedRows, visibleStructureNoteIds])
+  const visibleDepthSpan = useMemo(() => {
+    const maxDepth = visibleReportRows.reduce((max, row) => Math.max(max, row.depth), 0)
+    if (maxDepth <= 1) return 'shallow'
+    if (maxDepth <= 2) return 'medium'
+    return 'deep'
+  }, [visibleReportRows])
   const assignmentForDimension = useCallback((noteId, dimensionId) => {
     const assignment = classificationAssignments.find(item => {
       const itemNoteId = item.noteId || item.note_id
@@ -602,10 +733,83 @@ export default function ReportPage({
       typeById.get(typeCategoryIdForNote(row.note, { notes, timeSlots })) || typeCategories[0],
     ]))
   }, [notes, numberedRows, timeSlots, typeCategories])
+  const kanbanDoneCategory = useMemo(
+    () => classificationCategories.find(category => category.systemType === 'kanban' && category.kanbanState === 'done'),
+    [classificationCategories],
+  )
+  const explicitDoneNoteIds = useMemo(() => {
+    if (!kanbanDoneCategory) return new Set()
+    return new Set(
+      classificationAssignments
+        .filter(assignment => {
+          const noteId = assignment.noteId || assignment.note_id
+          const dimensionId = assignment.dimensionId || assignment.dimension_id
+          const categoryId = assignment.categoryId || assignment.category_id
+          return dimensionId === kanbanDoneCategory.dimensionId && categoryId === kanbanDoneCategory.id && noteId
+        })
+        .map(assignment => String(assignment.noteId || assignment.note_id)),
+    )
+  }, [classificationAssignments, kanbanDoneCategory])
+  const doneInfoByNoteId = useMemo(() => {
+    const fallback = { done: false, explicit: false, inherited: false, inheritedFrom: null }
+    if (!kanbanDoneCategory) return new Map()
+    const resolved = new Map()
+    const resolving = new Set()
+    const resolve = noteId => {
+      const normalizedId = String(noteId || '')
+      if (resolved.has(normalizedId)) return resolved.get(normalizedId)
+      if (!normalizedId || resolving.has(normalizedId)) return fallback
+      resolving.add(normalizedId)
+      if (explicitDoneNoteIds.has(normalizedId)) {
+        const info = { done: true, explicit: true, inherited: false, inheritedFrom: notesById.get(normalizedId) || null }
+        resolved.set(normalizedId, info)
+        resolving.delete(normalizedId)
+        return info
+      }
+      const parentId = notesById.get(normalizedId)?.parentNoteId
+      if (parentId) {
+        const parentInfo = resolve(parentId)
+        if (parentInfo.done) {
+          const info = {
+            done: true,
+            explicit: false,
+            inherited: true,
+            inheritedFrom: parentInfo.inheritedFrom || notesById.get(String(parentId)) || null,
+          }
+          resolved.set(normalizedId, info)
+          resolving.delete(normalizedId)
+          return info
+        }
+      }
+      resolved.set(normalizedId, fallback)
+      resolving.delete(normalizedId)
+      return fallback
+    }
+    notes.forEach(note => resolve(note.id))
+    return resolved
+  }, [explicitDoneNoteIds, kanbanDoneCategory, notes, notesById])
+  const scheduleByNoteId = useMemo(() => {
+    const grouped = new Map()
+    timeSlots.forEach(slot => {
+      const noteId = slot.noteId || slot.note_id
+      if (!noteId) return
+      const current = grouped.get(noteId)
+      if (!current || (Number(slot.startCol ?? slot.start_col) || 0) < (Number(current.startCol ?? current.start_col) || 0)) {
+        grouped.set(noteId, slot)
+      }
+    })
+    const labels = new Map()
+    grouped.forEach((slot, noteId) => {
+      const label = scheduleLabelForSlot(project, slot)
+      if (label) labels.set(noteId, label)
+    })
+    return labels
+  }, [project, timeSlots])
 
   useEffect(() => {
     setVisibleStructureNoteIds(null)
     setCollapsedStructureNoteIds(new Set())
+    setDetailModesByNoteId(new Map())
   }, [rootNoteId])
 
   useEffect(() => () => {
@@ -657,8 +861,20 @@ export default function ReportPage({
   useEffect(() => {
     if (!isActive) {
       setFloatingPanel(null)
+      setTypeContextMenu(null)
     }
   }, [isActive])
+
+  useEffect(() => {
+    if (!typeContextMenu) return undefined
+    const close = () => setTypeContextMenu(null)
+    window.addEventListener('pointerdown', close)
+    window.addEventListener('keydown', close)
+    return () => {
+      window.removeEventListener('pointerdown', close)
+      window.removeEventListener('keydown', close)
+    }
+  }, [typeContextMenu])
 
   useEffect(() => {
     if (!pendingCreatedNoteId || !rowById.has(pendingCreatedNoteId)) return
@@ -713,7 +929,7 @@ export default function ReportPage({
     sectionRefs.current[noteId]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  const createReportNote = useCallback(async ({ row, title, mode }) => {
+  const createReportNote = useCallback(async ({ row, title, html = '', mode }) => {
     const trimmedTitle = String(title || '').trim()
     if (!row?.note?.id || !trimmedTitle) return null
 
@@ -728,7 +944,7 @@ export default function ReportPage({
       id: newNoteId,
       parentNoteId,
       title: trimmedTitle,
-      html: '',
+      html,
       collapsed: false,
     }
 
@@ -800,12 +1016,67 @@ export default function ReportPage({
   }
 
   const toggleDetails = noteId => {
-    setHiddenDetailNoteIds(previous => {
-      const next = new Set(previous)
-      if (next.has(noteId)) next.delete(noteId)
-      else next.add(noteId)
+    setDetailModesByNoteId(previous => {
+      const next = new Map(previous)
+      const current = next.get(noteId) || DETAIL_MODE_ALL
+      const nextMode = current === DETAIL_MODE_ALL
+        ? DETAIL_MODE_DESCRIPTION
+        : current === DETAIL_MODE_DESCRIPTION
+          ? DETAIL_MODE_NONE
+          : DETAIL_MODE_ALL
+      if (nextMode === DETAIL_MODE_ALL) next.delete(noteId)
+      else next.set(noteId, nextMode)
       return next
     })
+  }
+
+  const collapseAllDetails = () => {
+    setDetailModesByNoteId(new Map(numberedRows.map(row => [row.note.id, DETAIL_MODE_NONE])))
+    setReportSettingsOpen(false)
+  }
+
+  const expandAllDetails = () => {
+    setDetailModesByNoteId(new Map())
+    setReportSettingsOpen(false)
+  }
+
+  const openTypeContextMenu = (event, noteId) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const menuWidth = 190
+    const menuHeight = 54
+    setTypeContextMenu({
+      noteId,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+    })
+  }
+
+  const toggleDone = async noteId => {
+    if (!noteId || !kanbanDoneCategory) {
+      setTypeContextMenu(null)
+      return
+    }
+    const doneInfo = doneInfoByNoteId.get(String(noteId)) || { explicit: false }
+    const dimensionId = kanbanDoneCategory.dimensionId
+    setTypeContextMenu(null)
+    playSound('settingToggle')
+    setClassificationAssignments(previous => {
+      const withoutDone = previous.filter(assignment => {
+        const assignmentNoteId = assignment.noteId || assignment.note_id
+        const assignmentDimensionId = assignment.dimensionId || assignment.dimension_id
+        return !(assignmentNoteId === noteId && assignmentDimensionId === dimensionId)
+      })
+      if (doneInfo.explicit) return withoutDone
+      return [...withoutDone, { noteId, dimensionId, categoryId: kanbanDoneCategory.id }]
+    })
+    try {
+      if (doneInfo.explicit) await api.unassign(noteId, dimensionId)
+      else await api.assign(noteId, dimensionId, kanbanDoneCategory.id)
+    } catch (error) {
+      console.error(error)
+      refreshClassificationData()
+    }
   }
 
   const activatePaint = (catId, color) => {
@@ -955,41 +1226,95 @@ export default function ReportPage({
       </aside>
 
       <div className={styles.documentPane}>
-        <article className={styles.sheet} dir="ltr">
+        <div className={styles.reportToolbar}>
+          <button
+            type="button"
+            className={`${styles.reportToolbarButton} ${reportSettingsOpen ? styles.reportToolbarButtonActive : ''}`}
+            onClick={() => setReportSettingsOpen(open => !open)}
+            title="Report settings"
+            aria-label="Report settings"
+            aria-expanded={reportSettingsOpen}>
+            <Settings size={16} strokeWidth={2.2} />
+          </button>
+          {reportSettingsOpen && (
+            <div className={styles.reportSettingsPanel}>
+              <button type="button" className={styles.reportSettingsAction} onClick={collapseAllDetails}>
+                <EyeOff size={15} strokeWidth={2.2} />
+                <span>Collapse all descriptions</span>
+              </button>
+              <button type="button" className={styles.reportSettingsAction} onClick={expandAllDetails}>
+                <Eye size={15} strokeWidth={2.2} />
+                <span>Expand all descriptions</span>
+              </button>
+            </div>
+          )}
+        </div>
+        {typeContextMenu && (() => {
+          const doneInfo = doneInfoByNoteId.get(String(typeContextMenu.noteId)) || { done: false, explicit: false, inherited: false }
+          return (
+            <div
+              className={styles.typeContextMenu}
+              style={{ left: typeContextMenu.x, top: typeContextMenu.y }}
+              role="menu"
+              onPointerDown={event => event.stopPropagation()}>
+              <button type="button" role="menuitem" onClick={() => toggleDone(typeContextMenu.noteId)}>
+                {doneInfo.explicit
+                  ? 'Mark as undone'
+                  : doneInfo.inherited
+                    ? 'Mark this note as done'
+                    : 'Mark as done'}
+              </button>
+            </div>
+          )
+        })()}
+        <article className={styles.sheet} data-depth-span={visibleDepthSpan} dir="ltr">
           {visibleReportRows.map((row, index) => {
             const isRootRow = row.note.id === rootNoteId || row.relation === 'current' || row.depth === 0
             const previousRow = visibleReportRows[index - 1]
             const nextRow = visibleReportRows[index + 1]
+            const displayDepth = Math.max(0, row.depth - 1)
             const hasVisibleChildAfter = nextRow && nextRow.depth > row.depth
             const primaryInsertMode = isRootRow || hasVisibleChildAfter ? 'child' : 'after'
             const levelRise = previousRow ? Math.max(0, previousRow.depth - row.depth) : 0
             const sameLevel = previousRow && previousRow.depth === row.depth
             const deeperLevel = previousRow && previousRow.depth < row.depth
+            const spacing = visibleDepthSpan === 'shallow'
+              ? { riseBase: 6, riseStep: 5, sameBase: 6, childBase: 2 }
+              : visibleDepthSpan === 'medium'
+                ? { riseBase: 10, riseStep: 8, sameBase: 9, childBase: 4 }
+                : { riseBase: 14, riseStep: 12, sameBase: 12, childBase: 6 }
             const sectionTopGap = index === 0
               ? 0
               : levelRise > 0
-                ? 14 + levelRise * 12
+                ? spacing.riseBase + levelRise * spacing.riseStep
                 : sameLevel
-                  ? Math.max(4, 12 - row.depth * 2)
+                  ? Math.max(2, spacing.sameBase - row.depth * 2)
                   : deeperLevel
-                    ? Math.max(0, 6 - row.depth * 2)
+                    ? Math.max(0, spacing.childBase - row.depth * 2)
                     : 0
             return (
               <div
                 key={row.note.id}
                 className={styles.sectionBlock}
-                style={{ '--section-top-gap': `${sectionTopGap}px` }}>
+                data-depth={row.depth}
+                data-has-branch={displayDepth > 1 ? 'true' : undefined}
+                style={{
+                  '--section-top-gap': `${sectionTopGap}px`,
+                  '--report-tree-depth': displayDepth,
+                }}>
                 <ReportSection
                   row={row}
                   project={project}
                   isProjectRoot={row.note.id === project?.rootNoteId}
                   childrenCollapsed={collapsedStructureNoteIds.has(row.note.id)}
                   attributes={reportAttributesByNoteId.get(row.note.id) || []}
-                  detailsVisible={!hiddenDetailNoteIds.has(row.note.id)}
+                  detailMode={detailModesByNoteId.get(row.note.id) || DETAIL_MODE_ALL}
                   activeColor={activeColorByNoteId.get(row.note.id)}
                   sideMeta={{
                     typeCategory: typeCategoryByNoteId.get(row.note.id),
+                    doneInfo: doneInfoByNoteId.get(String(row.note.id)),
                     people: peopleByNoteId.get(row.note.id) || [],
+                    schedule: scheduleByNoteId.get(row.note.id),
                   }}
                   paintCat={paintCat}
                   paintPersonaId={paintPersonaId}
@@ -998,6 +1323,7 @@ export default function ReportPage({
                   onBodyChange={saveBody}
                   onToggleChildren={requestHierarchyToggle}
                   onToggleDetails={toggleDetails}
+                  onTypeContextMenu={openTypeContextMenu}
                   onPaint={paintNote}
                   onPersonaPaint={paintPersonaToNote}
                 />

@@ -117,6 +117,12 @@
 
 .sheet {
   --sheet-padding-left: 92px;
+  --report-indent-step: 20px;
+  --report-root-title-size: 42px;
+  --report-depth-0-size: 38px;
+  --report-depth-1-size: 26px;
+  --report-depth-2-size: 20px;
+  --report-depth-deep-size: 15px;
   width: min(816px, calc(100vw - var(--structure-width) - 72px));
   min-height: 1056px;
   display: flex;
@@ -127,6 +133,122 @@
   padding: 76px 86px 104px 92px;
   direction: ltr;
   text-align: left;
+}
+
+.sheet[data-depth-span="shallow"] {
+  --report-indent-step: 14px;
+  --report-root-title-size: 32px;
+  --report-depth-0-size: 30px;
+  --report-depth-1-size: 21px;
+  --report-depth-2-size: 18px;
+  --report-depth-deep-size: 15px;
+}
+
+.sheet[data-depth-span="medium"] {
+  --report-indent-step: 18px;
+  --report-root-title-size: 38px;
+  --report-depth-0-size: 34px;
+  --report-depth-1-size: 24px;
+  --report-depth-2-size: 19px;
+  --report-depth-deep-size: 15px;
+}
+
+.sheet[data-depth-span="deep"] {
+  --report-indent-step: 22px;
+  --report-root-title-size: 43px;
+  --report-depth-0-size: 39px;
+  --report-depth-1-size: 27px;
+  --report-depth-2-size: 20px;
+  --report-depth-deep-size: 15px;
+}
+
+.reportToolbar {
+  position: absolute;
+  top: 34px;
+  right: max(20px, calc((100% - min(816px, calc(100vw - var(--structure-width) - 72px))) / 2 - 46px));
+  z-index: 12;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.reportToolbarButton {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #d7deea;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #64748b;
+  cursor: pointer;
+  box-shadow: 0 3px 12px rgba(15, 23, 42, 0.1);
+}
+
+.reportToolbarButton:hover,
+.reportToolbarButtonActive {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.reportSettingsPanel {
+  min-width: 206px;
+  padding: 6px;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.15);
+}
+
+.reportSettingsAction {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #334155;
+  font: 700 12px/1.2 Arial, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+
+.reportSettingsAction:hover {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.typeContextMenu {
+  position: fixed;
+  z-index: 80;
+  min-width: 176px;
+  padding: 6px;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+.typeContextMenu button {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #334155;
+  font: 700 12px/1.2 Arial, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+
+.typeContextMenu button:hover {
+  background: #eff6ff;
+  color: #1d4ed8;
 }
 
 .reportFloatingTools {
@@ -142,6 +264,41 @@
 .sectionBlock {
   position: relative;
   margin-top: var(--section-top-gap, 0);
+  margin-left: calc(var(--report-tree-depth, 0) * var(--report-indent-step));
+}
+
+.sectionBlock[data-has-branch="true"]::before {
+  content: "";
+  position: absolute;
+  top: calc(-1 * var(--section-top-gap, 0px) - 22px);
+  bottom: 8px;
+  left: calc(-0.5 * var(--report-indent-step));
+  width: 1px;
+  border-radius: 999px;
+  background: #d7deea;
+  pointer-events: none;
+}
+
+.sectionBlock[data-has-branch="true"]::after {
+  content: "";
+  position: absolute;
+  top: 18px;
+  left: calc(-0.5 * var(--report-indent-step));
+  width: calc(var(--report-indent-step) * 0.5);
+  height: 1px;
+  border-radius: 999px;
+  background: #d7deea;
+  pointer-events: none;
+}
+
+.sheet[data-depth-span="shallow"] .sectionBlock[data-has-branch="true"]::before,
+.sheet[data-depth-span="shallow"] .sectionBlock[data-has-branch="true"]::after {
+  background: #e2e8f0;
+}
+
+.sheet[data-depth-span="deep"] .sectionBlock[data-has-branch="true"]::before,
+.sheet[data-depth-span="deep"] .sectionBlock[data-has-branch="true"]::after {
+  background: #cbd5e1;
 }
 
 .documentSection {
@@ -247,32 +404,39 @@
 .insertPoint::before {
   content: "";
   position: absolute;
-  top: 4px;
-  left: calc(-1 * var(--sheet-padding-left) - 12px);
-  width: 18px;
-  height: 18px;
-  border: 1px solid #d7deea;
+  top: 7px;
+  left: calc(-1 * var(--sheet-padding-left) - 18px);
+  width: 32px;
+  height: 12px;
   border-radius: 999px;
-  background: #ffffff;
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.1);
+  background:
+    linear-gradient(90deg, #60a5fa 0, #60a5fa 10px, #dbeafe 10px, #dbeafe 100%);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.16);
   opacity: 0;
-  transition: opacity 120ms ease;
+  transform: translateX(-4px) scaleX(0.82);
+  transform-origin: right center;
+  transition: opacity 120ms ease, transform 140ms ease;
 }
 
 .insertPoint::after {
   content: "+";
   position: absolute;
-  top: 4px;
-  left: calc(-1 * var(--sheet-padding-left) - 12px);
-  width: 18px;
-  height: 18px;
+  top: 0;
+  left: calc(-1 * var(--sheet-padding-left) - 28px);
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
-  color: #64748b;
-  font: 800 14px/1 Arial, sans-serif;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #2563eb;
+  font: 800 17px/1 Arial, sans-serif;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.18), 0 1px 2px rgba(15, 23, 42, 0.08);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 120ms ease, color 120ms ease;
+  transform: translateX(-4px) scale(0.84);
+  transition: opacity 120ms ease, transform 140ms ease, border-color 120ms ease, color 120ms ease;
 }
 
 .insertGhostButton {
@@ -290,15 +454,17 @@
 }
 
 .insertPoint:focus-within::before,
-.insertPoint[data-hover-ready="true"]::before,
+.insertPoint:hover::before,
 .insertPoint:focus-within::after,
-.insertPoint[data-hover-ready="true"]::after {
+.insertPoint:hover::after {
   opacity: 1;
+  transform: translateX(0) scale(1);
 }
 
 .insertPoint:hover::after,
 .insertPoint:focus-within::after {
-  color: #2563eb;
+  border-color: #93c5fd;
+  color: #1d4ed8;
 }
 
 .insertGhostButton:focus {
@@ -308,7 +474,7 @@
 .insertEditor {
   display: grid;
   grid-template-columns: minmax(0, 1fr) max-content max-content;
-  gap: 7px;
+  gap: 6px 7px;
   align-items: center;
   margin: -18px -10px 22px;
   padding: 5px 7px;
@@ -332,6 +498,25 @@
 
 .insertInput::placeholder {
   color: #94a3b8;
+}
+
+.insertBodyInput {
+  grid-column: 1 / -1;
+  min-width: 0;
+  min-height: 42px;
+  padding: 2px 3px;
+  border: 0;
+  background: transparent;
+  color: #1f2937;
+  font: 15px/1.45 Arial, sans-serif;
+  outline: none;
+  resize: vertical;
+  direction: ltr;
+  text-align: left;
+}
+
+.insertBodyInput::placeholder {
+  color: #9ca3af;
 }
 
 .insertAction,
@@ -471,6 +656,53 @@
   background: color-mix(in srgb, var(--attribute-color, #64748b) 10%, transparent);
 }
 
+.headingTypeDone {
+  color: #16a34a;
+  filter: drop-shadow(0 1px 2px rgba(22, 163, 74, 0.2));
+}
+
+.headingTypeDone svg rect {
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 2.2;
+}
+
+.headingTypeDone svg path {
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 2.2;
+}
+
+.headingTypeDoneInherited {
+  position: relative;
+  color: #15803d;
+  filter: none;
+}
+
+.headingTypeDoneInherited svg rect {
+  fill: #f7fee7;
+  stroke: #65a30d;
+  stroke-dasharray: 2 1.5;
+}
+
+.headingTypeDoneInherited svg path {
+  stroke: #15803d;
+}
+
+.headingTypeDoneInherited::after {
+  content: "";
+  position: absolute;
+  right: -2px;
+  top: -2px;
+  width: 0.32em;
+  height: 0.32em;
+  min-width: 5px;
+  min-height: 5px;
+  border: 1px solid #ffffff;
+  border-radius: 50%;
+  background: #84cc16;
+}
+
 .headingPeople {
   justify-self: end;
   align-self: center;
@@ -482,58 +714,58 @@
 }
 
 h1.sectionTitle {
-  font-size: 38px;
+  font-size: var(--report-depth-0-size);
 }
 
 .documentSection[data-depth="0"] .sectionTitle {
-  font-size: 38px;
+  font-size: var(--report-depth-0-size);
   font-weight: 800;
 }
 
 .documentSection[data-depth="0"] .sectionNumber,
 .documentSection[data-depth="0"] .sectionNumberButton,
 .documentSection[data-depth="0"] .headingTypeIcon {
-  font-size: 38px;
+  font-size: var(--report-depth-0-size);
 }
 
 h2.sectionTitle {
-  font-size: 26px;
+  font-size: var(--report-depth-1-size);
 }
 
 .documentSection[data-depth="1"] .sectionTitle {
-  font-size: 26px;
+  font-size: var(--report-depth-1-size);
 }
 
 .documentSection[data-depth="1"] .sectionNumber,
 .documentSection[data-depth="1"] .sectionNumberButton,
 .documentSection[data-depth="1"] .headingTypeIcon {
-  font-size: 26px;
+  font-size: var(--report-depth-1-size);
 }
 
 h3.sectionTitle {
-  font-size: 20px;
+  font-size: var(--report-depth-2-size);
 }
 
 .documentSection[data-depth="2"] .sectionTitle {
-  font-size: 20px;
+  font-size: var(--report-depth-2-size);
 }
 
 .documentSection[data-depth="2"] .sectionNumber,
 .documentSection[data-depth="2"] .sectionNumberButton,
 .documentSection[data-depth="2"] .headingTypeIcon {
-  font-size: 20px;
+  font-size: var(--report-depth-2-size);
 }
 
 h4.sectionTitle,
 h5.sectionTitle,
 h6.sectionTitle {
-  font-size: 15px;
+  font-size: var(--report-depth-deep-size);
 }
 
 .documentSection[data-depth="3"] .sectionTitle,
 .documentSection[data-depth="4"] .sectionTitle,
 .documentSection[data-depth="5"] .sectionTitle {
-  font-size: 15px;
+  font-size: var(--report-depth-deep-size);
 }
 
 .documentSection[data-depth="3"] .sectionNumber,
@@ -545,7 +777,7 @@ h6.sectionTitle {
 .documentSection[data-depth="3"] .headingTypeIcon,
 .documentSection[data-depth="4"] .headingTypeIcon,
 .documentSection[data-depth="5"] .headingTypeIcon {
-  font-size: 15px;
+  font-size: var(--report-depth-deep-size);
 }
 
 .documentSection[data-report-root="true"] {
@@ -553,14 +785,14 @@ h6.sectionTitle {
 }
 
 .documentSection[data-report-root="true"] .sectionTitle {
-  font-size: 42px;
+  font-size: var(--report-root-title-size);
   font-weight: 800;
   line-height: 1.08;
 }
 
 .documentSection[data-report-root="true"] .sectionNumberButton,
 .documentSection[data-report-root="true"] .headingTypeIcon {
-  font-size: 42px;
+  font-size: var(--report-root-title-size);
 }
 
 .sectionTitleInput:focus,
@@ -614,6 +846,54 @@ h6.sectionTitle {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sectionDetails {
+  display: block;
+}
+
+.sectionSchedule {
+  width: fit-content;
+  max-width: 100%;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: -2px 0 12px;
+  padding: 2px 7px 2px 5px;
+  border-left: 2px solid #93c5fd;
+  border-radius: 4px;
+  background: color-mix(in srgb, #3b82f6 6%, transparent);
+  color: #475569;
+  font: 600 12px/1.35 Arial, sans-serif;
+}
+
+.sectionScheduleIcon {
+  width: 15px;
+  height: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #2563eb;
+  opacity: 0.8;
+}
+
+.sectionScheduleRange {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sectionScheduleDuration {
+  flex: 0 0 auto;
+  color: #64748b;
+}
+
+.sectionScheduleDuration::before {
+  content: "·";
+  margin-right: 7px;
+  color: #94a3b8;
 }
 
 .sectionBody {
@@ -693,6 +973,11 @@ h6.sectionTitle {
     width: calc(100vw - 24px);
     min-height: 900px;
     padding: 46px 32px 72px 34px;
+  }
+
+  .reportToolbar {
+    top: 18px;
+    right: 14px;
   }
 
   .sectionHeading {
