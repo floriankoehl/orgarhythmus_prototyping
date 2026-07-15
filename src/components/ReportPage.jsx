@@ -1283,12 +1283,12 @@ export default function ReportPage({
             const visibleSiblingCount = row.depth === 0
               ? visibleReportRows.filter(candidate => candidate.depth === 0).length
               : visibleReportRows.filter(candidate => candidate.depth === row.depth && candidate.note.parentNoteId === row.note.parentNoteId).length
-            const displayDepth = Math.max(0, row.depth) + 1
-            const nextDisplayDepth = nextRow ? Math.max(0, nextRow.depth) + 1 : 0
+            const displayDepth = Math.max(0, row.depth)
+            const nextDisplayDepth = nextRow ? Math.max(0, nextRow.depth) : 0
             const hasVisibleChildAfter = nextRow && nextRow.depth > row.depth
             const isOnlyVisibleLeafChild = row.depth > 0 && visibleSiblingCount <= 1 && !hasVisibleChildAfter
             const startsChildGroup = Boolean(previousRow && row.depth > previousRow.depth)
-            const startsNestedChildGroup = startsChildGroup && displayDepth > 1
+            const startsNestedChildGroup = startsChildGroup && displayDepth > 0
             const needsIndentJoin = startsNestedChildGroup
             const ancestorLineCount = Math.max(0, displayDepth - 1)
             const endingLineIndices = Array.from(
@@ -1342,6 +1342,7 @@ export default function ReportPage({
                     aria-hidden="true"
                   />
                 ))}
+                {hasVisibleChildAfter && <span className={styles.sectionTreeChildLine} aria-hidden="true" />}
                 {needsIndentJoin && <span className={styles.sectionTreeJoin} aria-hidden="true" />}
                 {endingLineIndices.map(lineIndex => (
                   <span

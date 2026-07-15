@@ -272,7 +272,7 @@
   position: absolute;
   top: calc(-1 * var(--section-top-gap, 0px) - 22px);
   bottom: 8px;
-  left: calc(-1.08 * var(--report-indent-step));
+  left: calc(-1.72 * var(--report-indent-step));
   width: 1px;
   border-radius: 999px;
   background: #d3dce9;
@@ -283,7 +283,18 @@
   position: absolute;
   top: calc(-1 * var(--section-top-gap, 0px) - 22px);
   bottom: 8px;
-  left: calc((var(--report-tree-line-offset) - 0.58) * var(--report-indent-step));
+  left: calc((var(--report-tree-line-offset) - 1.22) * var(--report-indent-step));
+  width: 1px;
+  border-radius: 999px;
+  background: #d3dce9;
+  pointer-events: none;
+}
+
+.sectionTreeChildLine {
+  position: absolute;
+  top: 24px;
+  bottom: 8px;
+  left: calc(-0.72 * var(--report-indent-step));
   width: 1px;
   border-radius: 999px;
   background: #d3dce9;
@@ -313,8 +324,8 @@
   content: "";
   position: absolute;
   top: 4px;
-  left: calc(-1.08 * var(--report-indent-step));
-  width: calc(var(--report-indent-step) * 0.56);
+  left: calc(-1.72 * var(--report-indent-step));
+  width: calc(var(--report-indent-step) * 0.74);
   height: 15px;
   border-left: 1px solid #d3dce9;
   border-bottom: 1px solid #d3dce9;
@@ -343,6 +354,10 @@
   background: #dee5ee;
 }
 
+.sheet[data-depth-span="shallow"] .sectionTreeChildLine {
+  background: #dee5ee;
+}
+
 .sheet[data-depth-span="shallow"] .sectionBlock[data-has-branch="true"]::after {
   border-color: #dee5ee;
 }
@@ -355,6 +370,10 @@
   background: #c6d0de;
 }
 
+.sheet[data-depth-span="deep"] .sectionTreeChildLine {
+  background: #c6d0de;
+}
+
 .sheet[data-depth-span="deep"] .sectionBlock[data-has-branch="true"]::after {
   border-color: #c6d0de;
 }
@@ -362,8 +381,8 @@
 .sectionTreeJoin {
   position: absolute;
   top: -10px;
-  left: calc(-2.08 * var(--report-indent-step));
-  width: calc(var(--report-indent-step) * 1.56);
+  left: calc(-1.72 * var(--report-indent-step));
+  width: calc(var(--report-indent-step) * 0.74);
   height: 29px;
   border-left: 1px solid #d3dce9;
   border-bottom: 1px solid #d3dce9;
@@ -375,7 +394,7 @@
 .sectionTreeEndJoin {
   position: absolute;
   bottom: 4px;
-  left: calc((var(--report-tree-end-offset) - 1.58) * var(--report-indent-step));
+  left: calc((var(--report-tree-end-offset) - 2.22) * var(--report-indent-step));
   width: var(--report-indent-step);
   height: 19px;
   border-right: 1px solid #d3dce9;
