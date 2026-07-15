@@ -10,6 +10,11 @@
   gap: 8px;
 }
 
+.widgetLarge {
+  width: 52px;
+  height: 52px;
+}
+
 /* ── Panel ─────────────────────────────────────────────────────────────── */
 .panel {
   position: absolute;
@@ -158,6 +163,12 @@
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 .toggleBtn:hover { color: #333; background: #fff; }
+
+.widgetLarge .toggleBtn {
+  width: 52px;
+  height: 52px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.10);
+}
 
 .toggleActive {
   color: #1a73e8 !important;

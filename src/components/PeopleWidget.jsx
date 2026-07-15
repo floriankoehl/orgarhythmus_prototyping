@@ -26,6 +26,8 @@ export default function PeopleWidget({
   onApplyQuickFilter,
   appliedFilterActive = false,
   onClearAppliedFilter,
+  iconSize = 16,
+  size = 'default',
 }) {
   const [personas, setPersonas] = useState([])
 
@@ -41,7 +43,7 @@ export default function PeopleWidget({
   }
 
   return (
-    <div className={styles.widget} onClick={e => e.stopPropagation()}>
+    <div className={`${styles.widget} ${size === 'large' ? styles.widgetLarge : ''}`} onClick={e => e.stopPropagation()}>
       {expanded && (
         <div className={styles.panel}>
           {paintPersonaId && (
@@ -127,7 +129,7 @@ export default function PeopleWidget({
         onClick={() => { playSound('collapseToggle'); onExpandedChange(!expanded) }}
         title={expanded ? 'Collapse people panel' : 'Assign people or filter notes by responsibility'}
       >
-        <PeopleIcon size={16} />
+        <PeopleIcon size={iconSize} />
       </button>
 
       {!expanded && (

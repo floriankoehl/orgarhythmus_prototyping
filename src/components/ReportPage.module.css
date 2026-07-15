@@ -121,21 +121,26 @@
   background: #ffffff;
   border: 1px solid #d7dbe0;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18), 0 8px 24px rgba(0, 0, 0, 0.08);
-  padding: 76px 86px 104px;
+  padding: 76px 86px 104px 106px;
   direction: ltr;
   text-align: left;
 }
 
-.reportColorPicker {
+.reportFloatingTools {
   position: fixed;
   right: 18px;
   bottom: 18px;
   z-index: 30;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
 }
 
 .documentSection {
   position: relative;
-  margin: 0 0 28px;
+  margin: 0 -10px 28px;
+  padding: 6px 10px;
+  border-radius: 4px;
   scroll-margin-top: 28px;
 }
 
@@ -153,6 +158,19 @@
 .documentSection[data-colored="true"]::before {
   background: var(--section-color, #94a3b8);
   opacity: 0.5;
+}
+
+.documentSection[data-colored="true"] {
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--section-color, #94a3b8) 10%, transparent) 0,
+      color-mix(in srgb, var(--section-color, #94a3b8) 4%, transparent) 18%,
+      transparent 78%
+    );
+  background-position: -18px 0;
+  background-size: calc(100% + 18px) 100%;
+  background-repeat: no-repeat;
 }
 
 .documentSectionPaintable {
@@ -175,7 +193,7 @@
 
 .sectionHeading {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-columns: max-content max-content minmax(0, 1fr) max-content;
   align-items: baseline;
   column-gap: 8px;
   margin: 0 0 10px;
@@ -229,6 +247,33 @@
   background: transparent;
 }
 
+.headingTypeIcon {
+  width: 0.9em;
+  height: 0.9em;
+  margin-right: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  color: var(--attribute-color, #64748b);
+  opacity: 0.82;
+}
+
+.headingTypeIcon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.headingPeople {
+  justify-self: end;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  transform: scale(1.28);
+  transform-origin: right center;
+}
+
 h1.sectionTitle {
   font-size: 30px;
 }
@@ -238,7 +283,8 @@ h1.sectionTitle {
 }
 
 .documentSection[data-depth="0"] .sectionNumber,
-.documentSection[data-depth="0"] .sectionNumberButton {
+.documentSection[data-depth="0"] .sectionNumberButton,
+.documentSection[data-depth="0"] .headingTypeIcon {
   font-size: 30px;
 }
 
@@ -251,7 +297,8 @@ h2.sectionTitle {
 }
 
 .documentSection[data-depth="1"] .sectionNumber,
-.documentSection[data-depth="1"] .sectionNumberButton {
+.documentSection[data-depth="1"] .sectionNumberButton,
+.documentSection[data-depth="1"] .headingTypeIcon {
   font-size: 23px;
 }
 
@@ -264,7 +311,8 @@ h3.sectionTitle {
 }
 
 .documentSection[data-depth="2"] .sectionNumber,
-.documentSection[data-depth="2"] .sectionNumberButton {
+.documentSection[data-depth="2"] .sectionNumberButton,
+.documentSection[data-depth="2"] .headingTypeIcon {
   font-size: 19px;
 }
 
@@ -285,7 +333,10 @@ h6.sectionTitle {
 .documentSection[data-depth="5"] .sectionNumber,
 .documentSection[data-depth="3"] .sectionNumberButton,
 .documentSection[data-depth="4"] .sectionNumberButton,
-.documentSection[data-depth="5"] .sectionNumberButton {
+.documentSection[data-depth="5"] .sectionNumberButton,
+.documentSection[data-depth="3"] .headingTypeIcon,
+.documentSection[data-depth="4"] .headingTypeIcon,
+.documentSection[data-depth="5"] .headingTypeIcon {
   font-size: 16px;
 }
 
@@ -417,10 +468,19 @@ h6.sectionTitle {
   .sheet {
     width: calc(100vw - 24px);
     min-height: 900px;
-    padding: 46px 32px 72px;
+    padding: 46px 32px 72px 42px;
   }
 
-  .reportColorPicker {
+  .sectionHeading {
+    grid-template-columns: max-content max-content minmax(0, 1fr) max-content;
+  }
+
+  .headingPeople {
+    grid-column: 4 / 5;
+    grid-row: 1;
+  }
+
+  .reportFloatingTools {
     right: 12px;
     bottom: 12px;
   }

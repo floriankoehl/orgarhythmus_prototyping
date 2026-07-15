@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
+import { usePersonaCursor } from '../hooks/usePersonaCursor'
 import { playSound } from '../sounds/sound_registry'
 import { buildNoteHierarchyRows } from './NoteHierarchyTree'
+import PersonaAvatarStack from './PersonaAvatarStack'
+import PeopleWidget from './PeopleWidget'
 import ProjectDashboard from './ProjectDashboard'
 import StandardColorPicker from './StandardColorPicker'
 import { COLOR_UNASSIGNED_CATEGORY_ID } from './colorPickerCategories'
@@ -124,7 +127,7 @@ function ReportAttributes({ attributes }) {
   )
 }
 
-function ReportSection({ row, project, isProjectRoot, bodyCollapsed, attributes, activeColor, paintCat, registerSection, onTitleChange, onBodyChange, onToggleCollapse, onPaint }) {
+function ReportSection({ row, project, isProjectRoot, bodyCollapsed, attributes, activeColor, sideMeta, paintCat, paintPersonaId, registerSection, onTitleChange, onBodyChange, onToggleCollapse, onPaint, onPersonaPaint }) {
   const title = isProjectRoot && project?.name ? project.name : row.note.title || 'Untitled'
   const body = isProjectRoot && project?.description ? project.description : row.note.html || ''
   const headingLevel = Math.min(6, row.depth + 1)
@@ -133,42 +136,54 @@ function ReportSection({ row, project, isProjectRoot, bodyCollapsed, attributes,
   return (
     <section
       ref={element => registerSection(row.note.id, element)}
-      className={`${styles.documentSection} ${paintCat ? styles.documentSectionPaintable : ''}`}
+      className={`${styles.documentSection} ${paintCat || paintPersonaId ? styles.documentSectionPaintable : ''}`}
       style={activeColor ? { '--section-color': activeColor } : undefined}
       dir="ltr"
       data-depth={row.depth}
       data-colored={activeColor ? 'true' : undefined}
-      onClickCapture={paintCat ? event => {
+      onClickCapture={(paintCat || paintPersonaId) ? event => {
+        if (event.target.closest?.(`.${styles.sectionNumberButton}`)) return
         event.preventDefault()
         event.stopPropagation()
-        onPaint(row.note.id)
+        if (paintPersonaId) onPersonaPaint(row.note.id)
+        else onPaint(row.note.id)
       } : undefined}>
-      <div className={styles.sectionHeading}>
-        <button
-          type="button"
-          className={styles.sectionNumberButton}
-          onClick={() => onToggleCollapse(row.note.id)}
-          title={bodyCollapsed ? 'Expand section' : 'Collapse section'}
+      <div className={styles.sectionMain}>
+        <div className={styles.sectionHeading}>
+          <button
+            type="button"
+            className={styles.sectionNumberButton}
+            onClick={() => onToggleCollapse(row.note.id)}
+            title={bodyCollapsed ? 'Expand section' : 'Collapse section'}
           aria-label={bodyCollapsed ? `Expand ${title}` : `Collapse ${title}`}>
           {row.outlineNumber}
         </button>
+        <span className={styles.headingTypeIcon} style={{ '--attribute-color': sideMeta.typeCategory?.color || '#64748b' }}>
+          <CategoryIconGlyph icon={iconForCategory(sideMeta.typeCategory)} strokeWidth={2.35} />
+        </span>
         <EditableHeading
           as={HeadingTag}
           title={title}
           editable={!isProjectRoot}
           onCommit={value => onTitleChange(row.note.id, value)}
         />
+        {sideMeta.people.length > 0 && (
+          <span className={styles.headingPeople}>
+            <PersonaAvatarStack personas={sideMeta.people} />
+          </span>
+        )}
       </div>
-      {!bodyCollapsed && (
-        <>
-          <ReportAttributes attributes={attributes} />
-          <EditableBody
-            html={body}
-            editable={!isProjectRoot}
-            onChange={html => onBodyChange(row.note.id, html)}
-          />
-        </>
-      )}
+        {!bodyCollapsed && (
+          <>
+            <ReportAttributes attributes={attributes} />
+            <EditableBody
+              html={body}
+              editable={!isProjectRoot}
+              onChange={html => onBodyChange(row.note.id, html)}
+            />
+          </>
+        )}
+      </div>
     </section>
   )
 }
@@ -200,9 +215,12 @@ export default function ReportPage({
   const [classificationAssignments, setClassificationAssignments] = useState([])
   const [savedFilters, setSavedFilters] = useState([])
   const [timeSlots, setTimeSlots] = useState([])
+  const [personas, setPersonas] = useState([])
+  const [personaNoteAssignments, setPersonaNoteAssignments] = useState([])
   const [colorDimensionId, setColorDimensionId] = useState('')
-  const [colorPickerExpanded, setColorPickerExpanded] = useState(false)
   const [paintCat, setPaintCat] = useState(null)
+  const [paintPersonaId, setPaintPersonaId] = useState(null)
+  const [floatingPanel, setFloatingPanel] = useState(null)
   const sectionRefs = useRef({})
   const saveTimers = useRef({})
   const pendingPatches = useRef({})
@@ -215,10 +233,26 @@ export default function ReportPage({
   )
   const numberedRows = useMemo(() => addOutlineNumbers(rows), [rows])
   const rowById = useMemo(() => new Map(numberedRows.map(row => [row.note.id, row])), [numberedRows])
+  const noteParentById = useMemo(
+    () => new Map(numberedRows.map(row => [row.note.id, row.note.parentNoteId || null])),
+    [numberedRows],
+  )
   const visibleReportRows = useMemo(() => {
-    if (!visibleStructureNoteIds) return numberedRows
-    return numberedRows.filter(row => visibleStructureNoteIds.has(row.note.id))
-  }, [numberedRows, visibleStructureNoteIds])
+    const isHiddenByCollapsedAncestor = noteId => {
+      const seen = new Set()
+      let parentId = noteParentById.get(noteId)
+      while (parentId && !seen.has(parentId)) {
+        if (collapsedStructureNoteIds.has(parentId)) return true
+        seen.add(parentId)
+        parentId = noteParentById.get(parentId)
+      }
+      return false
+    }
+    return numberedRows.filter(row => {
+      if (visibleStructureNoteIds && !visibleStructureNoteIds.has(row.note.id)) return false
+      return !isHiddenByCollapsedAncestor(row.note.id)
+    })
+  }, [collapsedStructureNoteIds, noteParentById, numberedRows, visibleStructureNoteIds])
   const assignmentForDimension = useCallback((noteId, dimensionId) => {
     const assignment = classificationAssignments.find(item => {
       const itemNoteId = item.noteId || item.note_id
@@ -293,10 +327,6 @@ export default function ReportPage({
       const timeCat = categoriesById.get(timeCategoryIdForNote(note))
       if (timeDim && timeCat) attributes.push({ dim: timeDim, cat: timeCat })
 
-      const typeDim = dimensionsById.get(TYPE_DIMENSION_ID)
-      const typeCat = categoriesById.get(typeCategoryIdForNote(note, { notes, timeSlots }))
-      if (typeDim && typeCat) attributes.push({ dim: typeDim, cat: typeCat })
-
       const filterDim = dimensionsById.get(FILTER_DIMENSION_ID)
       if (filterDim) {
         filterCategories.forEach(filterCategory => {
@@ -365,6 +395,31 @@ export default function ReportPage({
     })
     return colors
   }, [assignmentForDimension, assignedCategoryByNoteAndDimension, colorDimensionId, filterCategories, notes, numberedRows, reportCategories, savedFilters, timeSlots])
+  const peopleByNoteId = useMemo(() => {
+    const personasById = new Map(personas.map(persona => [persona.id, persona]))
+    const grouped = new Map()
+    personaNoteAssignments.forEach(assignment => {
+      const noteId = assignment.noteId || assignment.note_id
+      const personaId = assignment.personaId || assignment.persona_id
+      const persona = personasById.get(personaId)
+      if (!noteId || !persona) return
+      if (!grouped.has(noteId)) grouped.set(noteId, [])
+      grouped.get(noteId).push(persona)
+    })
+    return grouped
+  }, [personaNoteAssignments, personas])
+  const activePersona = useMemo(
+    () => personas.find(persona => persona.id === paintPersonaId) || null,
+    [paintPersonaId, personas],
+  )
+  const personaCursor = usePersonaCursor(activePersona)
+  const typeCategoryByNoteId = useMemo(() => {
+    const typeById = new Map(typeCategories.map(category => [category.id, category]))
+    return new Map(numberedRows.map(row => [
+      row.note.id,
+      typeById.get(typeCategoryIdForNote(row.note, { notes, timeSlots })) || typeCategories[0],
+    ]))
+  }, [notes, numberedRows, timeSlots, typeCategories])
 
   useEffect(() => {
     setVisibleStructureNoteIds(null)
@@ -376,13 +431,23 @@ export default function ReportPage({
   }, [])
 
   const refreshClassificationData = useCallback(() => {
-    Promise.all([api.getDimensions(), api.getAllCategories(), api.getAssignments(), api.getFilters(), api.getTimeSlots()])
-      .then(([dimensions, categories, assignments, filters, slots]) => {
+    Promise.all([
+      api.getDimensions(),
+      api.getAllCategories(),
+      api.getAssignments(),
+      api.getFilters(),
+      api.getTimeSlots(),
+      api.getPersonas(),
+      api.getDirectPersonaNoteAssignments(),
+    ])
+      .then(([dimensions, categories, assignments, filters, slots, loadedPersonas, loadedPersonaNoteAssignments]) => {
         setClassificationDimensions(dimensions || [])
         setClassificationCategories(categories || [])
         setClassificationAssignments(assignments || [])
         setSavedFilters((filters || []).map(normalizeSavedFilter))
         setTimeSlots(slots || [])
+        setPersonas(loadedPersonas || [])
+        setPersonaNoteAssignments(loadedPersonaNoteAssignments || [])
       })
       .catch(error => {
         console.error('Failed to load report classification data', error)
@@ -409,7 +474,7 @@ export default function ReportPage({
 
   useEffect(() => {
     if (!isActive) {
-      setColorPickerExpanded(false)
+      setFloatingPanel(null)
     }
   }, [isActive])
 
@@ -481,12 +546,19 @@ export default function ReportPage({
   }, [])
 
   const requestHierarchyToggle = noteId => {
+    setCollapsedStructureNoteIds(previous => {
+      const next = new Set(previous)
+      if (next.has(noteId)) next.delete(noteId)
+      else next.add(noteId)
+      return next
+    })
     setHierarchyToggleRequest({ id: crypto.randomUUID(), noteId })
   }
 
   const activatePaint = (catId, color) => {
     const deactivating = paintCat?.id === catId
     playSound(deactivating ? 'paintModeDeactivate' : 'paintModeActivate')
+    setPaintPersonaId(null)
     setPaintCat(previous => previous?.id === catId ? null : { id: catId, color })
   }
 
@@ -516,6 +588,26 @@ export default function ReportPage({
     } catch (error) {
       console.error(error)
       refreshClassificationData()
+    }
+  }
+
+  const paintPersonaToNote = async noteId => {
+    if (!paintPersonaId) return
+    playSound('personaAssign')
+    setPersonaNoteAssignments(previous => [
+      ...previous.filter(assignment => !(
+        (assignment.personaId || assignment.persona_id) === paintPersonaId &&
+        (assignment.noteId || assignment.note_id) === noteId
+      )),
+      { personaId: paintPersonaId, noteId },
+    ])
+    try {
+      await api.assignPersonaToNote(paintPersonaId, noteId)
+    } catch (error) {
+      console.error(error)
+      api.getDirectPersonaNoteAssignments()
+        .then(items => setPersonaNoteAssignments(items || []))
+        .catch(console.error)
     }
   }
 
@@ -559,7 +651,7 @@ export default function ReportPage({
       className={styles.reportPage}
       style={{
         '--structure-width': `${structureCollapsed ? STRUCTURE_COLLAPSED_WIDTH : structureWidth}px`,
-        cursor: paintCat ? makeColorCursor(paintCat.color) : undefined,
+        cursor: paintCat ? makeColorCursor(paintCat.color) : personaCursor || undefined,
       }}
       dir="ltr">
       <aside className={`${styles.structureRail} ${structureCollapsed ? styles.structureRailCollapsed : ''}`} aria-label="Report structure">
@@ -620,29 +712,44 @@ export default function ReportPage({
               bodyCollapsed={collapsedStructureNoteIds.has(row.note.id)}
               attributes={reportAttributesByNoteId.get(row.note.id) || []}
               activeColor={activeColorByNoteId.get(row.note.id)}
+              sideMeta={{
+                typeCategory: typeCategoryByNoteId.get(row.note.id),
+                people: peopleByNoteId.get(row.note.id) || [],
+              }}
               paintCat={paintCat}
+              paintPersonaId={paintPersonaId}
               registerSection={registerSection}
               onTitleChange={saveTitle}
               onBodyChange={saveBody}
               onToggleCollapse={requestHierarchyToggle}
               onPaint={paintNote}
+              onPersonaPaint={paintPersonaToNote}
             />
           ))}
         </article>
         {savingIds.size > 0 && <div className={styles.saveStatus}>Saving...</div>}
-        <div className={styles.reportColorPicker}>
+        <div className={styles.reportFloatingTools}>
           <StandardColorPicker
             dimensions={reportDimensions}
             categories={reportCategories}
             colorDimensionId={colorDimensionId}
             onColorDimensionChange={setColorDimensionId}
             onDimensionDataChanged={refreshClassificationData}
-            expanded={colorPickerExpanded}
-            onExpandedChange={setColorPickerExpanded}
             paintCategoryId={paintCat?.id}
             onPaintCategory={activatePaint}
             hint="Browse report categories"
             align="right"
+            expanded={floatingPanel === 'color'}
+            onExpandedChange={open => setFloatingPanel(open ? 'color' : null)}
+          />
+          <PeopleWidget
+            paintPersonaId={paintPersonaId}
+            onPaintPersonaChange={id => { setPaintCat(null); setPaintPersonaId(id) }}
+            expanded={floatingPanel === 'people'}
+            onExpandedChange={open => setFloatingPanel(open ? 'people' : null)}
+            refreshKey={assignmentsRefreshKey}
+            iconSize={22}
+            size="large"
           />
         </div>
       </div>
