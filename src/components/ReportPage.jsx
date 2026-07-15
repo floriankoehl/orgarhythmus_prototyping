@@ -1280,8 +1280,13 @@ export default function ReportPage({
             const isRootRow = row.note.id === rootNoteId || row.relation === 'current' || row.depth === 0
             const previousRow = visibleReportRows[index - 1]
             const nextRow = visibleReportRows[index + 1]
+            const visibleSiblingCount = row.depth === 0
+              ? visibleReportRows.filter(candidate => candidate.depth === 0).length
+              : visibleReportRows.filter(candidate => candidate.depth === row.depth && candidate.note.parentNoteId === row.note.parentNoteId).length
             const displayDepth = Math.max(0, row.depth) + 1
             const nextDisplayDepth = nextRow ? Math.max(0, nextRow.depth) + 1 : 0
+            const hasVisibleChildAfter = nextRow && nextRow.depth > row.depth
+            const isOnlyVisibleLeafChild = row.depth > 0 && visibleSiblingCount <= 1 && !hasVisibleChildAfter
             const startsChildGroup = Boolean(previousRow && row.depth > previousRow.depth)
             const startsNestedChildGroup = startsChildGroup && displayDepth > 1
             const needsIndentJoin = startsNestedChildGroup
@@ -1289,10 +1294,9 @@ export default function ReportPage({
             const endingLineIndices = Array.from(
               { length: Math.max(0, displayDepth - nextDisplayDepth) },
               (_, closeIndex) => displayDepth - 1 - closeIndex,
-            ).filter(lineIndex => lineIndex > 0)
+            ).filter(lineIndex => lineIndex > 0 && !(isOnlyVisibleLeafChild && lineIndex === displayDepth - 1))
             const endingLineSet = new Set(endingLineIndices)
             const endsCurrentBranch = endingLineSet.has(displayDepth - 1)
-            const hasVisibleChildAfter = nextRow && nextRow.depth > row.depth
             const closesAsVisibleLeaf = !hasVisibleChildAfter && endingLineIndices.length > 0
             const primaryInsertMode = isRootRow || hasVisibleChildAfter ? 'child' : 'after'
             const levelRise = previousRow ? Math.max(0, previousRow.depth - row.depth) : 0
@@ -1317,7 +1321,7 @@ export default function ReportPage({
                 key={row.note.id}
                 className={styles.sectionBlock}
                 data-depth={row.depth}
-                data-has-branch={displayDepth > 0 ? 'true' : undefined}
+                data-has-branch={displayDepth > 0 && !isOnlyVisibleLeafChild ? 'true' : undefined}
                 data-tree-root={isRootRow ? 'true' : undefined}
                 data-branch-start={startsNestedChildGroup ? 'true' : undefined}
                 data-branch-end={endsCurrentBranch ? 'true' : undefined}

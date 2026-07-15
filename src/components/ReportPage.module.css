@@ -117,7 +117,7 @@
 
 .sheet {
   --sheet-padding-left: 92px;
-  --report-indent-step: 20px;
+  --report-indent-step: 18px;
   --report-root-title-size: 42px;
   --report-depth-0-size: 38px;
   --report-depth-1-size: 26px;
@@ -136,7 +136,7 @@
 }
 
 .sheet[data-depth-span="shallow"] {
-  --report-indent-step: 14px;
+  --report-indent-step: 13px;
   --report-root-title-size: 32px;
   --report-depth-0-size: 30px;
   --report-depth-1-size: 21px;
@@ -145,7 +145,7 @@
 }
 
 .sheet[data-depth-span="medium"] {
-  --report-indent-step: 18px;
+  --report-indent-step: 16px;
   --report-root-title-size: 38px;
   --report-depth-0-size: 34px;
   --report-depth-1-size: 24px;
@@ -154,7 +154,7 @@
 }
 
 .sheet[data-depth-span="deep"] {
-  --report-indent-step: 22px;
+  --report-indent-step: 20px;
   --report-root-title-size: 43px;
   --report-depth-0-size: 39px;
   --report-depth-1-size: 27px;
@@ -272,10 +272,10 @@
   position: absolute;
   top: calc(-1 * var(--section-top-gap, 0px) - 22px);
   bottom: 8px;
-  left: calc(-0.92 * var(--report-indent-step));
+  left: calc(-1.08 * var(--report-indent-step));
   width: 1px;
   border-radius: 999px;
-  background: #d7deea;
+  background: #d3dce9;
   pointer-events: none;
 }
 
@@ -283,10 +283,10 @@
   position: absolute;
   top: calc(-1 * var(--section-top-gap, 0px) - 22px);
   bottom: 8px;
-  left: calc((var(--report-tree-line-offset) - 0.42) * var(--report-indent-step));
+  left: calc((var(--report-tree-line-offset) - 0.58) * var(--report-indent-step));
   width: 1px;
   border-radius: 999px;
-  background: #d7deea;
+  background: #d3dce9;
   pointer-events: none;
 }
 
@@ -313,11 +313,11 @@
   content: "";
   position: absolute;
   top: 4px;
-  left: calc(-0.92 * var(--report-indent-step));
+  left: calc(-1.08 * var(--report-indent-step));
   width: calc(var(--report-indent-step) * 0.56);
   height: 15px;
-  border-left: 1px solid #d7deea;
-  border-bottom: 1px solid #d7deea;
+  border-left: 1px solid #d3dce9;
+  border-bottom: 1px solid #d3dce9;
   border-bottom-left-radius: 7px;
   background: transparent;
   pointer-events: none;
@@ -325,7 +325,7 @@
 
 .sectionBlock[data-has-branch="true"][data-tree-root="true"]::after {
   top: 24px;
-  border-top: 1px solid #d7deea;
+  border-top: 1px solid #d3dce9;
   border-bottom: 0;
   border-top-left-radius: 7px;
   border-bottom-left-radius: 0;
@@ -336,37 +336,37 @@
 }
 
 .sheet[data-depth-span="shallow"] .sectionBlock[data-has-branch="true"]::before {
-  background: #e2e8f0;
+  background: #dee5ee;
 }
 
 .sheet[data-depth-span="shallow"] .sectionTreeAncestorLine {
-  background: #e2e8f0;
+  background: #dee5ee;
 }
 
 .sheet[data-depth-span="shallow"] .sectionBlock[data-has-branch="true"]::after {
-  border-color: #e2e8f0;
+  border-color: #dee5ee;
 }
 
 .sheet[data-depth-span="deep"] .sectionBlock[data-has-branch="true"]::before {
-  background: #cbd5e1;
+  background: #c6d0de;
 }
 
 .sheet[data-depth-span="deep"] .sectionTreeAncestorLine {
-  background: #cbd5e1;
+  background: #c6d0de;
 }
 
 .sheet[data-depth-span="deep"] .sectionBlock[data-has-branch="true"]::after {
-  border-color: #cbd5e1;
+  border-color: #c6d0de;
 }
 
 .sectionTreeJoin {
   position: absolute;
   top: -10px;
-  left: calc(-1.92 * var(--report-indent-step));
+  left: calc(-2.08 * var(--report-indent-step));
   width: calc(var(--report-indent-step) * 1.56);
   height: 29px;
-  border-left: 1px solid #d7deea;
-  border-bottom: 1px solid #d7deea;
+  border-left: 1px solid #d3dce9;
+  border-bottom: 1px solid #d3dce9;
   border-bottom-left-radius: 7px;
   background: transparent;
   pointer-events: none;
@@ -375,11 +375,11 @@
 .sectionTreeEndJoin {
   position: absolute;
   bottom: 4px;
-  left: calc((var(--report-tree-end-offset) - 1.42) * var(--report-indent-step));
+  left: calc((var(--report-tree-end-offset) - 1.58) * var(--report-indent-step));
   width: var(--report-indent-step);
   height: 19px;
-  border-right: 1px solid #d7deea;
-  border-bottom: 1px solid #d7deea;
+  border-right: 1px solid #d3dce9;
+  border-bottom: 1px solid #d3dce9;
   border-bottom-right-radius: 7px;
   background: transparent;
   pointer-events: none;
@@ -391,19 +391,19 @@
 }
 
 .sheet[data-depth-span="shallow"] .sectionTreeJoin {
-  border-color: #e2e8f0;
+  border-color: #dee5ee;
 }
 
 .sheet[data-depth-span="shallow"] .sectionTreeEndJoin {
-  border-color: #e2e8f0;
+  border-color: #dee5ee;
 }
 
 .sheet[data-depth-span="deep"] .sectionTreeJoin {
-  border-color: #cbd5e1;
+  border-color: #c6d0de;
 }
 
 .sheet[data-depth-span="deep"] .sectionTreeEndJoin {
-  border-color: #cbd5e1;
+  border-color: #c6d0de;
 }
 
 .documentSection {
