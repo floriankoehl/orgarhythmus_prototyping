@@ -97,7 +97,7 @@ export function buildNoteHierarchyRows(notes, rootNoteId, { includeAncestors = f
   return rows
 }
 
-function HierarchyTypeIcon({ hasChildren }) {
+export function HierarchyTypeIcon({ hasChildren }) {
   if (hasChildren) {
     return (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -118,7 +118,7 @@ function NoteCategoryIcon({ icon, role }) {
   return <CategoryIconGlyph icon={icon || DEFAULT_TYPE_ICONS[role] || DEFAULT_TYPE_ICONS.thought} />
 }
 
-function DoneKindIcon() {
+export function DoneKindIcon() {
   return (
     <svg className={styles.hierarchyDoneIcon} viewBox="0 0 20 20" fill="none" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect className={styles.hierarchyDoneIconBox} x="2.8" y="2.8" width="14.4" height="14.4" rx="2.8" />

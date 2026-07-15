@@ -13,6 +13,7 @@ const PAGES = [
   { name: 'Classification', view: 2 },
   { name: 'Schedule', view: 3 },
   { name: 'Calendar', view: 6 },
+  { name: 'Report', view: 8 },
   { name: 'People', view: 5 },
 ]
 

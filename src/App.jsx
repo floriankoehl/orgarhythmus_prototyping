@@ -11,6 +11,7 @@ import AuthPage from './components/AuthPage'
 import PeoplePage from './components/PeoplePage'
 import InheritancePage from './components/InheritancePage'
 import CalendarPage from './components/CalendarPage'
+import ReportPage from './components/ReportPage'
 import { api, authApi, hasAuthSession, setProjectId } from './api'
 import { mergeSelectionsWithHashtags } from './categoryHashtags'
 import styles from './App.module.css'
@@ -516,6 +517,24 @@ export default function App() {
             archivedDimensionIds={activeContextState.archivedDimensionIds || []}
             onSetContextDefaultPerspective={setContextDefaultPerspective}
             workspaceRootNoteId={activeWorkspaceRootId}
+          />
+        </div>
+        <div className={styles.view} style={{ display: view === 8 ? 'flex' : 'none' }}>
+          <ReportPage
+            notes={notes}
+            project={activeProject}
+            workspaceRootNoteId={activeWorkspaceRootId}
+            workspaceRootNote={activeWorkspaceRoot}
+            workspaceNote={activeWorkspaceRootId !== activeProject.rootNoteId ? activeWorkspaceRoot : null}
+            onProjectUpdate={handleProjectUpdate}
+            onWorkspaceNoteUpdated={handleNoteUpdated}
+            onWorkspaceOpen={noteId => openNoteAsWorkspace(noteId, { view: 8 })}
+            onNoteOpen={openNotePopup}
+            onProjectDeleted={backToHome}
+            onNotesChanged={handleNotesChanged}
+            onNoteUpdated={handleNoteUpdated}
+            isActive={view === 8}
+            assignmentsRefreshKey={noteDataVersion}
           />
         </div>
       </div>

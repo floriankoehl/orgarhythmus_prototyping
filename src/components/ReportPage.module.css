@@ -1,0 +1,427 @@
+.reportPage {
+  --structure-width: 292px;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--structure-width) minmax(0, 1fr);
+  background: #eef0f3;
+  color: #111827;
+  overflow: hidden;
+}
+
+.structureRail {
+  position: relative;
+  min-width: 0;
+  border-right: 1px solid #d5dae2;
+  background: #fbfcfe;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.structureRailCollapsed {
+  align-items: stretch;
+  background: #f8fafc;
+}
+
+.structureFoldBtn {
+  position: absolute;
+  top: 54px;
+  right: -13px;
+  z-index: 8;
+  width: 18px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #d7deea;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #64748b;
+  font: 800 15px/1 Arial, sans-serif;
+  cursor: pointer;
+  box-shadow: 0 2px 7px rgba(15, 23, 42, 0.12);
+}
+
+.structureFoldBtn:hover {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.structureRailCollapsed .structureFoldBtn {
+  top: 54px;
+  right: -13px;
+}
+
+.structureCollapsedTab {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  padding: 48px 0 14px;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  font: 800 11px Arial, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  cursor: pointer;
+}
+
+.structureCollapsedTab:hover {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.structureResizeHandle {
+  position: absolute;
+  top: 0;
+  right: -5px;
+  bottom: 0;
+  z-index: 6;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.structureResizeHandle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 4px;
+  bottom: 0;
+  width: 1px;
+  background: transparent;
+}
+
+.structureResizeHandle:hover::after {
+  background: #93c5fd;
+}
+
+.resizingStructure,
+.resizingStructure * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+.documentPane {
+  position: relative;
+  min-width: 0;
+  overflow: auto;
+  padding: 34px 24px 72px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.sheet {
+  width: min(816px, calc(100vw - var(--structure-width) - 72px));
+  min-height: 1056px;
+  background: #ffffff;
+  border: 1px solid #d7dbe0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18), 0 8px 24px rgba(0, 0, 0, 0.08);
+  padding: 76px 86px 104px;
+  direction: ltr;
+  text-align: left;
+}
+
+.reportColorPicker {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 30;
+}
+
+.documentSection {
+  position: relative;
+  margin: 0 0 28px;
+  scroll-margin-top: 28px;
+}
+
+.documentSection::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: -18px;
+  width: 3px;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.documentSection[data-colored="true"]::before {
+  background: var(--section-color, #94a3b8);
+  opacity: 0.5;
+}
+
+.documentSectionPaintable {
+  cursor: inherit;
+}
+
+.documentSectionPaintable:hover::before {
+  background: var(--section-color, #94a3b8);
+  opacity: 0.9;
+}
+
+.documentSectionPaintable:hover {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--section-color, #94a3b8) 8%, transparent), transparent 42%);
+}
+
+.documentSection[data-depth="0"] {
+  margin-bottom: 38px;
+}
+
+.sectionHeading {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 8px;
+  margin: 0 0 10px;
+}
+
+.sectionNumber {
+  color: #64748b;
+  font-family: Arial, sans-serif;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  user-select: none;
+}
+
+.sectionNumberButton {
+  padding: 0 3px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #64748b;
+  font-family: Arial, sans-serif;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sectionNumberButton:hover {
+  background: #e8f0fe;
+  color: #1d4ed8;
+}
+
+.sectionTitle {
+  min-width: 0;
+  margin: 0;
+  color: #111827;
+  font-family: Arial, sans-serif;
+  font-weight: 700;
+  line-height: 1.2;
+  outline: none;
+  direction: ltr;
+  text-align: left;
+  unicode-bidi: isolate;
+}
+
+.sectionTitleInput {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+h1.sectionTitle {
+  font-size: 30px;
+}
+
+.documentSection[data-depth="0"] .sectionTitle {
+  font-size: 30px;
+}
+
+.documentSection[data-depth="0"] .sectionNumber,
+.documentSection[data-depth="0"] .sectionNumberButton {
+  font-size: 30px;
+}
+
+h2.sectionTitle {
+  font-size: 23px;
+}
+
+.documentSection[data-depth="1"] .sectionTitle {
+  font-size: 23px;
+}
+
+.documentSection[data-depth="1"] .sectionNumber,
+.documentSection[data-depth="1"] .sectionNumberButton {
+  font-size: 23px;
+}
+
+h3.sectionTitle {
+  font-size: 19px;
+}
+
+.documentSection[data-depth="2"] .sectionTitle {
+  font-size: 19px;
+}
+
+.documentSection[data-depth="2"] .sectionNumber,
+.documentSection[data-depth="2"] .sectionNumberButton {
+  font-size: 19px;
+}
+
+h4.sectionTitle,
+h5.sectionTitle,
+h6.sectionTitle {
+  font-size: 16px;
+}
+
+.documentSection[data-depth="3"] .sectionTitle,
+.documentSection[data-depth="4"] .sectionTitle,
+.documentSection[data-depth="5"] .sectionTitle {
+  font-size: 16px;
+}
+
+.documentSection[data-depth="3"] .sectionNumber,
+.documentSection[data-depth="4"] .sectionNumber,
+.documentSection[data-depth="5"] .sectionNumber,
+.documentSection[data-depth="3"] .sectionNumberButton,
+.documentSection[data-depth="4"] .sectionNumberButton,
+.documentSection[data-depth="5"] .sectionNumberButton {
+  font-size: 16px;
+}
+
+.sectionTitleInput:focus,
+.sectionBody:focus {
+  border-radius: 3px;
+  outline: 2px solid rgba(37, 99, 235, 0.18);
+  outline-offset: 3px;
+}
+
+.sectionAttributes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  margin: -4px 0 12px;
+  color: #6b7280;
+}
+
+.sectionAttributeBadge {
+  min-height: 21px;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 1px;
+  color: #6b7280;
+  font: 500 12px/1.25 Arial, sans-serif;
+}
+
+.sectionAttributeBadge + .sectionAttributeBadge::before {
+  content: "";
+  width: 3px;
+  height: 3px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #cbd5e1;
+}
+
+.sectionAttributeIcon {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--attribute-color, #64748b);
+  opacity: 0.82;
+}
+
+.sectionAttributeName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sectionBody {
+  min-height: 28px;
+  color: #1f2937;
+  font: 16px/1.58 Arial, sans-serif;
+  outline: none;
+  white-space: pre-wrap;
+  direction: ltr;
+  text-align: left;
+  unicode-bidi: isolate;
+}
+
+.sectionBody:empty::before {
+  content: attr(data-placeholder);
+  color: #9ca3af;
+}
+
+.saveStatus {
+  position: fixed;
+  right: 22px;
+  bottom: 18px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: #111827;
+  color: #ffffff;
+  font: 700 12px Arial, sans-serif;
+  box-shadow: 0 6px 18px rgba(17, 24, 39, 0.22);
+}
+
+.emptyState {
+  margin: auto;
+  padding: 18px 22px;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #6b7280;
+  font: 700 14px Arial, sans-serif;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+@media (max-width: 860px) {
+  .reportPage {
+    grid-template-columns: 1fr;
+    grid-template-rows: var(--structure-width) minmax(0, 1fr);
+  }
+
+  .structureRail {
+    border-right: 0;
+    border-bottom: 1px solid #d5dae2;
+  }
+
+  .structureResizeHandle {
+    top: auto;
+    right: 0;
+    left: 0;
+    bottom: -5px;
+    width: auto;
+    height: 10px;
+    cursor: row-resize;
+  }
+
+  .structureResizeHandle::after {
+    top: 4px;
+    right: 0;
+    bottom: auto;
+    left: 0;
+    width: auto;
+    height: 1px;
+  }
+
+  .documentPane {
+    padding: 18px 12px 48px;
+  }
+
+  .sheet {
+    width: calc(100vw - 24px);
+    min-height: 900px;
+    padding: 46px 32px 72px;
+  }
+
+  .reportColorPicker {
+    right: 12px;
+    bottom: 12px;
+  }
+}

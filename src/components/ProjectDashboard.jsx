@@ -281,7 +281,7 @@ function makeColorCursor(color) {
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, crosshair`
 }
 
-export default function ProjectDashboard({ project, notes = [], workspaceRootNote = null, workspaceNote = null, onUpdate, onWorkspaceNoteUpdated, onWorkspaceOpen, onNoteOpen, onNotesChanged, onProjectDeleted, isActive, structureOnly = false, assignmentsRefreshKey = 0 }) {
+export default function ProjectDashboard({ project, notes = [], workspaceRootNote = null, workspaceNote = null, onUpdate, onWorkspaceNoteUpdated, onWorkspaceOpen, onNoteOpen, onNotesChanged, onProjectDeleted, isActive, structureOnly = false, embeddedStructure = false, hierarchyToggleRequest = null, onVisibleHierarchyNoteIdsChange, onCollapsedHierarchyNoteIdsChange, assignmentsRefreshKey = 0 }) {
   const isNoteWorkspace = Boolean(workspaceNote)
   const workspaceName = workspaceNote?.title || project.name
   const workspaceDesc = isNoteWorkspace ? (workspaceNote?.html ?? '') : (project.description || '')
@@ -321,6 +321,7 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
   const nameInputRef = useRef()
   const saveTimerRef = useRef(null)
   const hierarchyWarningTimerRef = useRef(null)
+  const handledHierarchyToggleRequestRef = useRef(null)
   const { confirm: confirmDialog, dialog: confirmDialogNode } = useConfirmDialog()
   const workspaceRootNoteId = workspaceRootNote?.id || project.rootNoteId || null
   const workspaceDescendantNoteIds = useMemo(
@@ -368,7 +369,7 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
     const hopsBelowCurrent = nodeDepth - currentHierarchyDepth
     return descendantDepth === 'all' || hopsBelowCurrent < descendantDepth
   }, [collapsedHierarchyNoteIds, currentHierarchyDepth, descendantDepth, expandedHierarchyNoteIds, hierarchyDepthById])
-  const visibleHierarchyRows = hierarchyRows.filter(row => {
+  const visibleHierarchyRows = useMemo(() => hierarchyRows.filter(row => {
     if (row.relation === 'current') return true
     if (row.relation === 'ancestor') return row.depth === currentHierarchyDepth - 1
     const seen = new Set()
@@ -379,7 +380,30 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
       parentId = notesById.get(parentId)?.parentNoteId || null
     }
     return parentId === workspaceRootNoteId && isHierarchyNodeExpanded(workspaceRootNoteId)
-  })
+  }), [currentHierarchyDepth, hierarchyRows, isHierarchyNodeExpanded, notesById, workspaceRootNoteId])
+  const visibleHierarchyNoteIds = useMemo(
+    () => visibleHierarchyRows.map(row => row.note.id),
+    [visibleHierarchyRows],
+  )
+  const visibleHierarchyNoteIdsKey = visibleHierarchyNoteIds.join('|')
+  const collapsedHierarchyNoteIdsForReport = useMemo(
+    () => visibleHierarchyRows
+      .filter(row => !isHierarchyNodeExpanded(row.note.id))
+      .map(row => row.note.id),
+    [isHierarchyNodeExpanded, visibleHierarchyRows],
+  )
+  const collapsedHierarchyNoteIdsForReportKey = collapsedHierarchyNoteIdsForReport.join('|')
+
+  useEffect(() => {
+    if (!embeddedStructure) return
+    onVisibleHierarchyNoteIdsChange?.(visibleHierarchyNoteIds)
+  }, [embeddedStructure, onVisibleHierarchyNoteIdsChange, visibleHierarchyNoteIdsKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!embeddedStructure) return
+    onCollapsedHierarchyNoteIdsChange?.(collapsedHierarchyNoteIdsForReport)
+  }, [collapsedHierarchyNoteIdsForReportKey, embeddedStructure, onCollapsedHierarchyNoteIdsChange]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const structureTypeCategories = useMemo(() => TYPE_DYNAMIC_CATEGORIES.map(category => ({
     ...category,
     dimensionId: TYPE_DIMENSION_ID,
@@ -612,6 +636,13 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
       return next
     })
   }, [hierarchyDescendantIds, isHierarchyNodeExpanded])
+
+  useEffect(() => {
+    if (!embeddedStructure || !hierarchyToggleRequest?.noteId) return
+    if (handledHierarchyToggleRequestRef.current === hierarchyToggleRequest.id) return
+    handledHierarchyToggleRequestRef.current = hierarchyToggleRequest.id
+    toggleHierarchyNode(hierarchyToggleRequest.noteId)
+  }, [embeddedStructure, hierarchyToggleRequest?.id, hierarchyToggleRequest?.noteId, toggleHierarchyNode])
 
   const expandHierarchySubtree = useCallback(noteId => {
     const ids = new Set([noteId, ...hierarchyDescendantIds(noteId)])
@@ -1158,7 +1189,15 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
             handleHierarchyNodeClick(event, noteId)
           }}
           onOpenWorkspace={noteId => { playSound('viewChange'); onWorkspaceOpen?.(noteId) }}
-          onOpenDetails={noteId => { playSound('noteOpen'); onNoteOpen?.(noteId) }}
+          onOpenDetails={noteId => {
+            if (embeddedStructure) {
+              playSound('viewChange')
+              onWorkspaceOpen?.(noteId)
+              return
+            }
+            playSound('noteOpen')
+            onNoteOpen?.(noteId)
+          }}
           onContextMenu={openHierarchyContextMenu}
           onMove={moveHierarchyNotes}
           onReorder={reorderHierarchyNote}
@@ -1196,10 +1235,18 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
 
   return (
     <div
-      className={`${styles.note} ${structureActivePaintCursor ? styles.paintMode : ''}`}
+      className={[
+        styles.note,
+        structureOnly && embeddedStructure && styles.structureEmbedded,
+        structureActivePaintCursor && styles.paintMode,
+      ].filter(Boolean).join(' ')}
       style={structureActivePaintCursor ? { '--paint-cursor': structureActivePaintCursor, cursor: structureActivePaintCursor } : undefined}
       onClick={structurePaintCat || structureIconPaintCat ? () => { setStructurePaintCat(null); setStructureIconPaintCat(null) } : undefined}>
-      <div className={`${styles.content} ${structureOnly ? styles.structureContent : ''}`}>
+      <div className={[
+        styles.content,
+        structureOnly && styles.structureContent,
+        structureOnly && embeddedStructure && styles.structureEmbeddedContent,
+      ].filter(Boolean).join(' ')}>
 
         {/* Project name */}
         {!structureOnly && <div className={styles.nameRow}>
@@ -1308,7 +1355,7 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
 
       </div>
 
-      {structureOnly && (
+      {structureOnly && !embeddedStructure && (
         <>
           <div className={styles.structureIconFloatingTools}>
             <StandardIconPicker
@@ -1395,13 +1442,23 @@ export default function ProjectDashboard({ project, notes = [], workspaceRootNot
                 Expand all
               </button>
             )}
-            <button type="button" role="menuitem" onClick={() => {
-              setHierarchyContextMenu(null)
-              playSound('viewChange')
-              onWorkspaceOpen?.(contextNote.id)
-            }}>
-              Open as project
-            </button>
+            {embeddedStructure ? (
+              <button type="button" role="menuitem" onClick={() => {
+                setHierarchyContextMenu(null)
+                playSound('noteOpen')
+                onNoteOpen?.(contextNote.id)
+              }}>
+                Open popup
+              </button>
+            ) : (
+              <button type="button" role="menuitem" onClick={() => {
+                setHierarchyContextMenu(null)
+                playSound('viewChange')
+                onWorkspaceOpen?.(contextNote.id)
+              }}>
+                Open as project
+              </button>
+            )}
             <div className={styles.hierarchyContextDivider} />
             <button type="button" role="menuitem" className={styles.hierarchyContextDanger} onClick={() => {
               setHierarchyContextMenu(null)
