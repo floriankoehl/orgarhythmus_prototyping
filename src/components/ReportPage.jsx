@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { CalendarClock, Eye, EyeOff, ListOrdered, Settings } from 'lucide-react'
+import { CalendarClock, Eye, EyeOff, GitBranch, ListOrdered, Settings } from 'lucide-react'
 import { api } from '../api'
 import { usePersonaCursor } from '../hooks/usePersonaCursor'
 import { playSound } from '../sounds/sound_registry'
@@ -8,6 +8,7 @@ import PersonaAvatarStack from './PersonaAvatarStack'
 import PeopleWidget from './PeopleWidget'
 import ProjectDashboard from './ProjectDashboard'
 import StandardColorPicker from './StandardColorPicker'
+import StandardIconPicker from './StandardIconPicker'
 import { COLOR_UNASSIGNED_CATEGORY_ID } from './colorPickerCategories'
 import { CategoryIconGlyph, iconForCategory } from './iconRegistry'
 import { FILTER_DIMENSION_ID, filterCategoryId, filterMatchesNote, normalizeSavedFilter } from './savedFilterUtils'
@@ -391,7 +392,7 @@ function ReportScheduleBadge({ schedule }) {
   )
 }
 
-function ReportSection({ row, project, isProjectRoot, childrenCollapsed, showNumbering, attributes, detailMode, activeColor, sideMeta, paintCat, paintPersonaId, registerSection, onTitleChange, onBodyChange, onToggleChildren, onToggleDetails, onTypeContextMenu, onPaint, onPersonaPaint }) {
+function ReportSection({ row, project, isProjectRoot, childrenCollapsed, showNumbering, attributes, detailMode, activeColor, sideMeta, paintCat, iconPaintCat, paintPersonaId, registerSection, onTitleChange, onBodyChange, onToggleChildren, onToggleDetails, onTypeContextMenu, onPaint, onIconPaint, onPersonaPaint }) {
   const title = isProjectRoot && project?.name ? project.name : row.note.title || 'Untitled'
   const body = isProjectRoot && project?.description ? project.description : row.note.html || ''
   const isReportRoot = row.relation === 'current' || row.depth === 0
@@ -408,17 +409,18 @@ function ReportSection({ row, project, isProjectRoot, childrenCollapsed, showNum
   return (
     <section
       ref={element => registerSection(row.note.id, element)}
-      className={`${styles.documentSection} ${paintCat || paintPersonaId ? styles.documentSectionPaintable : ''}`}
+      className={`${styles.documentSection} ${paintCat || iconPaintCat || paintPersonaId ? styles.documentSectionPaintable : ''}`}
       style={activeColor ? { '--section-color': activeColor } : undefined}
       dir="ltr"
       data-depth={row.depth}
       data-report-root={isReportRoot ? 'true' : undefined}
       data-colored={activeColor ? 'true' : undefined}
-      onClickCapture={(paintCat || paintPersonaId) ? event => {
+      onClickCapture={(paintCat || iconPaintCat || paintPersonaId) ? event => {
         if (event.target.closest?.(`.${styles.sectionNumberButton}, .${styles.headingTypeIcon}`)) return
         event.preventDefault()
         event.stopPropagation()
         if (paintPersonaId) onPersonaPaint(row.note.id)
+        else if (iconPaintCat) onIconPaint(row.note.id)
         else onPaint(row.note.id)
       } : undefined}>
       <div className={styles.sectionMain}>
@@ -447,13 +449,13 @@ function ReportSection({ row, project, isProjectRoot, childrenCollapsed, showNum
             done && styles.headingTypeDone,
             doneInfo?.inherited && styles.headingTypeDoneInherited,
           ].filter(Boolean).join(' ')}
-          style={{ '--attribute-color': done ? '#16a34a' : (sideMeta.typeCategory?.color || '#64748b') }}
+          style={{ '--attribute-color': done ? '#16a34a' : (sideMeta.iconCategory?.color || sideMeta.typeCategory?.color || '#64748b') }}
           onClick={() => onToggleDetails(row.note.id)}
           onContextMenu={event => onTypeContextMenu(event, row.note.id)}
           title={`Current detail view: ${detailMode}. Click to ${nextDetailLabel}.`}
-          aria-label={`${done ? doneLabel : (sideMeta.typeCategory?.name || 'Type')}: ${nextDetailLabel} for ${title}`}
+          aria-label={`${done ? doneLabel : (sideMeta.iconCategory?.name || sideMeta.typeCategory?.name || 'Type')}: ${nextDetailLabel} for ${title}`}
           aria-pressed={detailMode !== DETAIL_MODE_NONE}>
-          {done ? <DoneKindIcon /> : <CategoryIconGlyph icon={iconForCategory(sideMeta.typeCategory)} strokeWidth={2.35} />}
+          {done ? <DoneKindIcon /> : <CategoryIconGlyph icon={iconForCategory(sideMeta.iconCategory || sideMeta.typeCategory)} strokeWidth={2.35} />}
         </button>
           )
         })()}
@@ -520,11 +522,14 @@ export default function ReportPage({
   const [personas, setPersonas] = useState([])
   const [personaNoteAssignments, setPersonaNoteAssignments] = useState([])
   const [colorDimensionId, setColorDimensionId] = useState('')
+  const [iconDimensionId, setIconDimensionId] = useState('')
   const [paintCat, setPaintCat] = useState(null)
+  const [iconPaintCat, setIconPaintCat] = useState(null)
   const [paintPersonaId, setPaintPersonaId] = useState(null)
   const [floatingPanel, setFloatingPanel] = useState(null)
   const [reportSettingsOpen, setReportSettingsOpen] = useState(false)
   const [showNumbering, setShowNumbering] = useState(true)
+  const [showHierarchyGuides, setShowHierarchyGuides] = useState(true)
   const [typeContextMenu, setTypeContextMenu] = useState(null)
   const [pendingCreatedNoteId, setPendingCreatedNoteId] = useState(null)
   const sectionRefs = useRef({})
@@ -678,20 +683,23 @@ export default function ReportPage({
     })
     return grouped
   }, [classificationAssignments])
+  const reportCategoryById = useMemo(
+    () => new Map(reportCategories.map(category => [category.id, category])),
+    [reportCategories],
+  )
   const activeColorByNoteId = useMemo(() => {
     if (!colorDimensionId) return new Map()
-    const categoriesById = new Map(reportCategories.map(category => [category.id, category]))
     const colors = new Map()
     if (colorDimensionId === TIME_DIMENSION_ID) {
       numberedRows.forEach(row => {
-        const category = categoriesById.get(timeCategoryIdForNote(row.note))
+        const category = reportCategoryById.get(timeCategoryIdForNote(row.note))
         if (category?.color) colors.set(row.note.id, category.color)
       })
       return colors
     }
     if (colorDimensionId === TYPE_DIMENSION_ID) {
       numberedRows.forEach(row => {
-        const category = categoriesById.get(typeCategoryIdForNote(row.note, { notes, timeSlots }))
+        const category = reportCategoryById.get(typeCategoryIdForNote(row.note, { notes, timeSlots }))
         if (category?.color) colors.set(row.note.id, category.color)
       })
       return colors
@@ -707,11 +715,11 @@ export default function ReportPage({
       return colors
     }
     assignedCategoryByNoteAndDimension.forEach((dimensions, noteId) => {
-      const category = categoriesById.get(dimensions.get(colorDimensionId))
+      const category = reportCategoryById.get(dimensions.get(colorDimensionId))
       if (category?.color) colors.set(noteId, category.color)
     })
     return colors
-  }, [assignmentForDimension, assignedCategoryByNoteAndDimension, colorDimensionId, filterCategories, notes, numberedRows, reportCategories, savedFilters, timeSlots])
+  }, [assignmentForDimension, assignedCategoryByNoteAndDimension, colorDimensionId, filterCategories, notes, numberedRows, reportCategoryById, savedFilters, timeSlots])
   const peopleByNoteId = useMemo(() => {
     const personasById = new Map(personas.map(persona => [persona.id, persona]))
     const grouped = new Map()
@@ -737,6 +745,29 @@ export default function ReportPage({
       typeById.get(typeCategoryIdForNote(row.note, { notes, timeSlots })) || typeCategories[0],
     ]))
   }, [notes, numberedRows, timeSlots, typeCategories])
+  const iconCategoryByNoteId = useMemo(() => {
+    if (!iconDimensionId || iconDimensionId === TYPE_DIMENSION_ID) return typeCategoryByNoteId
+    const unassigned = { id: COLOR_UNASSIGNED_CATEGORY_ID, name: 'Unassigned', color: '#94a3b8', icon: 'circle-minus' }
+    if (iconDimensionId === TIME_DIMENSION_ID) {
+      return new Map(numberedRows.map(row => [
+        row.note.id,
+        reportCategoryById.get(timeCategoryIdForNote(row.note)) || unassigned,
+      ]))
+    }
+    if (iconDimensionId === FILTER_DIMENSION_ID) {
+      return new Map(numberedRows.map(row => {
+        const category = filterCategories.find(filterCategory => {
+          const filter = savedFilters.find(item => item.id === filterCategory.filterId)
+          return filterMatchesNote(filter, row.note, assignmentForDimension, { notes, timeSlots })
+        })
+        return [row.note.id, category || unassigned]
+      }))
+    }
+    return new Map(numberedRows.map(row => {
+      const categoryId = assignedCategoryByNoteAndDimension.get(row.note.id)?.get(iconDimensionId)
+      return [row.note.id, reportCategoryById.get(categoryId) || unassigned]
+    }))
+  }, [assignedCategoryByNoteAndDimension, assignmentForDimension, filterCategories, iconDimensionId, notes, numberedRows, reportCategoryById, savedFilters, timeSlots, typeCategoryByNoteId])
   const kanbanDoneCategory = useMemo(
     () => classificationCategories.find(category => category.systemType === 'kanban' && category.kanbanState === 'done'),
     [classificationCategories],
@@ -854,7 +885,11 @@ export default function ReportPage({
       setColorDimensionId('')
       setPaintCat(null)
     }
-  }, [colorDimensionId, reportDimensions])
+    if (iconDimensionId && !reportDimensions.some(dimension => dimension.id === iconDimensionId)) {
+      setIconDimensionId('')
+      setIconPaintCat(null)
+    }
+  }, [colorDimensionId, iconDimensionId, reportDimensions])
 
   useEffect(() => {
     if (colorDimensionId || reportDimensions.length === 0) return
@@ -1087,7 +1122,16 @@ export default function ReportPage({
     const deactivating = paintCat?.id === catId
     playSound(deactivating ? 'paintModeDeactivate' : 'paintModeActivate')
     setPaintPersonaId(null)
+    setIconPaintCat(null)
     setPaintCat(previous => previous?.id === catId ? null : { id: catId, color })
+  }
+
+  const activateIconPaint = (catId, icon) => {
+    const deactivating = iconPaintCat?.id === catId
+    playSound(deactivating ? 'paintModeDeactivate' : 'paintModeActivate')
+    setPaintPersonaId(null)
+    setPaintCat(null)
+    setIconPaintCat(previous => previous?.id === catId ? null : { id: catId, icon })
   }
 
   const paintNote = async noteId => {
@@ -1112,6 +1156,35 @@ export default function ReportPage({
           return !(assignmentNoteId === noteId && assignmentDimensionId === colorDimensionId)
         }),
         { noteId, dimensionId: colorDimensionId, categoryId: paintCat.id },
+      ])
+    } catch (error) {
+      console.error(error)
+      refreshClassificationData()
+    }
+  }
+
+  const paintIconToNote = async noteId => {
+    if (!iconPaintCat || !iconDimensionId || iconDimensionId === TYPE_DIMENSION_ID || iconDimensionId === TIME_DIMENSION_ID || iconDimensionId === FILTER_DIMENSION_ID) return
+    playSound('paintApply')
+    try {
+      if (iconPaintCat.id === COLOR_UNASSIGNED_CATEGORY_ID) {
+        await api.unassign(noteId, iconDimensionId)
+        setClassificationAssignments(previous => previous.filter(assignment => {
+          const assignmentNoteId = assignment.noteId || assignment.note_id
+          const assignmentDimensionId = assignment.dimensionId || assignment.dimension_id
+          return !(assignmentNoteId === noteId && assignmentDimensionId === iconDimensionId)
+        }))
+        return
+      }
+
+      await api.assign(noteId, iconDimensionId, iconPaintCat.id)
+      setClassificationAssignments(previous => [
+        ...previous.filter(assignment => {
+          const assignmentNoteId = assignment.noteId || assignment.note_id
+          const assignmentDimensionId = assignment.dimensionId || assignment.dimension_id
+          return !(assignmentNoteId === noteId && assignmentDimensionId === iconDimensionId)
+        }),
+        { noteId, dimensionId: iconDimensionId, categoryId: iconPaintCat.id },
       ])
     } catch (error) {
       console.error(error)
@@ -1254,6 +1327,10 @@ export default function ReportPage({
                 <ListOrdered size={15} strokeWidth={2.2} />
                 <span>{showNumbering ? 'Hide numeration' : 'Show numeration'}</span>
               </button>
+              <button type="button" className={styles.reportSettingsAction} onClick={() => setShowHierarchyGuides(value => !value)}>
+                <GitBranch size={15} strokeWidth={2.2} />
+                <span>{showHierarchyGuides ? 'Hide hierarchy view' : 'Show hierarchy view'}</span>
+              </button>
             </div>
           )}
         </div>
@@ -1275,7 +1352,7 @@ export default function ReportPage({
             </div>
           )
         })()}
-        <article className={styles.sheet} data-depth-span={visibleDepthSpan} dir="ltr">
+        <article className={styles.sheet} data-depth-span={visibleDepthSpan} data-hierarchy={showHierarchyGuides ? 'true' : 'false'} dir="ltr">
           {visibleReportRows.map((row, index) => {
             const isRootRow = row.note.id === rootNoteId || row.relation === 'current' || row.depth === 0
             const previousRow = visibleReportRows[index - 1]
@@ -1321,16 +1398,16 @@ export default function ReportPage({
                 key={row.note.id}
                 className={styles.sectionBlock}
                 data-depth={row.depth}
-                data-has-branch={displayDepth > 0 && !isOnlyVisibleLeafChild ? 'true' : undefined}
-                data-tree-root={isRootRow ? 'true' : undefined}
-                data-branch-start={startsNestedChildGroup ? 'true' : undefined}
-                data-branch-end={endsCurrentBranch ? 'true' : undefined}
-                data-branch-end-leaf={endsCurrentBranch && closesAsVisibleLeaf ? 'true' : undefined}
+                data-has-branch={showHierarchyGuides && displayDepth > 0 && !isOnlyVisibleLeafChild ? 'true' : undefined}
+                data-tree-root={showHierarchyGuides && isRootRow ? 'true' : undefined}
+                data-branch-start={showHierarchyGuides && startsNestedChildGroup ? 'true' : undefined}
+                data-branch-end={showHierarchyGuides && endsCurrentBranch ? 'true' : undefined}
+                data-branch-end-leaf={showHierarchyGuides && endsCurrentBranch && closesAsVisibleLeaf ? 'true' : undefined}
                 style={{
                   '--section-top-gap': `${sectionTopGap}px`,
-                  '--report-tree-depth': displayDepth,
+                  '--report-tree-depth': showHierarchyGuides ? displayDepth : 0,
                 }}>
-                {Array.from({ length: ancestorLineCount }, (_, lineIndex) => (
+                {showHierarchyGuides && Array.from({ length: ancestorLineCount }, (_, lineIndex) => (
                   <span
                     key={`ancestor-line-${lineIndex}`}
                     className={[
@@ -1342,9 +1419,9 @@ export default function ReportPage({
                     aria-hidden="true"
                   />
                 ))}
-                {hasVisibleChildAfter && <span className={styles.sectionTreeChildLine} aria-hidden="true" />}
-                {needsIndentJoin && <span className={styles.sectionTreeJoin} aria-hidden="true" />}
-                {endingLineIndices.map(lineIndex => (
+                {showHierarchyGuides && hasVisibleChildAfter && <span className={styles.sectionTreeChildLine} aria-hidden="true" />}
+                {showHierarchyGuides && needsIndentJoin && <span className={styles.sectionTreeJoin} aria-hidden="true" />}
+                {showHierarchyGuides && endingLineIndices.map(lineIndex => (
                   <span
                     key={`end-join-${lineIndex}`}
                     className={[
@@ -1366,11 +1443,13 @@ export default function ReportPage({
                   activeColor={activeColorByNoteId.get(row.note.id)}
                   sideMeta={{
                     typeCategory: typeCategoryByNoteId.get(row.note.id),
+                    iconCategory: iconCategoryByNoteId.get(row.note.id),
                     doneInfo: doneInfoByNoteId.get(String(row.note.id)),
                     people: peopleByNoteId.get(row.note.id) || [],
                     schedule: scheduleByNoteId.get(row.note.id),
                   }}
                   paintCat={paintCat}
+                  iconPaintCat={iconPaintCat}
                   paintPersonaId={paintPersonaId}
                   registerSection={registerSection}
                   onTitleChange={saveTitle}
@@ -1379,6 +1458,7 @@ export default function ReportPage({
                   onToggleDetails={toggleDetails}
                   onTypeContextMenu={openTypeContextMenu}
                   onPaint={paintNote}
+                  onIconPaint={paintIconToNote}
                   onPersonaPaint={paintPersonaToNote}
                 />
                 <ReportInsertPoint row={row} primaryMode={primaryInsertMode} onCreate={createReportNote} />
@@ -1389,6 +1469,19 @@ export default function ReportPage({
         </article>
         {savingIds.size > 0 && <div className={styles.saveStatus}>Saving...</div>}
         <div className={styles.reportFloatingTools}>
+          <StandardIconPicker
+            dimensions={reportDimensions}
+            categories={reportCategories}
+            iconDimensionId={iconDimensionId}
+            onIconDimensionChange={dimensionId => { setIconDimensionId(dimensionId); setIconPaintCat(null) }}
+            onDimensionDataChanged={refreshClassificationData}
+            paintCategoryId={iconPaintCat?.id}
+            onPaintCategory={activateIconPaint}
+            hint="Assign report icons"
+            align="right"
+            expanded={floatingPanel === 'icon'}
+            onExpandedChange={open => setFloatingPanel(open ? 'icon' : null)}
+          />
           <StandardColorPicker
             dimensions={reportDimensions}
             categories={reportCategories}
@@ -1404,7 +1497,7 @@ export default function ReportPage({
           />
           <PeopleWidget
             paintPersonaId={paintPersonaId}
-            onPaintPersonaChange={id => { setPaintCat(null); setPaintPersonaId(id) }}
+            onPaintPersonaChange={id => { setPaintCat(null); setIconPaintCat(null); setPaintPersonaId(id) }}
             expanded={floatingPanel === 'people'}
             onExpandedChange={open => setFloatingPanel(open ? 'people' : null)}
             refreshKey={assignmentsRefreshKey}

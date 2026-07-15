@@ -464,18 +464,24 @@
 }
 
 .documentSection[data-colored="true"]::before {
-  background: var(--section-color, #94a3b8);
-  opacity: 0.5;
+  background: transparent;
+  opacity: 0;
 }
 
 .documentSection[data-colored="true"]::after {
   background:
     linear-gradient(
       90deg,
+      color-mix(in srgb, var(--section-color, #94a3b8) 20%, transparent) 0 2px,
+      transparent 2px
+    ),
+    linear-gradient(
+      90deg,
       color-mix(in srgb, var(--section-color, #94a3b8) 7%, transparent) 0,
       color-mix(in srgb, var(--section-color, #94a3b8) 3.5%, transparent) 40%,
       color-mix(in srgb, var(--section-color, #94a3b8) 2.2%, transparent) 100%
     );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--section-color, #94a3b8) 18%, transparent);
 }
 
 .documentSectionPaintable {
@@ -483,8 +489,8 @@
 }
 
 .documentSectionPaintable:hover::before {
-  background: var(--section-color, #94a3b8);
-  opacity: 0.9;
+  background: transparent;
+  opacity: 0;
 }
 
 .documentSectionPaintable:hover {
@@ -495,10 +501,16 @@
   background:
     linear-gradient(
       90deg,
+      color-mix(in srgb, var(--section-color, #94a3b8) 26%, transparent) 0 2px,
+      transparent 2px
+    ),
+    linear-gradient(
+      90deg,
       color-mix(in srgb, var(--section-color, #94a3b8) 9%, transparent) 0,
       color-mix(in srgb, var(--section-color, #94a3b8) 4.5%, transparent) 42%,
       color-mix(in srgb, var(--section-color, #94a3b8) 2.8%, transparent) 100%
     );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--section-color, #94a3b8) 24%, transparent);
 }
 
 .documentSection[data-depth="0"] {
